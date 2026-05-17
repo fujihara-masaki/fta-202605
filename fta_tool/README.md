@@ -81,6 +81,81 @@ uvicorn app.main:app --reload
 AI_PROVIDER=mock
 ```
 
+### Ollama（ローカルLLM）
+
+インターネット接続・APIキー不要でローカルLLMを使います。
+
+```
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434   # デフォルト値
+OLLAMA_MODEL=gemma3:4b                   # デフォルト値
+```
+
+#### Windows 11 での Ollama セットアップ手順
+
+**1. Ollama をインストールする**
+
+[https://ollama.com/download/windows](https://ollama.com/download/windows) からインストーラを
+ダウンロードして実行してください。インストール後、Ollama はバックグラウンドで自動起動します。
+
+**2. モデルを取得する**
+
+PowerShell またはコマンドプロンプトで以下を実行します。
+
+```powershell
+ollama pull gemma3:4b
+```
+
+> 他のモデルを使う場合の例:
+> ```powershell
+> ollama pull llama3.2:3b   # 軽量・高速
+> ollama pull qwen2.5:7b    # 日本語精度が高い
+> ```
+
+**3. Ollama が動いているか確認する**
+
+```powershell
+# タグ一覧で取得済みモデルを確認
+curl http://localhost:11434/api/tags
+```
+
+ブラウザで `http://localhost:11434` を開き "Ollama is running" と表示されれば OK です。
+
+**4. FTA ツールの .env を設定する**
+
+```ini
+AI_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=gemma3:4b
+```
+
+**5. FTA ツールを起動する**
+
+```powershell
+cd fta_tool
+uvicorn app.main:app --reload
+```
+
+ブラウザで `http://localhost:8000` を開き、FTA 分析画面で「一次要因を生成」を押してください。
+
+**トラブルシューティング**
+
+| 症状 | 対処 |
+|------|------|
+| "Ollamaに接続できません" | PowerShell で `ollama serve` を実行して Ollama を起動してください |
+| 生成が遅い | モデルを `llama3.2:3b` などより小さいものに変更してください |
+| JSONパースエラー | モデルを変更するか、`OLLAMA_MODEL=qwen2.5:7b` など日本語対応が強いモデルを試してください |
+| OllamaがWi-Fi切断後に止まる | タスクトレイの Ollama アイコンを右クリックして「Restart」してください |
+
+**モデル選択の目安（2025年時点）**
+
+| モデル | VRAM目安 | 日本語精度 | 速度 |
+|--------|----------|------------|------|
+| `gemma3:4b` | 4GB | 普通 | 速い |
+| `qwen2.5:7b` | 6GB | 高い | 普通 |
+| `llama3.2:3b` | 3GB | 低め | とても速い |
+| `phi4:14b` | 12GB | 高い | 遅い |
+
 ### Azure OpenAI
 
 ```

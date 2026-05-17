@@ -3,11 +3,13 @@ AI Provider abstraction layer for FTA factor generation.
 
 Supported providers:
 - MockAIProvider: Default, works without any external API
+- OllamaProvider: Local LLM via Ollama (http://localhost:11434)
 - AzureOpenAIProvider: Uses Azure OpenAI Chat Completions API
 - HttpCopilotProvider: Uses a custom HTTP endpoint (for Copilot Studio, Power Automate, etc.)
 
 Set AI_PROVIDER environment variable to select provider:
 - (not set or "mock"): MockAIProvider
+- "ollama": OllamaProvider
 - "azure_openai": AzureOpenAIProvider
 - "http_copilot": HttpCopilotProvider
 """
@@ -234,6 +236,233 @@ class AzureOpenAIProvider(AIProvider):
             raise RuntimeError(f"AIレスポンスのパースに失敗しました: {e}") from e
 
 
+class OllamaProvider(AIProvider):
+    """
+    Local LLM provider using Ollama (https://ollama.com).
+
+    Calls POST {OLLAMA_BASE_URL}/api/chat with stream=false and format=json.
+    Ollama's format=json mode enforces valid JSON output from the model.
+    The prompt instructs the model to return a bare JSON array; _extract_factors
+    also handles the case where a model wraps the array in an object.
+
+    Environment variables:
+        AI_PROVIDER=ollama
+        OLLAMA_BASE_URL=http://localhost:11434   (default)
+        OLLAMA_MODEL=gemma3:4b                   (default)
+
+    Windows 11 quick start:
+        1. Download and install Ollama from https://ollama.com/download/windows
+        2. Open a terminal and run: ollama pull gemma3:4b
+        3. Set AI_PROVIDER=ollama in .env and start the FTA tool
+    """
+
+    def __init__(self):
+        self.base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+        self.model = os.environ.get("OLLAMA_MODEL", "gemma3:4b")
+        self.chat_url = f"{self.base_url}/api/chat"
+
+    def _build_prompt(
+        self,
+        analysis_title: str,
+        top_event: str,
+        target_level: int,
+        parent_path: list[str],
+        parent_factor: Optional[str],
+    ) -> str:
+        level_name = LEVEL_NAMES.get(target_level, f"レベル{target_level}要因")
+        parent_desc = parent_factor or top_event
+        path_str = " > ".join(parent_path) if parent_path else top_event
+
+        # FTA factor generation prompt for Ollama local LLM.
+        # format=json is set at the API level to enforce valid JSON output.
+        # The prompt explicitly requests a bare array (not wrapped in an object)
+        # because some models default to {"factors": [...]} when format=json is set.
+        return f"""あなたはFTA（フォルトツリー解析）の専門家です。
+以下の情報を元に、{level_name}の候補を5件生成してください。
+
+【分析タイトル】
+{analysis_title}
+
+【頂上事象】
+{top_event}
+
+【対象の親要因】
+{parent_desc}
+
+【要因パス】
+{path_str}
+
+【生成ルール】
+- 要因はMECEになるよう心がけてください。
+- 技術要因、運用要因、手順要因、体制要因、認識差、監視・検知、変更管理、設計、外部依存、人的要因を必要に応じて考慮してください。
+- {level_name}の観点で生成してください。
+  - 一次要因: 大分類（技術的・運用的・体制的等の観点）
+  - 二次要因: 一次要因の具体化
+  - 三次要因: 調査・確認可能な具体的原因候補
+- 断定せず、「～の可能性がある」「～が考えられる」等の候補として表現してください。
+- 出力は必ず JSON 配列 [...] のみとしてください。
+- オブジェクト {{}} で囲まないでください。説明文・コードブロックも不要です。
+
+【出力形式（この形式を厳守）】
+[
+  {{
+    "title": "要因のタイトル（簡潔に）",
+    "description": "要因の説明（2〜3文）",
+    "rationale": "この要因を挙げた理由",
+    "check_points": ["確認観点1", "確認観点2", "確認観点3"]
+  }}
+]"""
+
+    @staticmethod
+    def _extract_factors(content: str) -> list[GeneratedFactor]:
+        """
+        Parse LLM text output into a list of GeneratedFactor.
+
+        Handles three common output patterns from local models:
+          1. Bare JSON array:  [{"title": ...}, ...]
+          2. Object-wrapped:   {"factors": [{"title": ...}, ...]}
+          3. Markdown fenced:  ```json\n[...]\n```  (format=json usually prevents this)
+
+        Raises RuntimeError with a user-visible message on any parse failure.
+        """
+        # Strip markdown code fences if present (safety net even with format=json)
+        stripped = content.strip()
+        if stripped.startswith("```"):
+            lines = stripped.splitlines()
+            # Remove first and last fence lines
+            inner = lines[1:] if len(lines) > 1 else lines
+            if inner and inner[-1].strip() == "```":
+                inner = inner[:-1]
+            stripped = "\n".join(inner).strip()
+
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError as e:
+            snippet = stripped[:200]
+            logger.error("Ollama JSON parse error: %s | raw content snippet: %s", e, snippet)
+            raise RuntimeError(
+                f"OllamaのレスポンスをJSONとして解析できませんでした。\n"
+                f"エラー: {e}\n"
+                f"モデル出力（先頭200文字）: {snippet}"
+            ) from e
+
+        # Pattern 1: bare list
+        if isinstance(parsed, list):
+            factors_raw = parsed
+        # Pattern 2: object containing exactly one list-valued key, or a key named
+        # "factors" / "results" / "items" (common wrapping patterns)
+        elif isinstance(parsed, dict):
+            priority_keys = ("factors", "results", "items", "data")
+            factors_raw = None
+            for key in priority_keys:
+                if key in parsed and isinstance(parsed[key], list):
+                    factors_raw = parsed[key]
+                    break
+            if factors_raw is None:
+                # Fall back to first list-valued key
+                for v in parsed.values():
+                    if isinstance(v, list):
+                        factors_raw = v
+                        break
+            if factors_raw is None:
+                logger.error("Ollama returned a JSON object but no list value found: %s", parsed)
+                raise RuntimeError(
+                    "OllamaがJSON配列ではなくオブジェクトを返しました。"
+                    "配列を含むキーが見つかりません。プロンプトまたはモデルを確認してください。"
+                )
+        else:
+            raise RuntimeError(
+                f"Ollamaの出力が配列でもオブジェクトでもありません: {type(parsed).__name__}"
+            )
+
+        try:
+            return [GeneratedFactor(**f) for f in factors_raw]
+        except (TypeError, ValueError) as e:
+            logger.error("Ollama factor validation error: %s | raw: %s", e, factors_raw)
+            raise RuntimeError(
+                f"OllamaのJSON構造がGeneratedFactorの形式と一致しません: {e}\n"
+                "title / description / rationale / check_points の各フィールドが必要です。"
+            ) from e
+
+    def generate_factors(
+        self,
+        analysis_title: str,
+        top_event: str,
+        target_level: int,
+        parent_path: list[str],
+        parent_factor: Optional[str],
+        context: dict,
+    ) -> list[GeneratedFactor]:
+        prompt = self._build_prompt(analysis_title, top_event, target_level, parent_path, parent_factor)
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "あなたはFTA分析の専門家です。"
+                        "指示に従い、JSON配列形式のみで回答してください。"
+                        "説明文・マークダウン・コードブロックは不要です。"
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "stream": False,
+            "format": "json",
+        }
+
+        logger.info(
+            "Ollama request | url=%s model=%s level=%d parent=%s",
+            self.chat_url,
+            self.model,
+            target_level,
+            parent_factor or "(top event)",
+        )
+
+        try:
+            # Local LLMs can be slow; use a generous timeout
+            with httpx.Client(timeout=120.0) as client:
+                response = client.post(self.chat_url, json=payload)
+                response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "Ollama HTTP error: status=%d body=%s",
+                e.response.status_code,
+                e.response.text[:500],
+            )
+            raise RuntimeError(
+                f"Ollama APIエラー: HTTPステータス {e.response.status_code}\n"
+                f"{e.response.text[:200]}"
+            ) from e
+        except httpx.ConnectError as e:
+            logger.error("Ollama connect error: %s", e)
+            raise RuntimeError(
+                f"Ollamaに接続できません ({self.base_url})。\n"
+                "Ollamaが起動しているか確認してください。\n"
+                "起動コマンド: ollama serve"
+            ) from e
+        except httpx.RequestError as e:
+            logger.error("Ollama request error: %s", e)
+            raise RuntimeError(f"Ollama 通信エラー: {e}") from e
+
+        try:
+            data = response.json()
+            content: str = data["message"]["content"]
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error("Ollama response structure error: %s | body: %s", e, response.text[:500])
+            raise RuntimeError(f"Ollamaのレスポンス構造が想定外です: {e}") from e
+
+        logger.info(
+            "Ollama response received | model=%s content_length=%d",
+            data.get("model", self.model),
+            len(content),
+        )
+        logger.debug("Ollama raw content: %s", content[:500])
+
+        return self._extract_factors(content)
+
+
 class HttpCopilotProvider(AIProvider):
     """
     HTTP-based provider for Copilot Studio / Power Automate / Azure Function / API Management.
@@ -306,7 +535,15 @@ def get_ai_provider() -> AIProvider:
     """Factory function: selects AI provider based on AI_PROVIDER environment variable."""
     provider_name = os.environ.get("AI_PROVIDER", "mock").lower()
 
-    if provider_name == "azure_openai":
+    if provider_name == "ollama":
+        provider = OllamaProvider()
+        logger.info(
+            "AI provider: OllamaProvider | base_url=%s model=%s",
+            provider.base_url,
+            provider.model,
+        )
+        return provider
+    elif provider_name == "azure_openai":
         try:
             return AzureOpenAIProvider()
         except ValueError as e:
@@ -319,4 +556,5 @@ def get_ai_provider() -> AIProvider:
             logger.warning(f"HttpCopilotProvider init failed: {e}. Falling back to MockAIProvider.")
             return MockAIProvider()
     else:
+        logger.info("AI provider: MockAIProvider")
         return MockAIProvider()
