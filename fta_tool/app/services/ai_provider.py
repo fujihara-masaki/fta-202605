@@ -240,10 +240,10 @@ class OllamaProvider(AIProvider):
     """
     Local LLM provider using Ollama (https://ollama.com).
 
-    Calls POST {OLLAMA_BASE_URL}/api/chat with stream=false and format=json.
-    Ollama's format=json mode enforces valid JSON output from the model.
-    The prompt instructs the model to return a bare JSON array; _extract_factors
-    also handles the case where a model wraps the array in an object.
+    Calls POST {OLLAMA_BASE_URL}/api/chat with stream=false.
+    Uses a JSON Schema in the format field (Ollama structured output) so the model
+    is constrained to return {"factors": [...]}.  Falls back gracefully when the
+    model returns list[str] or other partial formats.
 
     Environment variables:
         AI_PROVIDER=ollama
@@ -255,6 +255,42 @@ class OllamaProvider(AIProvider):
         2. Open a terminal and run: ollama pull gemma3:4b
         3. Set AI_PROVIDER=ollama in .env and start the FTA tool
     """
+
+    # JSON Schema passed to Ollama's format field.
+    # Constrains output to {"factors": [{title, description, rationale, check_points}]}
+    _FORMAT_SCHEMA: dict = {
+        "type": "object",
+        "properties": {
+            "factors": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "description": {"type": "string"},
+                        "rationale": {"type": "string"},
+                        "check_points": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "required": ["title", "description", "rationale", "check_points"],
+                },
+            }
+        },
+        "required": ["factors"],
+    }
+
+    # Default values used when a model returns list[str] instead of list[dict]
+    _STR_RESCUE_DESCRIPTION = (
+        "ローカルLLMが文字列のみで返した候補です。詳細は手動で補足してください。"
+    )
+    _STR_RESCUE_RATIONALE = "ローカルLLMにより候補として生成されました。"
+    _STR_RESCUE_CHECK_POINTS = [
+        "候補内容が頂上事象や親要因と関係するか確認する",
+        "ログ、設定、手順書、運用記録などで裏付けを確認する",
+        "必要に応じて要因名、説明、根拠を手動で補足する",
+    ]
 
     def __init__(self):
         self.base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
@@ -274,9 +310,11 @@ class OllamaProvider(AIProvider):
         path_str = " > ".join(parent_path) if parent_path else top_event
 
         # FTA factor generation prompt for Ollama local LLM.
-        # format=json is set at the API level to enforce valid JSON output.
-        # The prompt explicitly requests a bare array (not wrapped in an object)
-        # because some models default to {"factors": [...]} when format=json is set.
+        # Key constraints for reliable structured output:
+        #   - Output must be a JSON object with a "factors" key (matches _FORMAT_SCHEMA)
+        #   - Each element must have all four required fields
+        #   - Markdown, code blocks, and prose are explicitly forbidden
+        #   - temperature=0 reduces creative deviation from the schema
         return f"""あなたはFTA（フォルトツリー解析）の専門家です。
 以下の情報を元に、{level_name}の候補を5件生成してください。
 
@@ -300,36 +338,123 @@ class OllamaProvider(AIProvider):
   - 二次要因: 一次要因の具体化
   - 三次要因: 調査・確認可能な具体的原因候補
 - 断定せず、「～の可能性がある」「～が考えられる」等の候補として表現してください。
-- 出力は必ず JSON 配列 [...] のみとしてください。
-- オブジェクト {{}} で囲まないでください。説明文・コードブロックも不要です。
 
-【出力形式（この形式を厳守）】
-[
-  {{
-    "title": "要因のタイトル（簡潔に）",
-    "description": "要因の説明（2〜3文）",
-    "rationale": "この要因を挙げた理由",
-    "check_points": ["確認観点1", "確認観点2", "確認観点3"]
-  }}
-]"""
+【厳守事項】
+- 出力はJSONのみ。Markdown・コードブロック・説明文は一切禁止。
+- "factors" というキーを持つJSONオブジェクトで返すこと。
+- factors は配列であること。
+- 各要素は title, description, rationale, check_points を必ず持つこと。
+- check_points は文字列の配列であること。
+
+【出力形式（厳守）】
+{{
+  "factors": [
+    {{
+      "title": "要因名（簡潔に）",
+      "description": "要因の説明（2〜3文）",
+      "rationale": "この要因を候補にした理由",
+      "check_points": ["確認観点1", "確認観点2", "確認観点3"]
+    }}
+  ]
+}}"""
+
+    @staticmethod
+    def _normalize_factors(parsed: object) -> list[GeneratedFactor]:
+        """
+        Normalize any JSON shape returned by Ollama into list[GeneratedFactor].
+
+        Accepted shapes
+        ---------------
+        A. {"factors": [{"title": ..., "description": ..., ...}, ...]}  (ideal)
+        B. [{"title": ..., "description": ..., ...}, ...]               (bare list[dict])
+        C. ["文字列1", "文字列2", ...]                                   (list[str] - rescue)
+        D. dict with any list-valued key other than "factors"            (fallback search)
+
+        Raises RuntimeError with a user-visible message for unsupported shapes.
+        """
+        # --- Step 1: unwrap dict to get the inner list ---
+        if isinstance(parsed, dict):
+            priority_keys = ("factors", "results", "items", "data")
+            factors_raw: Optional[list] = None
+            for key in priority_keys:
+                if key in parsed and isinstance(parsed[key], list):
+                    factors_raw = parsed[key]
+                    break
+            if factors_raw is None:
+                for v in parsed.values():
+                    if isinstance(v, list):
+                        factors_raw = v
+                        break
+            if factors_raw is None:
+                logger.error(
+                    "Ollama returned a JSON object but no list value found: %s",
+                    str(parsed)[:300],
+                )
+                raise RuntimeError(
+                    "OllamaがJSONオブジェクトを返しましたが、配列（factors等）が見つかりません。\n"
+                    "プロンプトまたはモデルを確認してください。"
+                )
+            parsed = factors_raw
+
+        if not isinstance(parsed, list):
+            raise RuntimeError(
+                f"Ollamaの出力が配列でもオブジェクトでもありません: {type(parsed).__name__}"
+            )
+
+        # --- Step 2: convert each element ---
+        normalized: list[GeneratedFactor] = []
+        for i, item in enumerate(parsed):
+            if isinstance(item, dict):
+                try:
+                    normalized.append(GeneratedFactor(**item))
+                except (TypeError, ValueError) as e:
+                    logger.error(
+                        "Ollama factor[%d] validation error: %s | item: %s",
+                        i, e, str(item)[:200],
+                    )
+                    raise RuntimeError(
+                        f"OllamaのJSON要素[{i}]がGeneratedFactorの形式と一致しません: {e}\n"
+                        "title / description / rationale / check_points の各フィールドが必要です。"
+                    ) from e
+            elif isinstance(item, str):
+                # Rescue path: model returned plain strings instead of dicts
+                if item.strip():
+                    logger.warning(
+                        "Ollama factor[%d] is a plain string; applying rescue defaults. title=%r",
+                        i, item[:80],
+                    )
+                    normalized.append(
+                        GeneratedFactor(
+                            title=item.strip(),
+                            description=OllamaProvider._STR_RESCUE_DESCRIPTION,
+                            rationale=OllamaProvider._STR_RESCUE_RATIONALE,
+                            check_points=list(OllamaProvider._STR_RESCUE_CHECK_POINTS),
+                        )
+                    )
+            else:
+                logger.error(
+                    "Ollama factor[%d] is unexpected type: %s | value: %s",
+                    i, type(item).__name__, str(item)[:100],
+                )
+                raise RuntimeError(
+                    f"Ollama応答の要素[{i}]が想定外の型です: {type(item).__name__}\n"
+                    "各要素は辞書（dict）または文字列（str）である必要があります。"
+                )
+
+        return normalized
 
     @staticmethod
     def _extract_factors(content: str) -> list[GeneratedFactor]:
         """
-        Parse LLM text output into a list of GeneratedFactor.
+        Parse the raw LLM text content into list[GeneratedFactor].
 
-        Handles three common output patterns from local models:
-          1. Bare JSON array:  [{"title": ...}, ...]
-          2. Object-wrapped:   {"factors": [{"title": ...}, ...]}
-          3. Markdown fenced:  ```json\n[...]\n```  (format=json usually prevents this)
-
-        Raises RuntimeError with a user-visible message on any parse failure.
+        1. Strips markdown code fences (safety net even with format=json/schema).
+        2. JSON-parses the result.
+        3. Delegates shape normalization to _normalize_factors.
         """
-        # Strip markdown code fences if present (safety net even with format=json)
         stripped = content.strip()
         if stripped.startswith("```"):
             lines = stripped.splitlines()
-            # Remove first and last fence lines
             inner = lines[1:] if len(lines) > 1 else lines
             if inner and inner[-1].strip() == "```":
                 inner = inner[:-1]
@@ -338,51 +463,15 @@ class OllamaProvider(AIProvider):
         try:
             parsed = json.loads(stripped)
         except json.JSONDecodeError as e:
-            snippet = stripped[:200]
-            logger.error("Ollama JSON parse error: %s | raw content snippet: %s", e, snippet)
+            snippet = stripped[:500]
+            logger.error("Ollama JSON parse error: %s | raw content: %s", e, snippet)
             raise RuntimeError(
                 f"OllamaのレスポンスをJSONとして解析できませんでした。\n"
                 f"エラー: {e}\n"
-                f"モデル出力（先頭200文字）: {snippet}"
+                f"モデル出力（先頭500文字）: {snippet}"
             ) from e
 
-        # Pattern 1: bare list
-        if isinstance(parsed, list):
-            factors_raw = parsed
-        # Pattern 2: object containing exactly one list-valued key, or a key named
-        # "factors" / "results" / "items" (common wrapping patterns)
-        elif isinstance(parsed, dict):
-            priority_keys = ("factors", "results", "items", "data")
-            factors_raw = None
-            for key in priority_keys:
-                if key in parsed and isinstance(parsed[key], list):
-                    factors_raw = parsed[key]
-                    break
-            if factors_raw is None:
-                # Fall back to first list-valued key
-                for v in parsed.values():
-                    if isinstance(v, list):
-                        factors_raw = v
-                        break
-            if factors_raw is None:
-                logger.error("Ollama returned a JSON object but no list value found: %s", parsed)
-                raise RuntimeError(
-                    "OllamaがJSON配列ではなくオブジェクトを返しました。"
-                    "配列を含むキーが見つかりません。プロンプトまたはモデルを確認してください。"
-                )
-        else:
-            raise RuntimeError(
-                f"Ollamaの出力が配列でもオブジェクトでもありません: {type(parsed).__name__}"
-            )
-
-        try:
-            return [GeneratedFactor(**f) for f in factors_raw]
-        except (TypeError, ValueError) as e:
-            logger.error("Ollama factor validation error: %s | raw: %s", e, factors_raw)
-            raise RuntimeError(
-                f"OllamaのJSON構造がGeneratedFactorの形式と一致しません: {e}\n"
-                "title / description / rationale / check_points の各フィールドが必要です。"
-            ) from e
+        return OllamaProvider._normalize_factors(parsed)
 
     def generate_factors(
         self,
@@ -402,14 +491,15 @@ class OllamaProvider(AIProvider):
                     "role": "system",
                     "content": (
                         "あなたはFTA分析の専門家です。"
-                        "指示に従い、JSON配列形式のみで回答してください。"
-                        "説明文・マークダウン・コードブロックは不要です。"
+                        "指示に従い、指定されたJSONスキーマ形式のみで回答してください。"
+                        "Markdown・コードブロック・説明文は一切出力しないでください。"
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
-            "format": "json",
+            "format": OllamaProvider._FORMAT_SCHEMA,
+            "options": {"temperature": 0},
         }
 
         logger.info(
@@ -421,7 +511,6 @@ class OllamaProvider(AIProvider):
         )
 
         try:
-            # Local LLMs can be slow; use a generous timeout
             with httpx.Client(timeout=120.0) as client:
                 response = client.post(self.chat_url, json=payload)
                 response.raise_for_status()
@@ -450,7 +539,9 @@ class OllamaProvider(AIProvider):
             data = response.json()
             content: str = data["message"]["content"]
         except (json.JSONDecodeError, KeyError) as e:
-            logger.error("Ollama response structure error: %s | body: %s", e, response.text[:500])
+            logger.error(
+                "Ollama response structure error: %s | body: %s", e, response.text[:500]
+            )
             raise RuntimeError(f"Ollamaのレスポンス構造が想定外です: {e}") from e
 
         logger.info(
