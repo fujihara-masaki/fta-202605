@@ -295,7 +295,17 @@ class OllamaProvider(AIProvider):
     def __init__(self):
         self.base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
         self.model = os.environ.get("OLLAMA_MODEL", "gemma3:4b")
+        self.keep_alive = os.environ.get("OLLAMA_KEEP_ALIVE", "10m")
         self.chat_url = f"{self.base_url}/api/chat"
+
+        raw_timeout = os.environ.get("OLLAMA_TIMEOUT_SECONDS", "180")
+        try:
+            self.timeout = float(raw_timeout)
+        except ValueError:
+            logger.warning(
+                "OLLAMA_TIMEOUT_SECONDS=%r is not a valid number; using 180s", raw_timeout
+            )
+            self.timeout = 180.0
 
     def _build_prompt(
         self,
@@ -315,7 +325,8 @@ class OllamaProvider(AIProvider):
         #   - Each element must have all four required fields
         #   - Markdown, code blocks, and prose are explicitly forbidden
         #   - temperature=0 reduces creative deviation from the schema
-        return f"""あなたはFTA（フォルトツリー解析）の専門家です。
+        #   - Japanese output is explicitly required (some models default to English)
+        return f"""あなたはFTA（Fault Tree Analysis：故障の木解析）の専門家です。
 以下の情報を元に、{level_name}の候補を5件生成してください。
 
 【分析タイトル】
@@ -340,20 +351,21 @@ class OllamaProvider(AIProvider):
 - 断定せず、「～の可能性がある」「～が考えられる」等の候補として表現してください。
 
 【厳守事項】
-- 出力はJSONのみ。Markdown・コードブロック・説明文は一切禁止。
+- 必ず日本語で出力すること。英語での出力は禁止。
+- 出力はJSONのみ。JSON以外の説明文・Markdown・コードブロックは一切出力しないこと。
 - "factors" というキーを持つJSONオブジェクトで返すこと。
 - factors は配列であること。
 - 各要素は title, description, rationale, check_points を必ず持つこと。
-- check_points は文字列の配列であること。
+- check_points は日本語の文字列の配列であること。
 
 【出力形式（厳守）】
 {{
   "factors": [
     {{
-      "title": "要因名（簡潔に）",
-      "description": "要因の説明（2〜3文）",
-      "rationale": "この要因を候補にした理由",
-      "check_points": ["確認観点1", "確認観点2", "確認観点3"]
+      "title": "要因名（簡潔に・日本語）",
+      "description": "要因の説明（2〜3文・日本語）",
+      "rationale": "この要因を候補にした理由（日本語）",
+      "check_points": ["確認観点1（日本語）", "確認観点2（日本語）", "確認観点3（日本語）"]
     }}
   ]
 }}"""
@@ -490,30 +502,49 @@ class OllamaProvider(AIProvider):
                 {
                     "role": "system",
                     "content": (
-                        "あなたはFTA分析の専門家です。"
+                        "あなたはFTA（Fault Tree Analysis：故障の木解析）分析の専門家です。"
+                        "必ず日本語で回答してください。"
                         "指示に従い、指定されたJSONスキーマ形式のみで回答してください。"
-                        "Markdown・コードブロック・説明文は一切出力しないでください。"
+                        "JSON以外の説明文・Markdown・コードブロックは一切出力しないでください。"
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
+            "keep_alive": self.keep_alive,
             "format": OllamaProvider._FORMAT_SCHEMA,
             "options": {"temperature": 0},
         }
 
         logger.info(
-            "Ollama request | url=%s model=%s level=%d parent=%s",
+            "Ollama request | url=%s model=%s timeout=%.0fs keep_alive=%s level=%d parent=%s",
             self.chat_url,
             self.model,
+            self.timeout,
+            self.keep_alive,
             target_level,
             parent_factor or "(top event)",
         )
 
         try:
-            with httpx.Client(timeout=120.0) as client:
+            with httpx.Client(timeout=self.timeout) as client:
                 response = client.post(self.chat_url, json=payload)
                 response.raise_for_status()
+        except httpx.TimeoutException as e:
+            logger.error(
+                "Ollama timeout | url=%s model=%s timeout=%.0fs level=%d parent=%s",
+                self.chat_url,
+                self.model,
+                self.timeout,
+                target_level,
+                parent_factor or "(top event)",
+            )
+            raise RuntimeError(
+                f"Ollamaがタイムアウトしました（{self.timeout:.0f}秒）。\n"
+                f"モデル: {self.model} / URL: {self.chat_url}\n"
+                "対処法: .env の OLLAMA_TIMEOUT_SECONDS を大きくするか、"
+                "より軽量なモデル（例: llama3.2:3b）に変更してください。"
+            ) from e
         except httpx.HTTPStatusError as e:
             logger.error(
                 "Ollama HTTP error: status=%d body=%s",
