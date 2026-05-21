@@ -1,5 +1,6 @@
 import logging
 import os
+import pathlib
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -14,17 +15,48 @@ from .database import SessionLocal, engine, get_db
 from .services.ai_provider import GeneratedFactor, get_ai_provider
 from .services.export_service import export_csv, export_json, export_markdown
 
-load_dotenv()
+# Load .env from fta_tool/.env, resolved relative to this file so that the
+# location is correct regardless of which directory uvicorn is started from.
+# override=True ensures .env values always win over pre-existing shell env vars.
+_dotenv_path = pathlib.Path(__file__).parent.parent / ".env"
+_dotenv_loaded = load_dotenv(dotenv_path=_dotenv_path, override=True)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+if _dotenv_loaded:
+    logger.info("dotenv loaded: %s", _dotenv_path)
+else:
+    logger.warning(
+        "dotenv file not found at %s — relying on shell environment variables. "
+        "Copy .env.example to .env and set your values.",
+        _dotenv_path,
+    )
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _log_startup_config() -> None:
+    """Log effective configuration values at startup for easy diagnostics."""
+    ai_provider = os.environ.get("AI_PROVIDER", "mock")
+    logger.info("=== FTA Tool startup configuration ===")
+    logger.info("  AI_PROVIDER           = %s", ai_provider)
+    if ai_provider == "ollama":
+        logger.info("  OLLAMA_BASE_URL       = %s", os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"))
+        logger.info("  OLLAMA_MODEL          = %s", os.environ.get("OLLAMA_MODEL", "gemma3:4b"))
+        logger.info("  OLLAMA_TIMEOUT_SECONDS= %s", os.environ.get("OLLAMA_TIMEOUT_SECONDS", "180"))
+        logger.info("  OLLAMA_KEEP_ALIVE     = %s", os.environ.get("OLLAMA_KEEP_ALIVE", "10m"))
+    elif ai_provider == "azure_openai":
+        logger.info("  AZURE_OPENAI_ENDPOINT = %s", os.environ.get("AZURE_OPENAI_ENDPOINT", "(not set)"))
+        logger.info("  AZURE_OPENAI_DEPLOYMENT=%s", os.environ.get("AZURE_OPENAI_DEPLOYMENT", "(not set)"))
+        # API key intentionally omitted from logs
+    logger.info("=======================================")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     models.Base.metadata.create_all(bind=engine)
+    _log_startup_config()
     yield
 
 

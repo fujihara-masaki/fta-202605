@@ -307,6 +307,16 @@ class OllamaProvider(AIProvider):
             )
             self.timeout = 180.0
 
+        # Log resolved config so operators can confirm env vars were read correctly.
+        # This fires once per request (get_ai_provider creates a new instance each time).
+        logger.info(
+            "OllamaProvider init | model=%s timeout=%.0fs keep_alive=%s url=%s",
+            self.model,
+            self.timeout,
+            self.keep_alive,
+            self.chat_url,
+        )
+
     def _build_prompt(
         self,
         analysis_title: str,
@@ -516,10 +526,12 @@ class OllamaProvider(AIProvider):
             "options": {"temperature": 0},
         }
 
+        # Log the payload model name explicitly so operators can confirm
+        # which model is actually being sent to Ollama (not just self.model).
         logger.info(
-            "Ollama request | url=%s model=%s timeout=%.0fs keep_alive=%s level=%d parent=%s",
+            "Ollama request | url=%s payload_model=%s timeout=%.0fs keep_alive=%s level=%d parent=%s",
             self.chat_url,
-            self.model,
+            payload["model"],
             self.timeout,
             self.keep_alive,
             target_level,
@@ -532,28 +544,30 @@ class OllamaProvider(AIProvider):
                 response.raise_for_status()
         except httpx.TimeoutException as e:
             logger.error(
-                "Ollama timeout | url=%s model=%s timeout=%.0fs level=%d parent=%s",
+                "Ollama timeout | url=%s payload_model=%s timeout=%.0fs level=%d parent=%s",
                 self.chat_url,
-                self.model,
+                payload["model"],
                 self.timeout,
                 target_level,
                 parent_factor or "(top event)",
             )
             raise RuntimeError(
                 f"Ollamaがタイムアウトしました（{self.timeout:.0f}秒）。\n"
-                f"モデル: {self.model} / URL: {self.chat_url}\n"
+                f"モデル: {payload['model']} / URL: {self.chat_url}\n"
                 "対処法: .env の OLLAMA_TIMEOUT_SECONDS を大きくするか、"
                 "より軽量なモデル（例: llama3.2:3b）に変更してください。"
             ) from e
         except httpx.HTTPStatusError as e:
             logger.error(
-                "Ollama HTTP error: status=%d body=%s",
+                "Ollama HTTP error: status=%d payload_model=%s body=%s",
                 e.response.status_code,
+                payload["model"],
                 e.response.text[:500],
             )
             raise RuntimeError(
-                f"Ollama APIエラー: HTTPステータス {e.response.status_code}\n"
-                f"{e.response.text[:200]}"
+                f"Ollama APIエラー: HTTPステータス {e.response.status_code} "
+                f"(model={payload['model']})\n"
+                f"{e.response.text[:300]}"
             ) from e
         except httpx.ConnectError as e:
             logger.error("Ollama connect error: %s", e)
@@ -563,7 +577,9 @@ class OllamaProvider(AIProvider):
                 "起動コマンド: ollama serve"
             ) from e
         except httpx.RequestError as e:
-            logger.error("Ollama request error: %s", e)
+            logger.error(
+                "Ollama request error: %s | payload_model=%s", e, payload["model"]
+            )
             raise RuntimeError(f"Ollama 通信エラー: {e}") from e
 
         try:
