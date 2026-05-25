@@ -1,5 +1,8 @@
 import pytest
-from app.services.ai_provider import MockAIProvider, OllamaProvider, GeneratedFactor
+from app.services.ai_provider import (
+    MockAIProvider, OllamaProvider, GeneratedFactor,
+    filter_generated_factors,
+)
 
 
 def test_mock_provider_returns_generated_factors():
@@ -268,3 +271,88 @@ def test_mock_provider_factor_count_default():
         context={},
     )
     assert len(factors) == 5
+
+
+# --- filter_generated_factors tests ---
+
+def _make_factor(title: str, description: str = "現場確認の観点を記述する") -> GeneratedFactor:
+    return GeneratedFactor(title=title, description=description, rationale="テスト", check_points=[])
+
+
+def test_filter_keeps_good_factors():
+    """品質の良い要因はそのまま返す。"""
+    factors = [
+        _make_factor("設定変更の反映漏れ", "直近の設定変更が全ノードに反映されているか確認する"),
+        _make_factor("認証処理の失敗", "認証ログにエラーが記録されているか確認する"),
+    ]
+    kept, excluded = filter_generated_factors(factors, "ネットワーク接続の問題")
+    assert len(kept) == 2
+    assert len(excluded) == 0
+
+
+def test_filter_removes_generic_names():
+    """汎用語だけのnameは除外する。"""
+    factors = [
+        _make_factor("問題", "詳細確認が必要"),
+        _make_factor("エラー", "ログを確認する"),
+        _make_factor("障害", "現場で確認する"),
+    ]
+    kept, excluded = filter_generated_factors(factors, "認証の失敗")
+    assert len(kept) == 0
+    assert len(excluded) == 3
+    reasons = [r for _, r in excluded]
+    assert all(r == "汎用語のみ" for r in reasons)
+
+
+def test_filter_removes_parent_identical():
+    """親要因と同一のnameは除外する。"""
+    factors = [_make_factor("認証の失敗", "ログを確認する")]
+    kept, excluded = filter_generated_factors(factors, "認証の失敗")
+    assert len(kept) == 0
+    assert excluded[0][1] == "親要因と同一"
+
+
+def test_filter_removes_parent_resembling():
+    """親要因に酷似した短いnameは除外する。"""
+    factors = [_make_factor("認証", "ログを確認する")]
+    kept, excluded = filter_generated_factors(factors, "認証の失敗")
+    assert len(kept) == 0
+    assert "親要因に酷似" in excluded[0][1]
+
+
+def test_filter_removes_batch_duplicates():
+    """バッチ内で同一nameが重複する場合、2件目以降を除外する。"""
+    factors = [
+        _make_factor("設定変更の反映漏れ", "変更履歴で確認する"),
+        _make_factor("設定変更の反映漏れ", "別の説明でも同じタイトルは重複"),
+    ]
+    kept, excluded = filter_generated_factors(factors, "ネットワーク障害")
+    assert len(kept) == 1
+    assert excluded[0][1] == "バッチ内重複"
+
+
+def test_filter_removes_empty_description():
+    """descriptionが空の要因は除外する。"""
+    factors = [_make_factor("設定変更の反映漏れ", "")]
+    kept, excluded = filter_generated_factors(factors, "ネットワーク障害")
+    assert len(kept) == 0
+    assert excluded[0][1] == "description空"
+
+
+def test_filter_removes_trivial_description():
+    """短い説明で「が原因である」で終わる要因は除外する。"""
+    factors = [_make_factor("設定変更の反映漏れ", "設定が原因である")]
+    kept, excluded = filter_generated_factors(factors, "ネットワーク障害")
+    assert len(kept) == 0
+    assert "説明が不十分" in excluded[0][1]
+
+
+def test_filter_no_parent_factor():
+    """parent_factorがNone（一次要因生成）の場合も正常動作する。"""
+    factors = [
+        _make_factor("技術的要因", "システム・インフラに起因する技術的な問題を確認する"),
+        _make_factor("問題"),  # should be filtered as generic
+    ]
+    kept, excluded = filter_generated_factors(factors, None)
+    assert len(kept) == 1
+    assert kept[0].title == "技術的要因"

@@ -53,6 +53,92 @@ LEVEL_NAMES = {
     3: "三次要因（調査・確認可能な具体的原因候補）",
 }
 
+# ---------------------------------------------------------------------------
+# Post-generation quality filter
+# ---------------------------------------------------------------------------
+
+_GENERIC_NAMES = frozenset({
+    "原因", "要因", "問題", "不備", "障害", "エラー", "失敗", "その他",
+    "課題", "不具合", "欠陥", "影響", "リスク", "要因パス",
+    "主要因", "副要因", "直接原因", "間接原因", "複合要因", "関連要因",
+})
+
+_TRIVIAL_DESC_SUFFIXES = (
+    "が原因である", "が要因である", "が問題である", "による障害", "のため",
+    "が発生した", "が発生している",
+)
+
+
+def _resembles_parent(name: str, parent: str) -> bool:
+    """Return True if name is very similar to parent_factor (heuristic)."""
+    n, p = name.strip(), parent.strip()
+    if n == p:
+        return True
+    shorter, longer = (n, p) if len(n) <= len(p) else (p, n)
+    # Flag only when the shorter string (≤12 chars) is fully contained in the longer
+    if len(shorter) <= 12 and shorter in longer:
+        return True
+    return False
+
+
+def _is_trivial_description(desc: str, name: str) -> bool:
+    """Return True if description adds no information beyond a trivial suffix."""
+    d = desc.strip()
+    if not d:
+        return True
+    if len(d) <= 20:
+        for suffix in _TRIVIAL_DESC_SUFFIXES:
+            if d.endswith(suffix):
+                return True
+        if d == name or d == name + "の問題" or d == name + "が発生":
+            return True
+    return False
+
+
+def filter_generated_factors(
+    factors: list[GeneratedFactor],
+    parent_factor: Optional[str],
+) -> tuple[list[GeneratedFactor], list[tuple[str, str]]]:
+    """
+    Remove low-quality factors from AI output.
+
+    Returns (kept, excluded) where excluded is a list of (title, reason) pairs.
+
+    Removes factors that:
+    - Have an empty or generic-only name
+    - Are identical or very similar to the parent factor
+    - Are duplicated within this batch
+    - Have an empty description
+    - Have a trivially uninformative description
+    """
+    kept: list[GeneratedFactor] = []
+    excluded: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    for f in factors:
+        name = f.title.strip()
+        desc = f.description.strip()
+
+        if not name:
+            excluded.append(("(空)", "name空"))
+        elif name in _GENERIC_NAMES:
+            excluded.append((name, "汎用語のみ"))
+        elif parent_factor and name == parent_factor.strip():
+            excluded.append((name, "親要因と同一"))
+        elif parent_factor and _resembles_parent(name, parent_factor):
+            excluded.append((name, "親要因に酷似"))
+        elif name in seen:
+            excluded.append((name, "バッチ内重複"))
+        elif not desc:
+            excluded.append((name, "description空"))
+        elif _is_trivial_description(desc, name):
+            excluded.append((name, f"説明が不十分({desc[:30]!r})"))
+        else:
+            seen.add(name)
+            kept.append(f)
+
+    return kept, excluded
+
 # --- Mock data for various scenarios ---
 MOCK_FACTORS = {
     1: [
@@ -333,55 +419,63 @@ class OllamaProvider(AIProvider):
         parent_factor: Optional[str],
         context: dict,
     ) -> str:
-        level_name = LEVEL_NAMES.get(target_level, f"レベル{target_level}要因")
         parent_desc = parent_factor or top_event
         path_str = " > ".join(parent_path) if parent_path else top_event
-
-        # FTA factor generation prompt for Ollama.
-        # Design principles:
-        #   - Compact output (name ≤30 chars, description ≤80 chars) reduces tokens
-        #   - Quality constraints prevent vague / duplicate / parent-paraphrase answers
-        #   - confidence field lets reviewers prioritise which factors to investigate
-        #   - Existing titles are passed to avoid duplicate generation on re-runs
-        factor_count = int(context.get("factor_count", 5))
+        factor_count = int(context.get("factor_count", 4))
         existing_titles: list[str] = context.get("existing_titles") or []
 
         existing_section = ""
         if existing_titles:
-            existing_section = (
-                "\n【既存の要因（重複禁止・これらと同じ内容は出力しないこと）】\n"
-                + "\n".join(f"- {t}" for t in existing_titles)
-            )
+            lines = "\n".join(f"- {t}" for t in existing_titles)
+            existing_section = f"\n【既存要因（これらと同じ意味の要因は出力しないこと）】\n{lines}\n"
 
-        confidence_guide = (
-            'confidence: "high"＝この要因が直接原因である可能性が高い、'
-            '"medium"＝可能性がある、"low"＝念のため確認すべき'
-        )
-
-        return f"""あなたはFTA（Fault Tree Analysis：故障の木解析）の分析者です。
-以下の親要因について、その直接原因となる{level_name}を{factor_count}件出力してください。
+        return f"""あなたはFTA（Fault Tree Analysis：故障の木解析）の専門家です。
+以下の「親要因」の直接原因となる子要因を{factor_count}件、日本語で出力してください。
 
 【分析情報】
 頂上事象: {top_event}
 親要因: {parent_desc}
 要因パス: {path_str}
-
-【品質要件（厳守）】
-- 親要因の直接原因のみを出す（抽象概念・間接原因・推測は禁止）
-- 親要因の言い換え・単なる具体例の羅列は禁止
-- 重複する内容は禁止
-- 現場で「はい/いいえ」で確認できる具体的な粒度にする
-- {level_name}の粒度（一次=大分類、二次=一次の直接原因、三次=現場確認可能な具体的事象）
 {existing_section}
-【言語・形式（厳守）】
-- 必ず日本語で出力する（英語禁止）
-- JSONオブジェクトのみ出力する（説明文・Markdown・コードブロック禁止）
-- name は30文字以内を目安にする
-- description は現場で確認できる観点を80文字以内を目安に記述する
-- {confidence_guide}
+【子要因の品質要件（必ず守ること）】
+- 親要因の「直接原因」のみを出す（間接原因・抽象概念・推測は禁止）
+- 親要因よりも必ず具体化された内容にする（抽象度を上げない）
+- 現場で「はい/いいえ」で確認できる粒度にする
+- 親要因の言い換えや、語尾だけを変えた表現は禁止
+- 同じ意味の要因を複数出すことは禁止
 
-【出力形式（厳守）】
-{{"factors": [{{"name": "要因名（日本語）", "description": "確認観点（日本語）", "confidence": "high"}}]}}"""
+【nameに禁止する内容】
+- 「原因」「要因」「問題」「不備」「障害」「エラー」「失敗」「その他」だけの名前
+- 親要因と同じ名前、または語尾だけを変えた名前
+- 単語1つだけの抽象的な名前（例：「不整合」「遅延」「不足」）
+- 「〜が原因である」「〜が問題である」のように、確認観点がない表現
+
+【良い要因名の例（具体的で確認可能な粒度）】
+- 設定変更の反映漏れ
+- 冗長構成の切替失敗
+- 依存サービスの応答遅延
+- リソース使用率の上限到達
+- 認証・認可処理の失敗
+- 名前解決の失敗
+- バージョン差異による不整合
+- 証明書・有効期限の管理漏れ
+- 監視アラートの検知遅延
+- 変更作業の影響確認不足
+
+【参考観点（必要なものだけ使うこと）】
+構成・設定 / ソフトウェア・バージョン / ハードウェア・リソース / ネットワーク・通信経路
+認証・権限 / 名前解決 / 外部サービス・依存 / 監視・検知
+運用手順・変更管理 / 復旧対応・判断 / ログ・調査 / キャパシティ・性能
+冗長化・切替 / セキュリティ設定 / 証明書・期限管理
+
+【出力形式（必ず守ること）】
+- 必ず日本語で出力する（英語禁止）
+- JSONオブジェクトのみ出力する（前置き・補足・説明文・Markdown禁止）
+- nameは30文字以内を目安にする
+- descriptionは現場で確認できる観点を80文字以内を目安に記述する
+- confidence: "high"=直接原因の可能性が高い / "medium"=可能性あり / "low"=念のため確認
+
+{{"factors": [{{"name": "設定変更の反映漏れ", "description": "直近の設定変更が全ノードに反映されているか変更履歴で確認する", "confidence": "high"}}]}}"""
 
     @staticmethod
     def _normalize_factors(parsed: object) -> list[GeneratedFactor]:
@@ -612,33 +706,52 @@ class OllamaProvider(AIProvider):
             raise RuntimeError(f"Ollamaのレスポンス構造が想定外です: {e}") from e
 
         # Log Ollama eval metrics for performance analysis
-        eval_count      = data.get("eval_count", 0)
-        eval_dur_s      = data.get("eval_duration", 0) / 1e9
-        total_dur_s     = data.get("total_duration", 0) / 1e9
-        prompt_tokens   = data.get("prompt_eval_count", 0)
+        eval_count        = data.get("eval_count", 0)
+        eval_dur_s        = data.get("eval_duration", 0) / 1e9
+        total_dur_s       = data.get("total_duration", 0) / 1e9
+        load_dur_s        = data.get("load_duration", 0) / 1e9
+        prompt_tokens     = data.get("prompt_eval_count", 0)
+        prompt_eval_dur_s = data.get("prompt_eval_duration", 0) / 1e9
         logger.info(
-            "Ollama response | model=%s payload_model=%s "
-            "prompt_tokens=%d eval_tokens=%d eval_time=%.1fs total_time=%.1fs content_len=%d",
-            data.get("model", self.model), payload["model"],
-            prompt_tokens, eval_count, eval_dur_s, total_dur_s, len(content),
+            "Ollama stats | model=%s level=%d parent=%r "
+            "prompt_tokens=%d prompt_eval_time=%.1fs "
+            "eval_tokens=%d eval_time=%.1fs "
+            "load_time=%.1fs total_time=%.1fs content_len=%d",
+            data.get("model", self.model), target_level, parent_factor or "(top event)",
+            prompt_tokens, prompt_eval_dur_s,
+            eval_count, eval_dur_s,
+            load_dur_s, total_dur_s, len(content),
         )
         logger.debug("Ollama raw content: %s", content[:500])
 
         factors = self._extract_factors(content)
+        raw_count = len(factors)
 
-        # Truncate to requested count (AI may return more than requested)
+        # Quality filter: remove abstract, duplicate, or trivially bad factors
+        factors, excluded = filter_generated_factors(factors, parent_factor)
+        if excluded:
+            for title, reason in excluded:
+                logger.info(
+                    "Ollama factor excluded | level=%d parent=%r title=%r reason=%s",
+                    target_level, parent_factor or "(top event)", title, reason,
+                )
+
         factor_count = int(context.get("factor_count", 0))
+        logger.info(
+            "Ollama generation | model=%s level=%d parent=%r "
+            "limit=%d raw=%d filtered_out=%d kept=%d",
+            payload["model"], target_level, parent_factor or "(top event)",
+            factor_count, raw_count, len(excluded), len(factors),
+        )
+
+        # Truncate to requested count after filtering (AI may return more than requested)
         if factor_count > 0 and len(factors) > factor_count:
             logger.info(
-                "Ollama truncating %d factors to %d (factor_count limit)",
+                "Ollama truncating %d kept factors to limit=%d",
                 len(factors), factor_count,
             )
             factors = factors[:factor_count]
 
-        logger.info(
-            "Ollama generation complete | level=%d parent=%s count=%d",
-            target_level, parent_factor or "(top event)", len(factors),
-        )
         return factors
 
 

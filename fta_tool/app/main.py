@@ -247,12 +247,9 @@ async def generate_factors(
                 },
             )
             elapsed_node_ms = int((time.time() - t_node_start) * 1000)
-            logger.info(
-                "generate_factors | analysis=%d level=%d parent=%s count=%d elapsed=%dms",
-                analysis_id, level, parent_factor or "(top event)", len(factors), elapsed_node_ms,
-            )
         except RuntimeError as e:
-            logger.error(f"AI generation error: {e}")
+            logger.error("AI generation error | analysis=%d level=%d parent=%r: %s",
+                         analysis_id, level, parent_factor or "(top event)", e)
             errors.append(str(e))
             continue
 
@@ -261,9 +258,15 @@ async def generate_factors(
             default=-1,
         )
 
+        created_this = 0
+        skipped_dedup_this = 0
         for i, factor in enumerate(factors):
             if crud.node_title_exists(db, analysis_id, parent_id_val, level, factor.title):
-                total_skipped += 1
+                logger.info(
+                    "dedup skip | level=%d parent=%r title=%r (already in DB)",
+                    level, parent_factor or "(top event)", factor.title,
+                )
+                skipped_dedup_this += 1
                 continue
 
             node_data = {
@@ -277,7 +280,16 @@ async def generate_factors(
                 "display_order": existing_max_order + i + 1,
             }
             crud.create_node(db, analysis_id, node_data)
-            total_created += 1
+            created_this += 1
+
+        total_created += created_this
+        total_skipped += skipped_dedup_this
+        logger.info(
+            "generate_factors summary | analysis=%d level=%d parent=%r "
+            "limit=%d ai_returned=%d created=%d skipped_dedup=%d elapsed=%dms",
+            analysis_id, level, parent_factor or "(top event)",
+            factor_count, len(factors), created_this, skipped_dedup_this, elapsed_node_ms,
+        )
 
     elapsed_ms = int((time.time() - t_start) * 1000)
     skip_note = f"（{total_skipped}件重複スキップ）" if total_skipped else ""

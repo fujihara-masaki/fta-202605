@@ -126,8 +126,28 @@ curl http://localhost:11434/api/tags
 ```ini
 AI_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=gemma3:4b
+OLLAMA_MODEL=gemma3:1b
+
+# タイムアウト（gemma3:1b なら 1800 秒あれば余裕あり）
+OLLAMA_TIMEOUT_SECONDS=1800
+OLLAMA_KEEP_ALIVE=10m
+
+# 生成件数（速度とのトレードオフ: 件数を減らすと速くなる）
+FTA_PRIMARY_FACTOR_COUNT=4
+FTA_SECONDARY_FACTOR_COUNT=3
+FTA_TERTIARY_FACTOR_COUNT=2
+FTA_ADDITIONAL_FACTOR_COUNT=2
+
+# 推論オプション（品質を下げないため num_predict は 512 未満にしない）
+OLLAMA_NUM_PREDICT=768
+OLLAMA_TEMPERATURE=0.2
+OLLAMA_NUM_CTX=4096
 ```
+
+> **速度チューニングの目安**
+> 1. まず `FTA_*_FACTOR_COUNT` を減らす（件数を 1〜2 件減らすだけで大幅に速くなる）
+> 2. それでも遅い場合は `OLLAMA_NUM_PREDICT=512` 程度へ下げる
+> 3. `OLLAMA_NUM_CTX` を 2048 に下げることでさらに高速化できるが、長い要因パスの精度が下がる場合がある
 
 **5. FTA ツールを起動する**
 
