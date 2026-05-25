@@ -83,6 +83,7 @@ class MockAIProvider(AIProvider):
     """
     Mock AI provider for local testing without external API.
     Returns plausible FTA factors based on input context.
+    Respects factor_count from context (default 5).
     """
 
     def generate_factors(
@@ -94,25 +95,22 @@ class MockAIProvider(AIProvider):
         parent_factor: Optional[str],
         context: dict,
     ) -> list[GeneratedFactor]:
+        factor_count = int(context.get("factor_count", 5))
         base_factors = MOCK_FACTORS.get(target_level, MOCK_FACTORS[1])
         results = []
         parent_label = parent_factor or top_event
 
-        for i, (title, desc, rationale) in enumerate(base_factors):
-            factor_title = title
-            factor_desc = f"「{parent_label}」に関連する{desc}"
-            factor_rationale = rationale
-            check_points = [
-                f"{title}に関するログ・記録を確認する",
-                f"直近の変更作業との関連を確認する",
-                f"担当者へのヒアリングを実施する",
-                f"監視ツールのアラート履歴を確認する",
-            ]
+        for title, desc, rationale in base_factors[:factor_count]:
             results.append(GeneratedFactor(
-                title=factor_title,
-                description=factor_desc,
-                rationale=factor_rationale,
-                check_points=check_points,
+                title=title,
+                description=f"「{parent_label}」に関連する{desc}",
+                rationale=rationale,
+                check_points=[
+                    f"{title}に関するログ・記録を確認する",
+                    "直近の変更作業との関連を確認する",
+                    "担当者へのヒアリングを実施する",
+                    "監視ツールのアラート履歴を確認する",
+                ],
             ))
         return results
 
@@ -256,8 +254,9 @@ class OllamaProvider(AIProvider):
         3. Set AI_PROVIDER=ollama in .env and start the FTA tool
     """
 
-    # JSON Schema passed to Ollama's format field.
-    # Constrains output to {"factors": [{title, description, rationale, check_points}]}
+    # JSON Schema passed to Ollama's format field (structured output).
+    # Compact format: {name, description, confidence} reduces tokens and
+    # improves generation speed compared to the full 4-field schema.
     _FORMAT_SCHEMA: dict = {
         "type": "object",
         "properties": {
@@ -266,15 +265,11 @@ class OllamaProvider(AIProvider):
                 "items": {
                     "type": "object",
                     "properties": {
-                        "title": {"type": "string"},
+                        "name":        {"type": "string"},
                         "description": {"type": "string"},
-                        "rationale": {"type": "string"},
-                        "check_points": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
+                        "confidence":  {"type": "string", "enum": ["high", "medium", "low"]},
                     },
-                    "required": ["title", "description", "rationale", "check_points"],
+                    "required": ["name", "description", "confidence"],
                 },
             }
         },
@@ -293,10 +288,10 @@ class OllamaProvider(AIProvider):
     ]
 
     def __init__(self):
-        self.base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
-        self.model = os.environ.get("OLLAMA_MODEL", "gemma3:4b")
+        self.base_url   = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+        self.model      = os.environ.get("OLLAMA_MODEL", "gemma3:4b")
         self.keep_alive = os.environ.get("OLLAMA_KEEP_ALIVE", "10m")
-        self.chat_url = f"{self.base_url}/api/chat"
+        self.chat_url   = f"{self.base_url}/api/chat"
 
         raw_timeout = os.environ.get("OLLAMA_TIMEOUT_SECONDS", "180")
         try:
@@ -307,13 +302,25 @@ class OllamaProvider(AIProvider):
             )
             self.timeout = 180.0
 
-        # Log resolved config so operators can confirm env vars were read correctly.
-        # This fires once per request (get_ai_provider creates a new instance each time).
+        # Ollama inference options (tunable via .env)
+        try:
+            self.num_predict = int(os.environ.get("OLLAMA_NUM_PREDICT", "768"))
+        except ValueError:
+            self.num_predict = 768
+        try:
+            self.temperature = float(os.environ.get("OLLAMA_TEMPERATURE", "0.2"))
+        except ValueError:
+            self.temperature = 0.2
+        try:
+            self.num_ctx = int(os.environ.get("OLLAMA_NUM_CTX", "4096"))
+        except ValueError:
+            self.num_ctx = 4096
+
         logger.info(
-            "OllamaProvider init | model=%s timeout=%.0fs keep_alive=%s url=%s",
-            self.model,
-            self.timeout,
-            self.keep_alive,
+            "OllamaProvider init | model=%s timeout=%.0fs keep_alive=%s "
+            "num_predict=%d temperature=%.2f num_ctx=%d url=%s",
+            self.model, self.timeout, self.keep_alive,
+            self.num_predict, self.temperature, self.num_ctx,
             self.chat_url,
         )
 
@@ -324,61 +331,57 @@ class OllamaProvider(AIProvider):
         target_level: int,
         parent_path: list[str],
         parent_factor: Optional[str],
+        context: dict,
     ) -> str:
         level_name = LEVEL_NAMES.get(target_level, f"レベル{target_level}要因")
         parent_desc = parent_factor or top_event
         path_str = " > ".join(parent_path) if parent_path else top_event
 
-        # FTA factor generation prompt for Ollama local LLM.
-        # Key constraints for reliable structured output:
-        #   - Output must be a JSON object with a "factors" key (matches _FORMAT_SCHEMA)
-        #   - Each element must have all four required fields
-        #   - Markdown, code blocks, and prose are explicitly forbidden
-        #   - temperature=0 reduces creative deviation from the schema
-        #   - Japanese output is explicitly required (some models default to English)
-        return f"""あなたはFTA（Fault Tree Analysis：故障の木解析）の専門家です。
-以下の情報を元に、{level_name}の候補を5件生成してください。
+        # FTA factor generation prompt for Ollama.
+        # Design principles:
+        #   - Compact output (name ≤30 chars, description ≤80 chars) reduces tokens
+        #   - Quality constraints prevent vague / duplicate / parent-paraphrase answers
+        #   - confidence field lets reviewers prioritise which factors to investigate
+        #   - Existing titles are passed to avoid duplicate generation on re-runs
+        factor_count = int(context.get("factor_count", 5))
+        existing_titles: list[str] = context.get("existing_titles") or []
 
-【分析タイトル】
-{analysis_title}
+        existing_section = ""
+        if existing_titles:
+            existing_section = (
+                "\n【既存の要因（重複禁止・これらと同じ内容は出力しないこと）】\n"
+                + "\n".join(f"- {t}" for t in existing_titles)
+            )
 
-【頂上事象】
-{top_event}
+        confidence_guide = (
+            'confidence: "high"＝この要因が直接原因である可能性が高い、'
+            '"medium"＝可能性がある、"low"＝念のため確認すべき'
+        )
 
-【対象の親要因】
-{parent_desc}
+        return f"""あなたはFTA（Fault Tree Analysis：故障の木解析）の分析者です。
+以下の親要因について、その直接原因となる{level_name}を{factor_count}件出力してください。
 
-【要因パス】
-{path_str}
+【分析情報】
+頂上事象: {top_event}
+親要因: {parent_desc}
+要因パス: {path_str}
 
-【生成ルール】
-- 要因はMECEになるよう心がけてください。
-- 技術要因、運用要因、手順要因、体制要因、認識差、監視・検知、変更管理、設計、外部依存、人的要因を必要に応じて考慮してください。
-- {level_name}の観点で生成してください。
-  - 一次要因: 大分類（技術的・運用的・体制的等の観点）
-  - 二次要因: 一次要因の具体化
-  - 三次要因: 調査・確認可能な具体的原因候補
-- 断定せず、「～の可能性がある」「～が考えられる」等の候補として表現してください。
-
-【厳守事項】
-- 必ず日本語で出力すること。英語での出力は禁止。
-- 出力はJSONのみ。JSON以外の説明文・Markdown・コードブロックは一切出力しないこと。
-- "factors" というキーを持つJSONオブジェクトで返すこと。
-- factors は配列であること。
-- 各要素は title, description, rationale, check_points を必ず持つこと。
-- check_points は日本語の文字列の配列であること。
+【品質要件（厳守）】
+- 親要因の直接原因のみを出す（抽象概念・間接原因・推測は禁止）
+- 親要因の言い換え・単なる具体例の羅列は禁止
+- 重複する内容は禁止
+- 現場で「はい/いいえ」で確認できる具体的な粒度にする
+- {level_name}の粒度（一次=大分類、二次=一次の直接原因、三次=現場確認可能な具体的事象）
+{existing_section}
+【言語・形式（厳守）】
+- 必ず日本語で出力する（英語禁止）
+- JSONオブジェクトのみ出力する（説明文・Markdown・コードブロック禁止）
+- name は30文字以内を目安にする
+- description は現場で確認できる観点を80文字以内を目安に記述する
+- {confidence_guide}
 
 【出力形式（厳守）】
-{{
-  "factors": [
-    {{
-      "title": "要因名（簡潔に・日本語）",
-      "description": "要因の説明（2〜3文・日本語）",
-      "rationale": "この要因を候補にした理由（日本語）",
-      "check_points": ["確認観点1（日本語）", "確認観点2（日本語）", "確認観点3（日本語）"]
-    }}
-  ]
-}}"""
+{{"factors": [{{"name": "要因名（日本語）", "description": "確認観点（日本語）", "confidence": "high"}}]}}"""
 
     @staticmethod
     def _normalize_factors(parsed: object) -> list[GeneratedFactor]:
@@ -424,11 +427,24 @@ class OllamaProvider(AIProvider):
             )
 
         # --- Step 2: convert each element ---
+        _CONFIDENCE_LABEL = {"high": "可能性高", "medium": "可能性あり", "low": "念のため確認"}
+
         normalized: list[GeneratedFactor] = []
         for i, item in enumerate(parsed):
             if isinstance(item, dict):
                 try:
-                    normalized.append(GeneratedFactor(**item))
+                    if "name" in item and "title" not in item:
+                        # New compact Ollama format: {name, description, confidence}
+                        confidence = item.get("confidence", "medium")
+                        normalized.append(GeneratedFactor(
+                            title=item["name"].strip(),
+                            description=item.get("description", "").strip(),
+                            rationale=f"AI信頼度: {_CONFIDENCE_LABEL.get(confidence, confidence)}",
+                            check_points=[],
+                        ))
+                    else:
+                        # Legacy full format: {title, description, rationale, check_points}
+                        normalized.append(GeneratedFactor(**item))
                 except (TypeError, ValueError) as e:
                     logger.error(
                         "Ollama factor[%d] validation error: %s | item: %s",
@@ -436,7 +452,7 @@ class OllamaProvider(AIProvider):
                     )
                     raise RuntimeError(
                         f"OllamaのJSON要素[{i}]がGeneratedFactorの形式と一致しません: {e}\n"
-                        "title / description / rationale / check_points の各フィールドが必要です。"
+                        "name / description / confidence（または title / description / rationale / check_points）が必要です。"
                     ) from e
             elif isinstance(item, str):
                 # Rescue path: model returned plain strings instead of dicts
@@ -504,7 +520,7 @@ class OllamaProvider(AIProvider):
         parent_factor: Optional[str],
         context: dict,
     ) -> list[GeneratedFactor]:
-        prompt = self._build_prompt(analysis_title, top_event, target_level, parent_path, parent_factor)
+        prompt = self._build_prompt(analysis_title, top_event, target_level, parent_path, parent_factor, context)
 
         payload = {
             "model": self.model,
@@ -523,7 +539,11 @@ class OllamaProvider(AIProvider):
             "stream": False,
             "keep_alive": self.keep_alive,
             "format": OllamaProvider._FORMAT_SCHEMA,
-            "options": {"temperature": 0},
+            "options": {
+                "temperature": self.temperature,
+                "num_predict": self.num_predict,
+                "num_ctx": self.num_ctx,
+            },
         }
 
         # Log the payload model name explicitly so operators can confirm
@@ -591,14 +611,35 @@ class OllamaProvider(AIProvider):
             )
             raise RuntimeError(f"Ollamaのレスポンス構造が想定外です: {e}") from e
 
+        # Log Ollama eval metrics for performance analysis
+        eval_count      = data.get("eval_count", 0)
+        eval_dur_s      = data.get("eval_duration", 0) / 1e9
+        total_dur_s     = data.get("total_duration", 0) / 1e9
+        prompt_tokens   = data.get("prompt_eval_count", 0)
         logger.info(
-            "Ollama response received | model=%s content_length=%d",
-            data.get("model", self.model),
-            len(content),
+            "Ollama response | model=%s payload_model=%s "
+            "prompt_tokens=%d eval_tokens=%d eval_time=%.1fs total_time=%.1fs content_len=%d",
+            data.get("model", self.model), payload["model"],
+            prompt_tokens, eval_count, eval_dur_s, total_dur_s, len(content),
         )
         logger.debug("Ollama raw content: %s", content[:500])
 
-        return self._extract_factors(content)
+        factors = self._extract_factors(content)
+
+        # Truncate to requested count (AI may return more than requested)
+        factor_count = int(context.get("factor_count", 0))
+        if factor_count > 0 and len(factors) > factor_count:
+            logger.info(
+                "Ollama truncating %d factors to %d (factor_count limit)",
+                len(factors), factor_count,
+            )
+            factors = factors[:factor_count]
+
+        logger.info(
+            "Ollama generation complete | level=%d parent=%s count=%d",
+            target_level, parent_factor or "(top event)", len(factors),
+        )
+        return factors
 
 
 class HttpCopilotProvider(AIProvider):

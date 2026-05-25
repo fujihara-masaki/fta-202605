@@ -92,8 +92,8 @@ FACTORS_LIST_STR = [
 # Unsupported: dict with no list value
 OBJECT_NO_LIST = {"message": "エラーが発生しました", "code": 500}
 
-# Unsupported: wrong schema (missing required fields)
-LIST_WRONG_SCHEMA = [{"name": "認証の問題", "detail": "詳細不明"}]
+# Unsupported: wrong schema (missing both 'name' and 'title' — neither format matches)
+LIST_WRONG_SCHEMA = [{"foo": "認証の問題", "detail": "詳細不明"}]
 
 # Unsupported: list containing an unexpected type
 LIST_WITH_INT = [42, 43]
@@ -187,3 +187,84 @@ def test_extract_factors_invalid_json_raises():
     with pytest.raises(RuntimeError) as exc_info:
         OllamaProvider._extract_factors("これはJSONではありません。")
     assert "JSON" in str(exc_info.value)
+
+
+# --- New compact format {name, description, confidence} tests ---
+
+FACTORS_COMPACT_FORMAT = {
+    "factors": [
+        {"name": "認証サーバの障害", "description": "認証ログにエラーが記録されているか確認する", "confidence": "high"},
+        {"name": "ネットワーク経路の問題", "description": "ping/tracerouteで疎通を確認する", "confidence": "medium"},
+        {"name": "設定ファイルの誤り", "description": "直近の設定変更差分を確認する", "confidence": "low"},
+    ]
+}
+
+
+def test_normalize_factors_compact_format():
+    """新コンパクト形式 {name, description, confidence} を正常にGeneratedFactorに変換できる。"""
+    factors = OllamaProvider._normalize_factors(FACTORS_COMPACT_FORMAT)
+    assert len(factors) == 3
+    assert factors[0].title == "認証サーバの障害"
+    assert factors[0].description == "認証ログにエラーが記録されているか確認する"
+    assert "可能性高" in factors[0].rationale
+    assert isinstance(factors[0].check_points, list)
+
+    assert factors[1].title == "ネットワーク経路の問題"
+    assert "可能性あり" in factors[1].rationale
+
+    assert factors[2].title == "設定ファイルの誤り"
+    assert "念のため確認" in factors[2].rationale
+
+
+def test_normalize_factors_compact_format_bare_list():
+    """コンパクト形式がベアリストで返ってきても変換できる。"""
+    factors = OllamaProvider._normalize_factors(FACTORS_COMPACT_FORMAT["factors"])
+    assert len(factors) == 3
+    assert factors[0].title == "認証サーバの障害"
+
+
+def test_normalize_factors_compact_format_unknown_confidence():
+    """confidenceが想定外の値でもRuntimeErrorにならずGeneratedFactorを返す。"""
+    data = {"factors": [{"name": "テスト要因", "description": "説明", "confidence": "very_high"}]}
+    factors = OllamaProvider._normalize_factors(data)
+    assert len(factors) == 1
+    assert "very_high" in factors[0].rationale
+
+
+def test_extract_factors_compact_format_end_to_end():
+    """JSON文字列のコンパクト形式をend-to-endで変換できる。"""
+    import json
+    content = json.dumps(FACTORS_COMPACT_FORMAT)
+    factors = OllamaProvider._extract_factors(content)
+    assert len(factors) == 3
+    assert factors[2].title == "設定ファイルの誤り"
+
+
+# --- factor_count truncation tests ---
+
+def test_mock_provider_respects_factor_count():
+    """MockAIProviderはcontextのfactor_countを尊重して件数を絞る。"""
+    provider = MockAIProvider()
+    factors = provider.generate_factors(
+        analysis_title="テスト",
+        top_event="障害発生",
+        target_level=1,
+        parent_path=[],
+        parent_factor=None,
+        context={"factor_count": 2},
+    )
+    assert len(factors) == 2
+
+
+def test_mock_provider_factor_count_default():
+    """factor_countが指定されない場合はデフォルト5件を返す。"""
+    provider = MockAIProvider()
+    factors = provider.generate_factors(
+        analysis_title="テスト",
+        top_event="障害発生",
+        target_level=1,
+        parent_path=[],
+        parent_factor=None,
+        context={},
+    )
+    assert len(factors) == 5

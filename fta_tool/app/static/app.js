@@ -28,8 +28,31 @@ async function saveTopEvent(analysisId) {
   }
 }
 
+// ===== Generation Status Badge =====
+function setNodeGenStatus(nodeId, status, count) {
+  const card = document.getElementById(`node-${nodeId}`);
+  if (!card) return;
+  let badge = card.querySelector('.gen-status-badge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'gen-status-badge';
+    const header = card.querySelector('.node-card-header');
+    if (header) header.appendChild(badge);
+  }
+  badge.className = `gen-status-badge gen-status-${status}`;
+  if (status === 'generating') badge.textContent = '生成中…';
+  else if (status === 'done') badge.textContent = `+${count}件`;
+  else if (status === 'error') badge.textContent = 'エラー';
+  else badge.textContent = '';
+}
+
 // ===== Generate Factors =====
 async function generateFactors(analysisId, level) {
+  if (level >= 2) {
+    await generateFactorsSequential(analysisId, level);
+    return;
+  }
+  // Level 1 — single call, show full-page overlay
   const overlay = document.getElementById('loadingOverlay');
   if (overlay) overlay.classList.remove('hidden');
   try {
@@ -49,6 +72,79 @@ async function generateFactors(analysisId, level) {
   } catch (e) {
     showToast('通信エラーが発生しました', 'error');
     if (overlay) overlay.classList.add('hidden');
+  }
+}
+
+// ===== Generate Factors Sequential (level 2/3 — per parent card) =====
+async function generateFactorsSequential(analysisId, level) {
+  const parentLevel = level - 1;
+  const parentCards = document.querySelectorAll(`.level-${parentLevel}-card.yes`);
+
+  if (parentCards.length === 0) {
+    showToast('Yes評価の要因がありません', 'error');
+    return;
+  }
+
+  showToast(`${parentCards.length}件の親要因から順に生成中...`);
+
+  let totalCreated = 0;
+  let totalErrors = 0;
+
+  for (const card of parentCards) {
+    const nodeId = card.dataset.nodeId;
+    setNodeGenStatus(nodeId, 'generating');
+
+    try {
+      const res = await fetch(`/analyses/${analysisId}/generate/level/${level}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parent_id: parseInt(nodeId) }),
+      });
+      const data = await res.json();
+      if (data.success || data.created > 0) {
+        setNodeGenStatus(nodeId, 'done', data.created);
+        totalCreated += data.created;
+      } else {
+        setNodeGenStatus(nodeId, 'error');
+        totalErrors++;
+      }
+    } catch (e) {
+      setNodeGenStatus(nodeId, 'error');
+      totalErrors++;
+    }
+  }
+
+  if (totalCreated > 0) {
+    showToast(`合計${totalCreated}件の要因を生成しました`);
+    setTimeout(() => location.reload(), 1200);
+  } else {
+    const msg = totalErrors > 0 ? 'エラーが発生しました' : '新規要因はありませんでした';
+    showToast(msg, totalErrors > 0 ? 'error' : 'success');
+  }
+}
+
+// ===== Additional Generation =====
+async function generateAdditional(analysisId, parentNodeId, childLevel) {
+  if (parentNodeId) setNodeGenStatus(parentNodeId, 'generating');
+
+  try {
+    const res = await fetch(`/analyses/${analysisId}/generate/level/${childLevel}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parent_id: parentNodeId, additional: true }),
+    });
+    const data = await res.json();
+    if (data.success || data.created > 0) {
+      if (parentNodeId) setNodeGenStatus(parentNodeId, 'done', data.created);
+      showToast(data.message || `${data.created}件の要因を追加しました`);
+      setTimeout(() => location.reload(), 800);
+    } else {
+      if (parentNodeId) setNodeGenStatus(parentNodeId, 'error');
+      showToast(data.message || '生成できませんでした', 'error');
+    }
+  } catch (e) {
+    if (parentNodeId) setNodeGenStatus(parentNodeId, 'error');
+    showToast('通信エラーが発生しました', 'error');
   }
 }
 

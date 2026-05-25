@@ -131,6 +131,13 @@ a:hover { text-decoration: underline; }
 .toast.error { background: #e74c3c; }
 .toast.hidden { display: none; }
 
+/* ===== Generation Status Badge ===== */
+.gen-status-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 700; flex-shrink: 0; }
+.gen-status-generating { background: #fef9e7; color: #d68910; border: 1px solid #f0c030; animation: badge-pulse 1s ease-in-out infinite; }
+.gen-status-done { background: #eafaf1; color: #27ae60; border: 1px solid #a9dfbf; }
+.gen-status-error { background: #fdedec; color: #c0392b; border: 1px solid #e74c3c; }
+@keyframes badge-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
 /* ===== Loading ===== */
 .loading-overlay { position: fixed; inset: 0; background: rgba(255,255,255,0.8); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 250; gap: 16px; }
 .loading-overlay.hidden { display: none; }

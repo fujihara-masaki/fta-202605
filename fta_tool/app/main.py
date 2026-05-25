@@ -1,6 +1,7 @@
 import logging
 import os
 import pathlib
+import time
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -36,19 +37,43 @@ else:
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+def _get_factor_count(level_or_key) -> int:
+    """Return the configured factor count for the given level or key."""
+    defaults = {1: "4", 2: "3", 3: "2", "additional": "2"}
+    env_keys = {
+        1: "FTA_PRIMARY_FACTOR_COUNT",
+        2: "FTA_SECONDARY_FACTOR_COUNT",
+        3: "FTA_TERTIARY_FACTOR_COUNT",
+        "additional": "FTA_ADDITIONAL_FACTOR_COUNT",
+    }
+    env_key = env_keys.get(level_or_key, "FTA_PRIMARY_FACTOR_COUNT")
+    default  = defaults.get(level_or_key, "4")
+    try:
+        return max(1, int(os.environ.get(env_key, default)))
+    except ValueError:
+        return int(default)
+
+
 def _log_startup_config() -> None:
     """Log effective configuration values at startup for easy diagnostics."""
     ai_provider = os.environ.get("AI_PROVIDER", "mock")
     logger.info("=== FTA Tool startup configuration ===")
-    logger.info("  AI_PROVIDER           = %s", ai_provider)
+    logger.info("  AI_PROVIDER                = %s", ai_provider)
+    logger.info("  FTA_PRIMARY_FACTOR_COUNT   = %s", os.environ.get("FTA_PRIMARY_FACTOR_COUNT", "4"))
+    logger.info("  FTA_SECONDARY_FACTOR_COUNT = %s", os.environ.get("FTA_SECONDARY_FACTOR_COUNT", "3"))
+    logger.info("  FTA_TERTIARY_FACTOR_COUNT  = %s", os.environ.get("FTA_TERTIARY_FACTOR_COUNT", "2"))
+    logger.info("  FTA_ADDITIONAL_FACTOR_COUNT= %s", os.environ.get("FTA_ADDITIONAL_FACTOR_COUNT", "2"))
     if ai_provider == "ollama":
-        logger.info("  OLLAMA_BASE_URL       = %s", os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"))
-        logger.info("  OLLAMA_MODEL          = %s", os.environ.get("OLLAMA_MODEL", "gemma3:4b"))
-        logger.info("  OLLAMA_TIMEOUT_SECONDS= %s", os.environ.get("OLLAMA_TIMEOUT_SECONDS", "180"))
-        logger.info("  OLLAMA_KEEP_ALIVE     = %s", os.environ.get("OLLAMA_KEEP_ALIVE", "10m"))
+        logger.info("  OLLAMA_BASE_URL            = %s", os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"))
+        logger.info("  OLLAMA_MODEL               = %s", os.environ.get("OLLAMA_MODEL", "gemma3:4b"))
+        logger.info("  OLLAMA_TIMEOUT_SECONDS     = %s", os.environ.get("OLLAMA_TIMEOUT_SECONDS", "180"))
+        logger.info("  OLLAMA_KEEP_ALIVE          = %s", os.environ.get("OLLAMA_KEEP_ALIVE", "10m"))
+        logger.info("  OLLAMA_NUM_PREDICT         = %s", os.environ.get("OLLAMA_NUM_PREDICT", "768"))
+        logger.info("  OLLAMA_TEMPERATURE         = %s", os.environ.get("OLLAMA_TEMPERATURE", "0.2"))
+        logger.info("  OLLAMA_NUM_CTX             = %s", os.environ.get("OLLAMA_NUM_CTX", "4096"))
     elif ai_provider == "azure_openai":
-        logger.info("  AZURE_OPENAI_ENDPOINT = %s", os.environ.get("AZURE_OPENAI_ENDPOINT", "(not set)"))
-        logger.info("  AZURE_OPENAI_DEPLOYMENT=%s", os.environ.get("AZURE_OPENAI_DEPLOYMENT", "(not set)"))
+        logger.info("  AZURE_OPENAI_ENDPOINT      = %s", os.environ.get("AZURE_OPENAI_ENDPOINT", "(not set)"))
+        logger.info("  AZURE_OPENAI_DEPLOYMENT    = %s", os.environ.get("AZURE_OPENAI_DEPLOYMENT", "(not set)"))
         # API key intentionally omitted from logs
     logger.info("=======================================")
 
@@ -155,16 +180,17 @@ async def generate_factors(
 
     data = await request.json()
     parent_id = data.get("parent_id")
+    additional = bool(data.get("additional", False))
+
+    factor_count = _get_factor_count("additional" if additional else level)
 
     nodes = crud.get_nodes_by_analysis(db, analysis_id)
     node_map = {n.id: n for n in nodes}
 
     # Determine parent nodes to generate children for
     if level == 1:
-        # Generate first-level factors from top event (no parent node)
         parent_nodes = [None]
     else:
-        # Generate children for yes-judged nodes of the previous level
         parent_level = level - 1
         if parent_id:
             parent_node = node_map.get(parent_id)
@@ -173,47 +199,71 @@ async def generate_factors(
             parent_nodes = [n for n in nodes if n.level == parent_level and n.user_judgement == "yes"]
 
     if not parent_nodes:
-        return JSONResponse({"success": False, "message": "生成対象の親要因がありません（Yes評価の要因がありません）", "created": 0})
+        return JSONResponse({
+            "success": False,
+            "message": "生成対象の親要因がありません（Yes評価の要因がありません）",
+            "created": 0,
+            "skipped": 0,
+            "elapsed_ms": 0,
+            "parent_id": parent_id,
+        })
 
     ai_provider = get_ai_provider()
     total_created = 0
+    total_skipped = 0
     errors = []
+    t_start = time.time()
 
     for parent_node in parent_nodes:
         # Build parent path
-        parent_path: list[str] = []
-        current = parent_node
         path_nodes = []
+        current = parent_node
         while current is not None:
             path_nodes.append(current.title)
             current = node_map.get(current.parent_id) if current.parent_id else None
         parent_path = list(reversed(path_nodes))
 
         parent_factor = parent_node.title if parent_node else None
+        parent_id_val = parent_node.id if parent_node else None
+
+        existing_titles = [
+            n.title for n in nodes
+            if n.level == level and n.parent_id == parent_id_val
+        ]
 
         try:
+            t_node_start = time.time()
             factors: list[GeneratedFactor] = ai_provider.generate_factors(
                 analysis_title=analysis.title,
                 top_event=analysis.top_event,
                 target_level=level,
                 parent_path=parent_path,
                 parent_factor=parent_factor,
-                context={"analysis_id": analysis_id},
+                context={
+                    "analysis_id": analysis_id,
+                    "factor_count": factor_count,
+                    "existing_titles": existing_titles,
+                    "additional": additional,
+                },
+            )
+            elapsed_node_ms = int((time.time() - t_node_start) * 1000)
+            logger.info(
+                "generate_factors | analysis=%d level=%d parent=%s count=%d elapsed=%dms",
+                analysis_id, level, parent_factor or "(top event)", len(factors), elapsed_node_ms,
             )
         except RuntimeError as e:
             logger.error(f"AI generation error: {e}")
             errors.append(str(e))
             continue
 
-        parent_id_val = parent_node.id if parent_node else None
         existing_max_order = max(
             (n.display_order for n in nodes if n.level == level and n.parent_id == parent_id_val),
             default=-1,
         )
 
         for i, factor in enumerate(factors):
-            # Dedup by title
             if crud.node_title_exists(db, analysis_id, parent_id_val, level, factor.title):
+                total_skipped += 1
                 continue
 
             node_data = {
@@ -229,17 +279,26 @@ async def generate_factors(
             crud.create_node(db, analysis_id, node_data)
             total_created += 1
 
+    elapsed_ms = int((time.time() - t_start) * 1000)
+    skip_note = f"（{total_skipped}件重複スキップ）" if total_skipped else ""
+
     if errors:
         return JSONResponse({
             "success": False,
             "message": f"一部でエラーが発生しました: {'; '.join(errors)}",
             "created": total_created,
+            "skipped": total_skipped,
+            "elapsed_ms": elapsed_ms,
+            "parent_id": parent_id,
         })
 
     return JSONResponse({
         "success": True,
-        "message": f"{total_created}件の要因を生成しました",
+        "message": f"{total_created}件の要因を生成しました{skip_note}",
         "created": total_created,
+        "skipped": total_skipped,
+        "elapsed_ms": elapsed_ms,
+        "parent_id": parent_id,
     })
 
 
