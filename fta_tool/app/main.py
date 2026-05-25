@@ -15,6 +15,7 @@ from . import crud, models, schemas
 from .database import SessionLocal, engine, get_db
 from .services.ai_provider import GeneratedFactor, get_ai_provider
 from .services.export_service import export_csv, export_json, export_markdown
+from .services.prompt_loader import get_factor_generation_prompts
 
 # Load .env from fta_tool/.env, resolved relative to this file so that the
 # location is correct regardless of which directory uvicorn is started from.
@@ -63,6 +64,8 @@ def _log_startup_config() -> None:
     logger.info("  FTA_SECONDARY_FACTOR_COUNT = %s", os.environ.get("FTA_SECONDARY_FACTOR_COUNT", "3"))
     logger.info("  FTA_TERTIARY_FACTOR_COUNT  = %s", os.environ.get("FTA_TERTIARY_FACTOR_COUNT", "2"))
     logger.info("  FTA_ADDITIONAL_FACTOR_COUNT= %s", os.environ.get("FTA_ADDITIONAL_FACTOR_COUNT", "2"))
+    prompt_file = os.environ.get("FTA_PROMPT_FILE", "config/prompts.yaml")
+    logger.info("  FTA_PROMPT_FILE            = %s", prompt_file)
     if ai_provider == "ollama":
         logger.info("  OLLAMA_BASE_URL            = %s", os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"))
         logger.info("  OLLAMA_MODEL               = %s", os.environ.get("OLLAMA_MODEL", "gemma3:4b"))
@@ -82,6 +85,12 @@ def _log_startup_config() -> None:
 async def lifespan(app: FastAPI):
     models.Base.metadata.create_all(bind=engine)
     _log_startup_config()
+    # Pre-load and validate prompt file at startup so errors surface early.
+    # Failures are non-fatal here: mock provider works without the file.
+    try:
+        get_factor_generation_prompts()
+    except (FileNotFoundError, ValueError) as e:
+        logger.warning("プロンプトファイルの読み込みに失敗しました（Ollama生成時にエラーになります）: %s", e)
     yield
 
 

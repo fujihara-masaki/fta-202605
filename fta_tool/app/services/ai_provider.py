@@ -412,74 +412,40 @@ class OllamaProvider(AIProvider):
 
     def _build_prompt(
         self,
-        analysis_title: str,
         top_event: str,
         target_level: int,
         parent_path: list[str],
         parent_factor: Optional[str],
         context: dict,
+        user_template: str,
     ) -> str:
+        """Apply template variables to the user prompt template loaded from YAML."""
+        from .prompt_loader import apply_template
+
         parent_desc = parent_factor or top_event
         path_str = " > ".join(parent_path) if parent_path else top_event
         factor_count = int(context.get("factor_count", 4))
         existing_titles: list[str] = context.get("existing_titles") or []
+        level_name = LEVEL_NAMES.get(target_level, f"レベル{target_level}要因")
 
         existing_section = ""
         if existing_titles:
             lines = "\n".join(f"- {t}" for t in existing_titles)
-            existing_section = f"\n【既存要因（これらと同じ意味の要因は出力しないこと）】\n{lines}\n"
+            existing_section = (
+                "【既存要因（これらと同じ意味の要因は出力しないこと）】\n" + lines + "\n"
+            )
 
-        return f"""あなたはFTA（Fault Tree Analysis：故障の木解析）の専門家です。
-以下の「親要因」の直接原因となる子要因を原則{factor_count}件、日本語で出力してください。
-必ず複数件生成してください（1件のみで終了しないこと）。
+        variables = {
+            "level": level_name,
+            "top_event": top_event,
+            "parent_factor": parent_desc,
+            "path_str": path_str,
+            "desired_count": factor_count,
+            "min_count": max(1, factor_count - 1),
+            "existing_section": existing_section,
+        }
 
-【分析情報】
-頂上事象: {top_event}
-親要因: {parent_desc}
-要因パス: {path_str}
-{existing_section}
-【子要因の品質要件（必ず守ること）】
-- 親要因の「直接原因」のみを出す（間接原因・抽象概念・推測は禁止）
-- 親要因よりも必ず具体化された内容にする（抽象度を上げない）
-- 現場で「はい/いいえ」で確認できる粒度にする
-- 親要因の言い換えや、語尾だけを変えた表現は禁止
-- 同じ意味の要因を複数出すことは禁止
-
-【nameに禁止する内容】
-- 「原因」「要因」「問題」「不備」「障害」「エラー」「失敗」「その他」だけの名前
-- 親要因と同じ名前、または語尾だけを変えた名前
-- 単語1つだけの抽象的な名前（例：「不整合」「遅延」「不足」）
-- 「〜が原因である」「〜が問題である」のように、確認観点がない表現
-
-【良い要因名の例（具体的で確認可能な粒度）】
-- 設定変更の反映漏れ
-- 冗長構成の切替失敗
-- 依存サービスの応答遅延
-- リソース使用率の上限到達
-- 認証・認可処理の失敗
-- 名前解決の失敗
-- バージョン差異による不整合
-- 証明書・有効期限の管理漏れ
-- 監視アラートの検知遅延
-- 変更作業の影響確認不足
-
-【参考観点（必要なものだけ使うこと）】
-構成・設定 / ソフトウェア・バージョン / ハードウェア・リソース / ネットワーク・通信経路
-認証・権限 / 名前解決 / 外部サービス・依存 / 監視・検知
-運用手順・変更管理 / 復旧対応・判断 / ログ・調査 / キャパシティ・性能
-冗長化・切替 / セキュリティ設定 / 証明書・期限管理
-
-【出力形式（必ず守ること）】
-- 必ず日本語で出力する（英語禁止）
-- JSONオブジェクトのみ出力する（前置き・補足・説明文・Markdown禁止）
-- nameは30文字以内を目安にする
-- descriptionは現場で確認できる観点を80文字以内を目安に記述する
-- confidence: "high"=直接原因の可能性が高い / "medium"=可能性あり / "low"=念のため確認
-
-{{"factors": [
-  {{"name": "設定変更の反映漏れ", "description": "直近の設定変更が全ノードに反映されているか変更履歴で確認する", "confidence": "high"}},
-  {{"name": "冗長構成の切替失敗", "description": "フェイルオーバー発生時に切替が正常に完了したかログで確認する", "confidence": "medium"}}
-]}}"""
+        return apply_template(user_template, variables)
 
     @staticmethod
     def _normalize_factors(parsed: object) -> list[GeneratedFactor]:
@@ -618,21 +584,33 @@ class OllamaProvider(AIProvider):
         parent_factor: Optional[str],
         context: dict,
     ) -> list[GeneratedFactor]:
-        prompt = self._build_prompt(analysis_title, top_event, target_level, parent_path, parent_factor, context)
+        from .prompt_loader import get_factor_generation_prompts
+
+        try:
+            prompts = get_factor_generation_prompts()
+        except (FileNotFoundError, ValueError) as e:
+            raise RuntimeError(str(e)) from e
+
+        system_content = prompts.get("system", "").strip()
+        user_prompt = self._build_prompt(
+            top_event, target_level, parent_path, parent_factor, context,
+            user_template=prompts["user"],
+        )
+
+        logger.debug(
+            "Ollama system prompt | level=%d:\n%s",
+            target_level, system_content,
+        )
+        logger.debug(
+            "Ollama user prompt | level=%d parent=%r:\n%s",
+            target_level, parent_factor or "(top event)", user_prompt,
+        )
 
         payload = {
             "model": self.model,
             "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "あなたはFTA（Fault Tree Analysis：故障の木解析）分析の専門家です。"
-                        "必ず日本語で回答してください。"
-                        "指示に従い、指定されたJSONスキーマ形式のみで回答してください。"
-                        "JSON以外の説明文・Markdown・コードブロックは一切出力しないでください。"
-                    ),
-                },
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_prompt},
             ],
             "stream": False,
             "keep_alive": self.keep_alive,
