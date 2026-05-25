@@ -64,6 +64,8 @@ def _log_startup_config() -> None:
     logger.info("  FTA_SECONDARY_FACTOR_COUNT = %s", os.environ.get("FTA_SECONDARY_FACTOR_COUNT", "3"))
     logger.info("  FTA_TERTIARY_FACTOR_COUNT  = %s", os.environ.get("FTA_TERTIARY_FACTOR_COUNT", "2"))
     logger.info("  FTA_ADDITIONAL_FACTOR_COUNT= %s", os.environ.get("FTA_ADDITIONAL_FACTOR_COUNT", "2"))
+    logger.info("  FTA_RETRY_BELOW_MIN        = %s", os.environ.get("FTA_RETRY_BELOW_MIN", "true"))
+    logger.info("  FTA_RETRY_BELOW_TARGET     = %s", os.environ.get("FTA_RETRY_BELOW_TARGET", "false"))
     prompt_file = os.environ.get("FTA_PROMPT_FILE", "config/prompts.yaml")
     logger.info("  FTA_PROMPT_FILE            = %s", prompt_file)
     if ai_provider == "ollama":
@@ -265,14 +267,22 @@ async def generate_factors(
             errors.append(str(e))
             continue
 
-        # For level 1: retry once if result is significantly below target
-        # Threshold: kept < desired - 1  (e.g. desired=4 → retry if got ≤ 2)
-        retry_threshold = max(1, factor_count - 1)
-        if level == 1 and len(factors) < retry_threshold:
+        # Retry logic — controlled by env vars (all levels)
+        #   FTA_RETRY_BELOW_MIN=true    retry when got < desired-1  (default: true)
+        #   FTA_RETRY_BELOW_TARGET=true retry when got < desired     (default: false)
+        retry_below_min = os.environ.get("FTA_RETRY_BELOW_MIN", "true").lower() == "true"
+        retry_below_target = os.environ.get("FTA_RETRY_BELOW_TARGET", "false").lower() == "true"
+        min_threshold = max(1, factor_count - 1)
+        should_retry = (
+            (retry_below_target and len(factors) < factor_count) or
+            (retry_below_min and len(factors) < min_threshold)
+        )
+
+        if should_retry:
+            trigger = "below_target" if (retry_below_target and len(factors) < factor_count) else "below_min"
             logger.warning(
-                "generate_factors | insufficient | level=1 parent=%r desired=%d got=%d "
-                "— retrying once",
-                parent_factor or "(top event)", factor_count, len(factors),
+                "generate_factors | %s | level=%d parent=%r desired=%d got=%d — retrying once",
+                trigger, level, parent_factor or "(top event)", factor_count, len(factors),
             )
             try:
                 t_retry_start = time.time()
@@ -288,20 +298,19 @@ async def generate_factors(
                 if factor_count > 0 and len(factors) > factor_count:
                     factors = factors[:factor_count]
                 logger.info(
-                    "generate_factors retry | level=1 parent=%r added=%d total=%d elapsed=%dms",
-                    parent_factor or "(top event)", added, len(factors), elapsed_retry_ms,
+                    "generate_factors retry | level=%d parent=%r added=%d total=%d elapsed=%dms",
+                    level, parent_factor or "(top event)", added, len(factors), elapsed_retry_ms,
                 )
             except RuntimeError as retry_err:
                 logger.warning(
-                    "generate_factors retry failed | level=1 parent=%r: %s",
-                    parent_factor or "(top event)", retry_err,
+                    "generate_factors retry failed | level=%d parent=%r: %s",
+                    level, parent_factor or "(top event)", retry_err,
                 )
 
-        # Warn when count is still below target (all levels)
-        if len(factors) < retry_threshold:
+        # Warn when final count is still below target (all levels)
+        if len(factors) < min_threshold:
             logger.warning(
-                "generate_factors | below threshold after generation | "
-                "level=%d parent=%r desired=%d got=%d",
+                "generate_factors | below min | level=%d parent=%r desired=%d got=%d",
                 level, parent_factor or "(top event)", factor_count, len(factors),
             )
         elif len(factors) < factor_count:
