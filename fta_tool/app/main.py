@@ -231,9 +231,8 @@ async def generate_factors(
             if n.level == level and n.parent_id == parent_id_val
         ]
 
-        try:
-            t_node_start = time.time()
-            factors: list[GeneratedFactor] = ai_provider.generate_factors(
+        def _call_ai(extra_existing: list[str]) -> list[GeneratedFactor]:
+            return ai_provider.generate_factors(
                 analysis_title=analysis.title,
                 top_event=analysis.top_event,
                 target_level=level,
@@ -242,16 +241,65 @@ async def generate_factors(
                 context={
                     "analysis_id": analysis_id,
                     "factor_count": factor_count,
-                    "existing_titles": existing_titles,
+                    "existing_titles": existing_titles + extra_existing,
                     "additional": additional,
                 },
             )
+
+        try:
+            t_node_start = time.time()
+            factors: list[GeneratedFactor] = _call_ai([])
             elapsed_node_ms = int((time.time() - t_node_start) * 1000)
         except RuntimeError as e:
             logger.error("AI generation error | analysis=%d level=%d parent=%r: %s",
                          analysis_id, level, parent_factor or "(top event)", e)
             errors.append(str(e))
             continue
+
+        # For level 1: retry once if result is significantly below target
+        # Threshold: kept < desired - 1  (e.g. desired=4 → retry if got ≤ 2)
+        retry_threshold = max(1, factor_count - 1)
+        if level == 1 and len(factors) < retry_threshold:
+            logger.warning(
+                "generate_factors | insufficient | level=1 parent=%r desired=%d got=%d "
+                "— retrying once",
+                parent_factor or "(top event)", factor_count, len(factors),
+            )
+            try:
+                t_retry_start = time.time()
+                retry_factors = _call_ai([f.title for f in factors])
+                elapsed_retry_ms = int((time.time() - t_retry_start) * 1000)
+                existing_set = {f.title for f in factors}
+                added = 0
+                for rf in retry_factors:
+                    if rf.title not in existing_set:
+                        factors.append(rf)
+                        existing_set.add(rf.title)
+                        added += 1
+                if factor_count > 0 and len(factors) > factor_count:
+                    factors = factors[:factor_count]
+                logger.info(
+                    "generate_factors retry | level=1 parent=%r added=%d total=%d elapsed=%dms",
+                    parent_factor or "(top event)", added, len(factors), elapsed_retry_ms,
+                )
+            except RuntimeError as retry_err:
+                logger.warning(
+                    "generate_factors retry failed | level=1 parent=%r: %s",
+                    parent_factor or "(top event)", retry_err,
+                )
+
+        # Warn when count is still below target (all levels)
+        if len(factors) < retry_threshold:
+            logger.warning(
+                "generate_factors | below threshold after generation | "
+                "level=%d parent=%r desired=%d got=%d",
+                level, parent_factor or "(top event)", factor_count, len(factors),
+            )
+        elif len(factors) < factor_count:
+            logger.warning(
+                "generate_factors | below target | level=%d parent=%r desired=%d got=%d",
+                level, parent_factor or "(top event)", factor_count, len(factors),
+            )
 
         existing_max_order = max(
             (n.display_order for n in nodes if n.level == level and n.parent_id == parent_id_val),

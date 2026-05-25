@@ -430,7 +430,8 @@ class OllamaProvider(AIProvider):
             existing_section = f"\n【既存要因（これらと同じ意味の要因は出力しないこと）】\n{lines}\n"
 
         return f"""あなたはFTA（Fault Tree Analysis：故障の木解析）の専門家です。
-以下の「親要因」の直接原因となる子要因を{factor_count}件、日本語で出力してください。
+以下の「親要因」の直接原因となる子要因を原則{factor_count}件、日本語で出力してください。
+必ず複数件生成してください（1件のみで終了しないこと）。
 
 【分析情報】
 頂上事象: {top_event}
@@ -475,7 +476,10 @@ class OllamaProvider(AIProvider):
 - descriptionは現場で確認できる観点を80文字以内を目安に記述する
 - confidence: "high"=直接原因の可能性が高い / "medium"=可能性あり / "low"=念のため確認
 
-{{"factors": [{{"name": "設定変更の反映漏れ", "description": "直近の設定変更が全ノードに反映されているか変更履歴で確認する", "confidence": "high"}}]}}"""
+{{"factors": [
+  {{"name": "設定変更の反映漏れ", "description": "直近の設定変更が全ノードに反映されているか変更履歴で確認する", "confidence": "high"}},
+  {{"name": "冗長構成の切替失敗", "description": "フェイルオーバー発生時に切替が正常に完了したかログで確認する", "confidence": "medium"}}
+]}}"""
 
     @staticmethod
     def _normalize_factors(parsed: object) -> list[GeneratedFactor]:
@@ -722,7 +726,8 @@ class OllamaProvider(AIProvider):
             eval_count, eval_dur_s,
             load_dur_s, total_dur_s, len(content),
         )
-        logger.debug("Ollama raw content: %s", content[:500])
+        logger.debug("Ollama raw content | level=%d parent=%r len=%d:\n%s",
+                     target_level, parent_factor or "(top event)", len(content), content)
 
         factors = self._extract_factors(content)
         raw_count = len(factors)
