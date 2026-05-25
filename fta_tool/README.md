@@ -123,30 +123,32 @@ curl http://localhost:11434/api/tags
 
 **4. FTA ツールの .env を設定する**
 
+実運用・品質確認には **`gemma3:4b`（推奨）** を使います。
+
 ```ini
 AI_PROVIDER=ollama
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=gemma3:1b
 
-# タイムアウト（gemma3:1b なら 1800 秒あれば余裕あり）
-OLLAMA_TIMEOUT_SECONDS=1800
+# --- 推奨設定（gemma3:4b） ---
+OLLAMA_MODEL=gemma3:4b
+OLLAMA_TIMEOUT_SECONDS=300
 OLLAMA_KEEP_ALIVE=10m
+OLLAMA_NUM_PREDICT=1024
+OLLAMA_TEMPERATURE=0.2
+OLLAMA_NUM_CTX=4096
 
-# 生成件数（速度とのトレードオフ: 件数を減らすと速くなる）
+# 生成件数
 FTA_PRIMARY_FACTOR_COUNT=4
 FTA_SECONDARY_FACTOR_COUNT=3
 FTA_TERTIARY_FACTOR_COUNT=2
 FTA_ADDITIONAL_FACTOR_COUNT=2
-
-# 推論オプション（品質を下げないため num_predict は 512 未満にしない）
-OLLAMA_NUM_PREDICT=768
-OLLAMA_TEMPERATURE=0.2
-OLLAMA_NUM_CTX=4096
 ```
+
+動作確認や速度優先の場合は `OLLAMA_MODEL=gemma3:1b`、`OLLAMA_TIMEOUT_SECONDS=1800` に変更してください。
 
 > **速度チューニングの目安**
 > 1. まず `FTA_*_FACTOR_COUNT` を減らす（件数を 1〜2 件減らすだけで大幅に速くなる）
-> 2. それでも遅い場合は `OLLAMA_NUM_PREDICT=512` 程度へ下げる
+> 2. それでも遅い場合は `OLLAMA_NUM_PREDICT=768` 程度へ下げる
 > 3. `OLLAMA_NUM_CTX` を 2048 に下げることでさらに高速化できるが、長い要因パスの精度が下がる場合がある
 
 **5. FTA ツールを起動する**
@@ -181,13 +183,14 @@ uvicorn app.main:app --reload
 >
 > | | `gemma3:1b` | `gemma3:4b` |
 > |--|-------------|-------------|
-> | 生成速度 | 速い（1〜2分/階層） | やや遅い（2〜4分/階層） |
-> | 要因の件数 | 指定件数に届かない場合がある | おおむね指定件数を生成できる |
+> | 生成速度 | 速い（1〜2分/階層） | やや遅い（1〜2分/階層） |
+> | 要因の件数 | 指定件数より少ない場合がある | 指定件数・JSON形式が安定しやすい |
 > | 要因の質 | 抽象的な要因が出やすい | 具体的な要因が出やすい |
-> | 推奨場面 | 動作確認・簡易レビュー | 本番の分析・品質優先 |
+> | 推奨場面 | 動作確認・簡易確認 | **実運用・品質確認（推奨）** |
 >
-> **通常運用では `gemma3:4b` を推奨します。** `gemma3:4b` は生成件数・品質ともに安定しており、一次要因生成が約2分で完了します。  
-> `gemma3:1b` は速度優先の簡易確認用です。指定件数に届かない場合が多く、品質も不安定なため本番の分析には不向きです。
+> **実運用や品質確認では `gemma3:4b` を推奨します。**  
+> `gemma3:4b` は指定件数・JSON形式・要因品質がいずれも安定しており、一次要因生成が 1〜2 分程度で完了します。  
+> `gemma3:1b` は動作確認・簡易確認用です。指定件数より少ない件数しか返さない場合があり、品質も不安定なため本番の分析には不向きです。
 >
 > 件数が不足した場合、ツールは自動で1回リトライします（`FTA_RETRY_BELOW_MIN=true` で制御）。  
 > `FTA_RETRY_BELOW_TARGET=true` を設定すると、目標件数未満の場合にも追加リトライします（処理時間が増える）。  
