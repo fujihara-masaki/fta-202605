@@ -43,9 +43,10 @@
             <button class="btn btn-generate" onclick="generateFactors({{ analysis.id }}, 1)">
               一次要因を生成
             </button>
-            <button class="btn btn-sm btn-outline" onclick="generateAdditional({{ analysis.id }}, null, 1)">
-              追加生成
-            </button>
+            {# TODO: 追加生成（一次要因）
+               既存の一次要因タイトル一覧をLLMに渡し、重複・言い換えを避けながら2〜3件を追加生成する。
+               API: POST /analyses/{id}/generate/level/1 に { additional: true } を渡す想定。
+               実装時はここに <button onclick="generateAdditional(...)">追加生成</button> を追加する。 #}
             <button class="btn btn-sm btn-outline" onclick="showAddNodeModal({{ analysis.id }}, null, 1)">
               手動追加
             </button>
@@ -80,7 +81,10 @@
               </div>
               <div class="node-card-footer">
                 <button class="btn btn-xs btn-outline" onclick="openNodeDetail({{ node.id }})">詳細編集</button>
-                <button class="btn btn-xs btn-outline" onclick="generateAdditional({{ analysis.id }}, {{ node.id }}, 2)">追加生成</button>
+                {# TODO: 追加生成（一次要因の子 = 二次要因）
+                   この一次要因を親として、既存の子ノード一覧をLLMに渡し重複を避けながら追加生成する。
+                   API: POST /analyses/{id}/generate/level/2 に { parent_id: nodeId, additional: true } を渡す想定。
+                   実装時はここに <button onclick="generateAdditional(analysisId, nodeId, 2)">追加生成</button> を追加する。 #}
                 <button class="btn btn-xs btn-outline" onclick="showAddNodeModal({{ analysis.id }}, {{ node.id }}, 2)">子追加</button>
                 <button class="btn btn-xs btn-danger" onclick="deleteNode({{ node.id }}, {{ analysis.id }})">削除</button>
               </div>
@@ -130,7 +134,10 @@
               </div>
               <div class="node-card-footer">
                 <button class="btn btn-xs btn-outline" onclick="openNodeDetail({{ node.id }})">詳細編集</button>
-                <button class="btn btn-xs btn-outline" onclick="generateAdditional({{ analysis.id }}, {{ node.id }}, 3)">追加生成</button>
+                {# TODO: 追加生成（二次要因の子 = 三次要因）
+                   この二次要因を親として、既存の子ノード一覧をLLMに渡し重複を避けながら追加生成する。
+                   API: POST /analyses/{id}/generate/level/3 に { parent_id: nodeId, additional: true } を渡す想定。
+                   実装時はここに <button onclick="generateAdditional(analysisId, nodeId, 3)">追加生成</button> を追加する。 #}
                 <button class="btn btn-xs btn-outline" onclick="showAddNodeModal({{ analysis.id }}, {{ node.id }}, 3)">子追加</button>
                 <button class="btn btn-xs btn-danger" onclick="deleteNode({{ node.id }}, {{ analysis.id }})">削除</button>
               </div>

@@ -123,30 +123,24 @@ async function generateFactorsSequential(analysisId, level) {
   }
 }
 
-// ===== Additional Generation =====
-async function generateAdditional(analysisId, parentNodeId, childLevel) {
-  if (parentNodeId) setNodeGenStatus(parentNodeId, 'generating');
-
-  try {
-    const res = await fetch(`/analyses/${analysisId}/generate/level/${childLevel}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ parent_id: parentNodeId, additional: true }),
-    });
-    const data = await res.json();
-    if (data.success || data.created > 0) {
-      if (parentNodeId) setNodeGenStatus(parentNodeId, 'done', data.created);
-      showToast(data.message || `${data.created}件の要因を追加しました`);
-      setTimeout(() => location.reload(), 800);
-    } else {
-      if (parentNodeId) setNodeGenStatus(parentNodeId, 'error');
-      showToast(data.message || '生成できませんでした', 'error');
-    }
-  } catch (e) {
-    if (parentNodeId) setNodeGenStatus(parentNodeId, 'error');
-    showToast('通信エラーが発生しました', 'error');
-  }
-}
+// ===== Additional Generation (未実装) =====
+// TODO: 追加生成機能の実装ポイント
+//
+// 【一次要因の追加生成】 generateAdditional(analysisId, null, 1)
+//   - 既存の一次要因タイトル一覧を取得し、existing_titles として API に渡す
+//   - POST /analyses/{id}/generate/level/1 に { additional: true, existing_titles: [...] } を送信
+//   - LLM に既存要因を提示することで重複・言い換えを避け、2〜3 件を追加生成する
+//
+// 【各要因の追加生成】 generateAdditional(analysisId, parentNodeId, childLevel)
+//   - parentNodeId の子ノード一覧を取得し、existing_titles として API に渡す
+//   - POST /analyses/{id}/generate/level/{childLevel} に
+//     { parent_id: parentNodeId, additional: true, existing_titles: [...] } を送信
+//   - 三次要因（childLevel === 3）は本ツールの最深レベルのため追加生成ボタン非表示が原則
+//
+// 実装時は analysis_detail.html の各 TODO コメント箇所にボタンを追加し、
+// この関数を復活させる（または別名で再実装する）。
+//
+// async function generateAdditional(analysisId, parentNodeId, childLevel) { ... }
 
 // ===== Judgement =====
 async function setJudgement(nodeId, judgement) {
