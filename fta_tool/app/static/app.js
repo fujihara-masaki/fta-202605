@@ -10,14 +10,35 @@ function showToast(message, type = 'success') {
 }
 
 // ===== Analysis Title =====
+function _showTitleError(msg) {
+  const span = document.getElementById('titleError');
+  if (!span) return;
+  span.textContent = msg;
+  span.hidden = false;
+}
+
+function _clearTitleError() {
+  const span = document.getElementById('titleError');
+  if (span) span.hidden = true;
+}
+
 async function saveAnalysisTitle(analysisId, newTitle) {
   const trimmed = (newTitle || '').trim();
+  const el = document.getElementById('analysisTitle');
+
   if (!trimmed) {
+    _showTitleError('タイトルは空にできません');
     showToast('タイトルは空にできません', 'error');
-    const el = document.getElementById('analysisTitle');
     if (el) el.focus();
     return false;
   }
+  if (trimmed.length > 255) {
+    _showTitleError('タイトルは255文字以内で入力してください');
+    showToast('タイトルは255文字以内で入力してください', 'error');
+    if (el) el.focus();
+    return false;
+  }
+
   try {
     const res = await fetch(`/analyses/${analysisId}/title`, {
       method: 'POST',
@@ -26,11 +47,15 @@ async function saveAnalysisTitle(analysisId, newTitle) {
     });
     const data = await res.json();
     if (data.success) {
+      _clearTitleError();
       document.title = data.title + ' - FTA編集';
       showToast('タイトルを保存しました');
       return true;
     }
-    showToast('保存に失敗しました', 'error');
+    const errMsg = data.detail || '保存に失敗しました';
+    _showTitleError(errMsg);
+    showToast(errMsg, 'error');
+    if (el) el.focus();
     return false;
   } catch {
     showToast('通信エラーが発生しました', 'error');
@@ -49,6 +74,7 @@ function startTitleRename(analysisId) {
   input.type = 'text';
   input.value = currentTitle;
   input.className = 'rename-input';
+  input.maxLength = 255;
 
   const saveBtn = document.createElement('button');
   saveBtn.textContent = '保存';
@@ -58,18 +84,29 @@ function startTitleRename(analysisId) {
   cancelBtn.textContent = 'キャンセル';
   cancelBtn.className = 'btn btn-xs btn-outline';
 
+  const errSpan = document.createElement('span');
+  errSpan.className = 'rename-error';
+  errSpan.hidden = true;
+
   cell.innerHTML = '';
-  cell.append(input, saveBtn, cancelBtn);
+  cell.append(input, saveBtn, cancelBtn, errSpan);
   input.focus();
   input.select();
 
+  const showRenameErr = (msg) => { errSpan.textContent = msg; errSpan.hidden = false; input.focus(); };
+  const clearRenameErr = () => { errSpan.hidden = true; };
+
   const doSave = async () => {
-    const ok = await saveAnalysisTitle(analysisId, input.value);
+    const newTitle = input.value.trim();
+    if (!newTitle) { showRenameErr('タイトルは空にできません'); return; }
+    clearRenameErr();
+    const ok = await saveAnalysisTitle(analysisId, newTitle);
     if (ok) {
-      const saved = input.value.trim();
       cell.innerHTML = originalHTML;
       const linkEl = document.getElementById(`title-link-${analysisId}`);
-      if (linkEl) linkEl.textContent = saved;
+      if (linkEl) linkEl.textContent = newTitle;
+    } else {
+      showRenameErr('保存に失敗しました');
     }
   };
 

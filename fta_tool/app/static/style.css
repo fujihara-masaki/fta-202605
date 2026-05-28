@@ -152,3 +152,5 @@ a:hover { text-decoration: underline; }
 .btn-icon { background: none; border: none; cursor: pointer; color: #95a5a6; font-size: 14px; padding: 2px 4px; border-radius: 3px; line-height: 1; }
 .btn-icon:hover { color: #2980b9; background: #eaf4fb; }
 .rename-input { font-size: 14px; padding: 3px 6px; border: 1px solid #2980b9; border-radius: 4px; width: 240px; }
+.title-error { color: #c0392b; font-size: 12px; display: block; margin-top: 2px; }
+.rename-error { color: #c0392b; font-size: 12px; display: block; margin-top: 4px; }

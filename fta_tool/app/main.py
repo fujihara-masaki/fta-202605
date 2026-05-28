@@ -171,6 +171,8 @@ async def update_title(analysis_id: int, request: Request, db: Session = Depends
     title = data.get("title", "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="タイトルは必須です")
+    if len(title) > 255:
+        raise HTTPException(status_code=400, detail="タイトルは255文字以内で入力してください")
     analysis = crud.update_title(db, analysis_id, title)
     if not analysis:
         raise HTTPException(status_code=404, detail="分析が見つかりません")
