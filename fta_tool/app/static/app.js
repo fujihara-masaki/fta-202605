@@ -84,12 +84,16 @@ function startTitleRename(analysisId) {
   cancelBtn.textContent = 'キャンセル';
   cancelBtn.className = 'btn btn-xs btn-outline';
 
+  const hintSpan = document.createElement('span');
+  hintSpan.className = 'rename-hint';
+  hintSpan.textContent = '255文字以内で入力してください';
+
   const errSpan = document.createElement('span');
   errSpan.className = 'rename-error';
   errSpan.hidden = true;
 
   cell.innerHTML = '';
-  cell.append(input, saveBtn, cancelBtn, errSpan);
+  cell.append(input, saveBtn, cancelBtn, hintSpan, errSpan);
   input.focus();
   input.select();
 
