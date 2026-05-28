@@ -27,8 +27,8 @@ async function saveAnalysisTitle(analysisId, newTitle) {
   const el = document.getElementById('analysisTitle');
 
   if (!trimmed) {
-    _showTitleError('タイトルは空にできません');
-    showToast('タイトルは空にできません', 'error');
+    _showTitleError('タイトルは必須です');
+    showToast('タイトルは必須です', 'error');
     if (el) el.focus();
     return false;
   }
@@ -102,7 +102,7 @@ function startTitleRename(analysisId) {
 
   const doSave = async () => {
     const newTitle = input.value.trim();
-    if (!newTitle) { showRenameErr('タイトルは空にできません'); return; }
+    if (!newTitle) { showRenameErr('タイトルは必須です'); return; }
     clearRenameErr();
     const ok = await saveAnalysisTitle(analysisId, newTitle);
     if (ok) {
