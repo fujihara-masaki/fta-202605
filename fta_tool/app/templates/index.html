@@ -21,7 +21,10 @@
     <tbody>
       {% for a in analyses %}
       <tr>
-        <td><a href="/analyses/{{ a.id }}">{{ a.title }}</a></td>
+        <td class="title-cell">
+          <a href="/analyses/{{ a.id }}" class="analysis-title-link" id="title-link-{{ a.id }}">{{ a.title }}</a>
+          <button class="btn-icon" onclick="startTitleRename({{ a.id }})" title="タイトルを変更">✎</button>
+        </td>
         <td class="top-event-cell">{{ a.top_event or '（未設定）' }}</td>
         <td>{{ a.created_at.strftime('%Y-%m-%d %H:%M') if a.created_at else '-' }}</td>
         <td>{{ a.updated_at.strftime('%Y-%m-%d %H:%M') if a.updated_at else '-' }}</td>

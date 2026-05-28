@@ -23,6 +23,16 @@ def create_analysis(db: Session, analysis: schemas.AnalysisCreate):
     return db_analysis
 
 
+def update_title(db: Session, analysis_id: int, title: str):
+    db_analysis = get_analysis(db, analysis_id)
+    if db_analysis:
+        db_analysis.title = title
+        db_analysis.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(db_analysis)
+    return db_analysis
+
+
 def update_top_event(db: Session, analysis_id: int, top_event: str):
     db_analysis = get_analysis(db, analysis_id)
     if db_analysis:

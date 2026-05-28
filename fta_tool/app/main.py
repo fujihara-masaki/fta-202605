@@ -165,6 +165,18 @@ def analysis_detail(request: Request, analysis_id: int, db: Session = Depends(ge
     )
 
 
+@app.post("/analyses/{analysis_id}/title")
+async def update_title(analysis_id: int, request: Request, db: Session = Depends(get_db)):
+    data = await request.json()
+    title = data.get("title", "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="タイトルは必須です")
+    analysis = crud.update_title(db, analysis_id, title)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="分析が見つかりません")
+    return {"success": True, "title": analysis.title}
+
+
 @app.post("/analyses/{analysis_id}/top-event")
 async def update_top_event(analysis_id: int, request: Request, db: Session = Depends(get_db)):
     data = await request.json()

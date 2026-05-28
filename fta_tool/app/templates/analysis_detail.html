@@ -5,7 +5,10 @@
   <!-- Page header -->
   <div class="analysis-header">
     <div class="analysis-header-left">
-      <h1 class="analysis-title" id="analysisTitle">{{ analysis.title }}</h1>
+      <h1 class="analysis-title" id="analysisTitle"
+          contenteditable="true"
+          onblur="saveAnalysisTitle({{ analysis.id }}, this.textContent)"
+          title="クリックしてタイトルを編集">{{ analysis.title }}</h1>
       <span class="ai-badge">AI: {{ ai_provider_name }}</span>
     </div>
     <div class="analysis-header-right">

@@ -9,6 +9,78 @@ function showToast(message, type = 'success') {
   setTimeout(() => { toast.className = 'toast hidden'; }, 3000);
 }
 
+// ===== Analysis Title =====
+async function saveAnalysisTitle(analysisId, newTitle) {
+  const trimmed = (newTitle || '').trim();
+  if (!trimmed) {
+    showToast('タイトルは空にできません', 'error');
+    const el = document.getElementById('analysisTitle');
+    if (el) el.focus();
+    return false;
+  }
+  try {
+    const res = await fetch(`/analyses/${analysisId}/title`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: trimmed }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      document.title = data.title + ' - FTA編集';
+      showToast('タイトルを保存しました');
+      return true;
+    }
+    showToast('保存に失敗しました', 'error');
+    return false;
+  } catch {
+    showToast('通信エラーが発生しました', 'error');
+    return false;
+  }
+}
+
+function startTitleRename(analysisId) {
+  const link = document.getElementById(`title-link-${analysisId}`);
+  if (!link) return;
+  const currentTitle = link.textContent.trim();
+  const cell = link.closest('td');
+  const originalHTML = cell.innerHTML;
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = currentTitle;
+  input.className = 'rename-input';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.textContent = '保存';
+  saveBtn.className = 'btn btn-xs btn-primary';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'キャンセル';
+  cancelBtn.className = 'btn btn-xs btn-outline';
+
+  cell.innerHTML = '';
+  cell.append(input, saveBtn, cancelBtn);
+  input.focus();
+  input.select();
+
+  const doSave = async () => {
+    const ok = await saveAnalysisTitle(analysisId, input.value);
+    if (ok) {
+      const saved = input.value.trim();
+      cell.innerHTML = originalHTML;
+      const linkEl = document.getElementById(`title-link-${analysisId}`);
+      if (linkEl) linkEl.textContent = saved;
+    }
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); doSave(); }
+    if (e.key === 'Escape') { cell.innerHTML = originalHTML; }
+  });
+  saveBtn.addEventListener('click', doSave);
+  cancelBtn.addEventListener('click', () => { cell.innerHTML = originalHTML; });
+}
+
 // ===== Top Event =====
 async function saveTopEvent(analysisId) {
   const input = document.getElementById('topEventInput');
