@@ -155,3 +155,21 @@ a:hover { text-decoration: underline; }
 .title-error { color: #c0392b; font-size: 12px; display: block; margin-top: 2px; }
 .rename-hint  { color: #7f8c8d; font-size: 11px; display: block; margin-top: 3px; }
 .rename-error { color: #c0392b; font-size: 12px; display: block; margin-top: 2px; }
+
+/* ===== FTA Tree View Section ===== */
+.fta-tree-view-section { padding: 24px; background: #f0f4f8; border-top: 2px solid #dfe6e9; }
+.tree-section-title { font-size: 15px; font-weight: 700; color: #1a2a3a; margin: 0 0 14px; }
+.fta-tree-view { background: #fff; border: 1px solid #dfe6e9; border-radius: 8px; padding: 20px 24px; overflow-x: auto; }
+.tree-root, .tree-children { list-style: none; margin: 0; padding: 0; }
+.tree-children { padding-left: 20px; margin-left: 8px; border-left: 2px solid #dfe6e9; margin-top: 4px; }
+.tree-node { position: relative; padding: 2px 0 2px 12px; }
+.tree-children > .tree-node::before { content: ''; position: absolute; left: -2px; top: 14px; width: 12px; height: 2px; background: #dfe6e9; }
+.tree-node-inner { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 4px 8px; border-radius: 4px; cursor: default; }
+.tree-node-inner:hover { background: #f0f4f8; }
+.tree-top-event > .tree-node-inner { background: #eaf4fb; border: 1px solid #aed6f1; border-radius: 4px; }
+.tree-node-title { font-size: 13px; color: #2c3e50; }
+.tree-judgement { font-size: 10px; padding: 1px 7px; border-radius: 3px; font-weight: 700; white-space: nowrap; }
+.tree-judgement-yes { background: #27ae60; color: #fff; }
+.tree-judgement-no { background: #e74c3c; color: #fff; }
+.tree-judgement-unknown { background: #95a5a6; color: #fff; }
+.tree-empty-msg { color: #95a5a6; font-size: 13px; padding: 8px 16px; margin: 0; }

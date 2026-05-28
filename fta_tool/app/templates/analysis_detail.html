@@ -1,5 +1,17 @@
 {% extends "base.html" %}
 {% block title %}{{ analysis.title }} - FTA編集{% endblock %}
+
+{# ---- macro: render one node's badge/title/judgement row ---- #}
+{% macro node_row(n) -%}
+<span class="node-level-badge level-{{ n.level }}">{{ ['', '一次', '二次', '三次'][n.level] }}</span>
+<span class="tree-node-title">{{ n.title }}</span>
+<span class="tree-judgement tree-judgement-{{ n.user_judgement }}">{{ {'yes': 'Yes', 'no': 'No', 'unknown': '-'}.get(n.user_judgement, n.user_judgement) }}</span>
+{%- if n.direct_cause_status not in ['unknown', ''] %}
+<span class="direct-cause-badge status-{{ n.direct_cause_status }}">{{ {'likely': '直接要因の可能性高', 'unlikely': '可能性低', 'direct': '直接要因', 'not_direct': '直接要因でない'}.get(n.direct_cause_status, '') }}</span>
+{%- endif %}
+{%- if n.ai_generated %}<span class="ai-tag">AI</span>{% endif %}
+{%- endmacro %}
+
 {% block content %}
 <div class="analysis-page">
   <!-- Page header -->
@@ -203,6 +215,52 @@
 
     </div><!-- end fta-tree-container -->
   </div><!-- end fta-tree-scroll -->
+
+  <!-- FTA Tree View Section -->
+  <div class="fta-tree-view-section">
+    <h2 class="tree-section-title">FTAツリー表示</h2>
+    <div class="fta-tree-view">
+      <ul class="tree-root">
+        <li class="tree-node tree-top-event">
+          <div class="tree-node-inner">
+            <span class="node-level-badge level-0">頂上事象</span>
+            <span class="tree-node-title">{{ analysis.top_event or '（頂上事象が未設定です）' }}</span>
+          </div>
+          {% if level1_nodes %}
+          <ul class="tree-children">
+            {% for l1 in level1_nodes %}
+            <li class="tree-node">
+              <div class="tree-node-inner">{{ node_row(l1) }}</div>
+              {% set l2_list = children_of.get(l1.id, []) %}
+              {% if l2_list %}
+              <ul class="tree-children">
+                {% for l2 in l2_list %}
+                <li class="tree-node">
+                  <div class="tree-node-inner">{{ node_row(l2) }}</div>
+                  {% set l3_list = children_of.get(l2.id, []) %}
+                  {% if l3_list %}
+                  <ul class="tree-children">
+                    {% for l3 in l3_list %}
+                    <li class="tree-node">
+                      <div class="tree-node-inner">{{ node_row(l3) }}</div>
+                    </li>
+                    {% endfor %}
+                  </ul>
+                  {% endif %}
+                </li>
+                {% endfor %}
+              </ul>
+              {% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="tree-empty-msg">要因がまだありません。「一次要因を生成」ボタンを押してください。</p>
+          {% endif %}
+        </li>
+      </ul>
+    </div>
+  </div><!-- end fta-tree-view-section -->
 </div>
 
 <!-- Node Detail Modal -->
