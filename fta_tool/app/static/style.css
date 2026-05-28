@@ -158,7 +158,20 @@ a:hover { text-decoration: underline; }
 
 /* ===== FTA Tree View Section ===== */
 .fta-tree-view-section { padding: 24px; background: #f0f4f8; border-top: 2px solid #dfe6e9; }
-.tree-section-title { font-size: 15px; font-weight: 700; color: #1a2a3a; margin: 0 0 14px; }
+.fta-tree-details { }
+.fta-tree-summary {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 15px; font-weight: 700; color: #1a2a3a;
+  cursor: pointer; user-select: none;
+  padding: 6px 14px; border-radius: 6px;
+  background: #fff; border: 1px solid #dfe6e9;
+  margin-bottom: 0;
+}
+.fta-tree-summary:hover { background: #eaf4fb; border-color: #aed6f1; }
+.fta-tree-summary::marker, .fta-tree-summary::-webkit-details-marker { display: none; }
+.fta-tree-summary::before { content: '▶'; font-size: 10px; color: #6c8096; transition: transform 0.2s; }
+details[open] > .fta-tree-summary::before { transform: rotate(90deg); }
+details[open] > .fta-tree-summary { margin-bottom: 14px; }
 .fta-tree-view { background: #fff; border: 1px solid #dfe6e9; border-radius: 8px; padding: 20px 24px; overflow-x: auto; }
 .tree-root, .tree-children { list-style: none; margin: 0; padding: 0; }
 .tree-children { padding-left: 20px; margin-left: 8px; border-left: 2px solid #dfe6e9; margin-top: 4px; }

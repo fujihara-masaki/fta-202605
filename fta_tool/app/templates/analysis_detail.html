@@ -216,9 +216,10 @@
     </div><!-- end fta-tree-container -->
   </div><!-- end fta-tree-scroll -->
 
-  <!-- FTA Tree View Section -->
+  <!-- FTA Tree View Section (collapsible) -->
   <div class="fta-tree-view-section">
-    <h2 class="tree-section-title">FTAツリー表示</h2>
+    <details id="ftaTreeDetails" class="fta-tree-details">
+      <summary class="fta-tree-summary">FTAツリー表示</summary>
     <div class="fta-tree-view">
       <ul class="tree-root">
         <li class="tree-node tree-top-event">
@@ -260,6 +261,7 @@
         </li>
       </ul>
     </div>
+    </details>
   </div><!-- end fta-tree-view-section -->
 </div>
 
@@ -356,5 +358,18 @@
 {% block extra_scripts %}
 <script>
 const ANALYSIS_ID = {{ analysis.id }};
+
+// FTA tree details: restore/persist open state via localStorage
+(function() {
+  const details = document.getElementById('ftaTreeDetails');
+  if (!details) return;
+  const key = 'ftaTreeOpen_' + ANALYSIS_ID;
+  if (localStorage.getItem(key) === 'true') {
+    details.open = true;
+  }
+  details.addEventListener('toggle', () => {
+    localStorage.setItem(key, details.open ? 'true' : 'false');
+  });
+})();
 </script>
 {% endblock %}
