@@ -435,10 +435,18 @@ class OllamaProvider(AIProvider):
                 "【既存要因（これらと同じ意味の要因は出力しないこと）】\n" + lines + "\n"
             )
 
+        parent_description = (context.get("parent_description") or "").strip()
+        parent_description_str = parent_description if parent_description else "（説明なし）"
+
+        ancestor_factors_list: list[str] = context.get("ancestor_factors") or []
+        ancestor_factors_str = "、".join(ancestor_factors_list) if ancestor_factors_list else "（なし）"
+
         variables = {
             "level": level_name,
             "top_event": top_event,
             "parent_factor": parent_desc,
+            "parent_description": parent_description_str,
+            "ancestor_factors": ancestor_factors_str,
             "path_str": path_str,
             "desired_count": factor_count,
             "min_count": max(1, factor_count - 1),

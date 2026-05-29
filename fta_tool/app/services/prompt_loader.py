@@ -13,13 +13,15 @@ Required YAML structure:
       <user prompt template with {variable} placeholders>
 
 Available template variables:
-  {level}            - level name (一次要因, 二次要因, ...)
-  {top_event}        - top event text
-  {parent_factor}    - parent factor title
-  {path_str}         - full factor path string
-  {desired_count}    - requested factor count
-  {min_count}        - minimum expected count (desired_count - 1)
-  {existing_section} - formatted existing-titles section (empty string if none)
+  {level}              - level name (一次要因, 二次要因, ...)
+  {top_event}          - top event text
+  {parent_factor}      - parent factor title
+  {parent_description} - parent factor description (「（説明なし）」 when empty)
+  {ancestor_factors}   - ancestor factor titles above the parent (「（なし）」 when empty)
+  {path_str}           - full factor path string
+  {desired_count}      - requested factor count
+  {min_count}          - minimum expected count (desired_count - 1)
+  {existing_section}   - formatted existing-titles section (empty string if none)
 """
 
 import logging
@@ -34,7 +36,8 @@ _REQUIRED_KEYS = ("system", "user")
 
 # Variables that the template engine recognises and substitutes
 TEMPLATE_VARIABLES = frozenset({
-    "level", "top_event", "parent_factor", "path_str",
+    "level", "top_event", "parent_factor", "parent_description",
+    "ancestor_factors", "path_str",
     "desired_count", "min_count", "existing_section",
 })
 

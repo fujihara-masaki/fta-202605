@@ -256,6 +256,14 @@ async def generate_factors(
             if n.level == level and n.parent_id == parent_id_val
         ]
 
+        # ancestor_factors: top_event + all path nodes above the immediate parent
+        # Helps LLM avoid generating a factor that loops back to ancestor nodes
+        top_event_val = analysis.top_event or ""
+        ancestor_factors = (
+            ([top_event_val] if top_event_val else []) +
+            (parent_path[:-1] if parent_path else [])
+        )
+
         def _call_ai(extra_existing: list[str]) -> list[GeneratedFactor]:
             return ai_provider.generate_factors(
                 analysis_title=analysis.title,
@@ -268,6 +276,8 @@ async def generate_factors(
                     "factor_count": factor_count,
                     "existing_titles": existing_titles + extra_existing,
                     "additional": additional,
+                    "parent_description": parent_node.description if parent_node else "",
+                    "ancestor_factors": ancestor_factors,
                 },
             )
 
