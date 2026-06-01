@@ -613,6 +613,12 @@ class OllamaProvider(AIProvider):
             "Ollama user prompt | level=%d parent=%r:\n%s",
             target_level, parent_factor or "(top event)", user_prompt,
         )
+        # FTA_DEBUG_PROMPT=true で INFO レベルにも最終プロンプトを出力する
+        if os.environ.get("FTA_DEBUG_PROMPT", "").lower() == "true":
+            logger.info(
+                "=== FTA_DEBUG_PROMPT | level=%d parent=%r ===\n%s\n=== END PROMPT ===",
+                target_level, parent_factor or "(top event)", user_prompt,
+            )
 
         payload = {
             "model": self.model,
