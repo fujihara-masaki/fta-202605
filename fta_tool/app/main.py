@@ -256,6 +256,9 @@ async def generate_factors(
             if n.level == level and n.parent_id == parent_id_val
         ]
 
+        # No-rated factor titles across all levels — LLM should not re-output these
+        no_rated_titles = [n.title for n in nodes if n.user_judgement == "no"]
+
         # ancestor_factors: top_event + all path nodes above the immediate parent
         # Helps LLM avoid generating a factor that loops back to ancestor nodes
         top_event_val = analysis.top_event or ""
@@ -278,6 +281,7 @@ async def generate_factors(
                     "additional": additional,
                     "parent_description": parent_node.description if parent_node else "",
                     "ancestor_factors": ancestor_factors,
+                    "no_rated_titles": no_rated_titles,
                 },
             )
 

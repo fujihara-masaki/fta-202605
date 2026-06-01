@@ -37,7 +37,7 @@ _REQUIRED_KEYS = ("system", "user")
 # Variables that the template engine recognises and substitutes
 TEMPLATE_VARIABLES = frozenset({
     "level", "top_event", "parent_factor", "parent_description",
-    "ancestor_factors", "path_str",
+    "ancestor_factors", "no_rated_section", "path_str",
     "desired_count", "min_count", "existing_section",
 })
 

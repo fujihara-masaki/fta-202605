@@ -441,12 +441,21 @@ class OllamaProvider(AIProvider):
         ancestor_factors_list: list[str] = context.get("ancestor_factors") or []
         ancestor_factors_str = "、".join(ancestor_factors_list) if ancestor_factors_list else "（なし）"
 
+        no_rated_titles: list[str] = context.get("no_rated_titles") or []
+        no_rated_section = ""
+        if no_rated_titles:
+            lines = "\n".join(f"- {t}" for t in no_rated_titles)
+            no_rated_section = (
+                "【No評価済み要因（同名・同義・言い換えを出力禁止）】\n" + lines + "\n"
+            )
+
         variables = {
             "level": level_name,
             "top_event": top_event,
             "parent_factor": parent_desc,
             "parent_description": parent_description_str,
             "ancestor_factors": ancestor_factors_str,
+            "no_rated_section": no_rated_section,
             "path_str": path_str,
             "desired_count": factor_count,
             "min_count": max(1, factor_count - 1),
