@@ -15,6 +15,7 @@ from . import crud, models, schemas
 from .database import SessionLocal, engine, get_db
 from .services.ai_provider import GeneratedFactor, get_ai_provider
 from .services.export_service import export_csv, export_json, export_markdown
+from .services.factor_quality import evaluate_factor
 from .services.prompt_loader import get_factor_generation_prompts
 
 # Load .env from fta_tool/.env, resolved relative to this file so that the
@@ -83,9 +84,21 @@ def _log_startup_config() -> None:
     logger.info("=======================================")
 
 
+def _migrate_add_warning_flags() -> None:
+    """Add nodes.warning_flags for databases created before the column existed."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        cols = [row[1] for row in conn.execute(text("PRAGMA table_info(nodes)"))]
+        if "warning_flags" not in cols:
+            conn.execute(text("ALTER TABLE nodes ADD COLUMN warning_flags TEXT DEFAULT ''"))
+            conn.commit()
+            logger.info("DB migration: added nodes.warning_flags column")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     models.Base.metadata.create_all(bind=engine)
+    _migrate_add_warning_flags()
     _log_startup_config()
     # Pre-load and validate prompt file at startup so errors surface early.
     # Failures are non-fatal here: mock provider works without the file.
@@ -239,6 +252,11 @@ async def generate_factors(
     errors = []
     t_start = time.time()
 
+    # Titles across the whole analysis (any parent/level) for similarity warnings.
+    # Accumulated as factors are created so sequential per-parent generation
+    # also catches duplicates created moments earlier.
+    all_analysis_titles = [n.title for n in nodes]
+
     for parent_node in parent_nodes:
         # Build parent path
         path_nodes = []
@@ -352,6 +370,8 @@ async def generate_factors(
             default=-1,
         )
 
+        parent_description_val = parent_node.description if parent_node else ""
+
         created_this = 0
         skipped_dedup_this = 0
         for i, factor in enumerate(factors):
@@ -363,6 +383,32 @@ async def generate_factors(
                 skipped_dedup_this += 1
                 continue
 
+            # Rule-based quality check (provider-agnostic):
+            # parent paraphrase / No-rated similar → exclude;
+            # analysis-wide similar / generic / long → save with warning_flags
+            quality = evaluate_factor(
+                title=factor.title,
+                description=factor.description,
+                parent_title=parent_factor,
+                parent_description=parent_description_val,
+                existing_titles=all_analysis_titles,
+                no_rated_titles=no_rated_titles,
+            )
+            if quality.exclude:
+                logger.info(
+                    "quality exclude | level=%d parent=%r title=%r reason=%s",
+                    level, parent_factor or "(top event)",
+                    factor.title, quality.exclude_reason,
+                )
+                skipped_dedup_this += 1
+                continue
+            if quality.warnings:
+                logger.info(
+                    "quality warning | level=%d parent=%r title=%r warnings=%s",
+                    level, parent_factor or "(top event)",
+                    factor.title, quality.warning_flags,
+                )
+
             node_data = {
                 "parent_id": parent_id_val,
                 "level": level,
@@ -372,8 +418,10 @@ async def generate_factors(
                 "user_judgement": "unknown",
                 "direct_cause_status": "unknown",
                 "display_order": existing_max_order + i + 1,
+                "warning_flags": quality.warning_flags,
             }
             crud.create_node(db, analysis_id, node_data)
+            all_analysis_titles.append(factor.title)
             created_this += 1
 
         total_created += created_this

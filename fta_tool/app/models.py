@@ -33,6 +33,9 @@ class Node(Base):
     prevention_idea = Column(Text, default="")
     display_order = Column(Integer, default=0)
     memo = Column(Text, default="")
+    # Quality-check warnings set at generation time. Empty = no warnings.
+    # Semicolon-separated when multiple (e.g. 既存要因「X」に類似; 要因名が長すぎる).
+    warning_flags = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

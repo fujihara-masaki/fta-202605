@@ -39,6 +39,7 @@ def export_json(db: Session, analysis_id: int) -> str:
             "evidence": node.evidence,
             "prevention_idea": node.prevention_idea,
             "memo": node.memo,
+            "warning_flags": node.warning_flags or "",
             "display_order": node.display_order,
         }
 
@@ -64,9 +65,10 @@ def export_csv(db: Session, analysis_id: int) -> str:
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "ID", "レベル", "タイトル", "説明", "親要因",
+        "ID", "レベル", "タイトル", "説明", "親ID", "親要因",
         "AI生成", "ユーザ評価", "直接要因ステータス",
-        "直接要因コメント", "根拠", "再発防止策", "メモ"
+        "直接要因コメント", "根拠", "再発防止策", "メモ",
+        "要確認フラグ", "警告理由"
     ])
 
     level_labels = {0: "頂上事象", 1: "一次要因", 2: "二次要因", 3: "三次要因"}
@@ -81,11 +83,13 @@ def export_csv(db: Session, analysis_id: int) -> str:
 
     for node in nodes:
         parent_title = node_map[node.parent_id].title if node.parent_id and node.parent_id in node_map else ""
+        warning = node.warning_flags or ""
         writer.writerow([
             node.id,
             level_labels.get(node.level, str(node.level)),
             node.title,
             node.description,
+            node.parent_id if node.parent_id else "",
             parent_title,
             "AI生成" if node.ai_generated else "手動",
             judgement_labels.get(node.user_judgement, node.user_judgement),
@@ -94,6 +98,8 @@ def export_csv(db: Session, analysis_id: int) -> str:
             node.evidence,
             node.prevention_idea,
             node.memo,
+            "要確認" if warning else "",
+            warning,
         ])
 
     return output.getvalue()

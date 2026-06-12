@@ -90,6 +90,7 @@ a:hover { text-decoration: underline; }
 .level-2 { background: #e67e22; color: #fff; }
 .level-3 { background: #16a085; color: #fff; }
 .ai-tag { font-size: 10px; padding: 1px 5px; border-radius: 3px; background: #eaf4fb; color: #2980b9; border: 1px solid #aed6f1; flex-shrink: 0; }
+.warning-badge { font-size: 10px; padding: 1px 5px; border-radius: 3px; background: #fef5e7; color: #b9770e; border: 1px solid #f5cba7; flex-shrink: 0; cursor: help; }
 .parent-label { font-size: 10px; color: #7f8c8d; padding: 2px 10px; background: #f9f9f9; border-bottom: 1px solid #f0f3f5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Judgement buttons */

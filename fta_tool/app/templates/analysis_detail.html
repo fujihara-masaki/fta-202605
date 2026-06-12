@@ -10,6 +10,7 @@
 <span class="direct-cause-badge status-{{ n.direct_cause_status }}">{{ {'likely': '直接要因の可能性高', 'unlikely': '可能性低', 'direct': '直接要因', 'not_direct': '直接要因でない'}.get(n.direct_cause_status, '') }}</span>
 {%- endif %}
 {%- if n.ai_generated %}<span class="ai-tag">AI</span>{% endif %}
+{%- if n.warning_flags %}<span class="warning-badge" title="{{ n.warning_flags }}">要確認</span>{% endif %}
 {%- endmacro %}
 
 {% block content %}
@@ -80,6 +81,7 @@
               <div class="node-card-header">
                 <span class="node-level-badge level-1">一次</span>
                 {% if node.ai_generated %}<span class="ai-tag">AI</span>{% endif %}
+                {% if node.warning_flags %}<span class="warning-badge" title="{{ node.warning_flags }}">要確認</span>{% endif %}
                 <div class="node-judgement-buttons">
                   <button class="judgement-btn yes {{ 'active' if node.user_judgement == 'yes' }}" onclick="setJudgement({{ node.id }}, 'yes')">Yes</button>
                   <button class="judgement-btn no {{ 'active' if node.user_judgement == 'no' }}" onclick="setJudgement({{ node.id }}, 'no')">No</button>
@@ -130,6 +132,7 @@
               <div class="node-card-header">
                 <span class="node-level-badge level-2">二次</span>
                 {% if node.ai_generated %}<span class="ai-tag">AI</span>{% endif %}
+                {% if node.warning_flags %}<span class="warning-badge" title="{{ node.warning_flags }}">要確認</span>{% endif %}
                 <div class="node-judgement-buttons">
                   <button class="judgement-btn yes {{ 'active' if node.user_judgement == 'yes' }}" onclick="setJudgement({{ node.id }}, 'yes')">Yes</button>
                   <button class="judgement-btn no {{ 'active' if node.user_judgement == 'no' }}" onclick="setJudgement({{ node.id }}, 'no')">No</button>
@@ -183,6 +186,7 @@
               <div class="node-card-header">
                 <span class="node-level-badge level-3">三次</span>
                 {% if node.ai_generated %}<span class="ai-tag">AI</span>{% endif %}
+                {% if node.warning_flags %}<span class="warning-badge" title="{{ node.warning_flags }}">要確認</span>{% endif %}
                 <div class="node-judgement-buttons">
                   <button class="judgement-btn yes {{ 'active' if node.user_judgement == 'yes' }}" onclick="setJudgement({{ node.id }}, 'yes')">Yes</button>
                   <button class="judgement-btn no {{ 'active' if node.user_judgement == 'no' }}" onclick="setJudgement({{ node.id }}, 'no')">No</button>
