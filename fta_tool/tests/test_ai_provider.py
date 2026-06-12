@@ -356,3 +356,42 @@ def test_filter_no_parent_factor():
     kept, excluded = filter_generated_factors(factors, None)
     assert len(kept) == 1
     assert kept[0].title == "技術的要因"
+
+
+# --- analysis_context (sample scenario) prompt section tests ---
+
+def _ollama_prompt(context: dict) -> str:
+    from app.services.prompt_loader import get_factor_generation_prompts
+    provider = OllamaProvider()
+    prompts = get_factor_generation_prompts()
+    return provider._build_prompt(
+        top_event="テストの頂上事象",
+        target_level=1,
+        parent_path=[],
+        parent_factor=None,
+        context=context,
+        user_template=prompts["user"],
+    )
+
+
+def test_prompt_includes_analysis_context_when_present():
+    prompt = _ollama_prompt({
+        "factor_count": 3,
+        "analysis_context": {
+            "system_context": "システム構成テキスト",
+            "incident_context": "障害状況テキスト",
+            "demo_points": "デモ観点テキスト",
+        },
+    })
+    assert "分析コンテキスト" in prompt
+    assert "システム構成テキスト" in prompt
+    assert "障害状況テキスト" in prompt
+    assert "デモ観点テキスト" in prompt
+
+
+def test_prompt_omits_analysis_context_when_absent():
+    """サンプルを使わない通常分析では analysis_context_section は空文字。"""
+    prompt = _ollama_prompt({"factor_count": 3})
+    assert "分析コンテキスト" not in prompt
+    prompt_empty_dict = _ollama_prompt({"factor_count": 3, "analysis_context": {}})
+    assert "分析コンテキスト" not in prompt_empty_dict

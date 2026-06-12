@@ -11,6 +11,8 @@
 #   {desired_count}      - 生成件数（.env の FTA_*_FACTOR_COUNT で設定）
 #   {min_count}          - 最低件数（desired_count - 1）
 #   {existing_section}   - 既存要因リスト（追加生成時のみ挿入。空の場合は空文字）
+#   {analysis_context_section} - サンプルシナリオ由来の分析コンテキスト
+#                                 （システム構成・障害情報・デモ観点。空の場合は空文字）
 #
 # 注意:
 #   - JSONの例示 {"key": "value"} はテンプレート変数と干渉しません（{" で始まる記法は変換されない）
@@ -36,7 +38,7 @@ factor_generation:
     親要因: {parent_factor}
     親要因の説明: {parent_description}
     祖先要因一覧: {ancestor_factors}
-    {existing_section}{no_rated_section}
+    {existing_section}{no_rated_section}{analysis_context_section}
     【直接原因の判定ルール（最重要・必ず守ること）】
     1. 子要因Xは「Xが発生したため、親要因Yが発生した」と自然に説明できるものだけにする
     2. 「親要因Yが発生したため、Xが発生した」の方が自然な場合は因果の向きが逆 → 出力禁止

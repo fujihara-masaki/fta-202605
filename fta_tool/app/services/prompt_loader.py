@@ -22,6 +22,8 @@ Available template variables:
   {desired_count}      - requested factor count
   {min_count}          - minimum expected count (desired_count - 1)
   {existing_section}   - formatted existing-titles section (empty string if none)
+  {analysis_context_section} - sample-scenario context (system/incident/demo info,
+                                empty string when the analysis has no context)
 """
 
 import logging
@@ -39,6 +41,7 @@ TEMPLATE_VARIABLES = frozenset({
     "level", "top_event", "parent_factor", "parent_description",
     "ancestor_factors", "no_rated_section", "path_str",
     "desired_count", "min_count", "existing_section",
+    "analysis_context_section",
 })
 
 _cache: Optional[dict] = None

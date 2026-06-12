@@ -6,6 +6,9 @@ from pydantic import BaseModel
 class AnalysisCreate(BaseModel):
     title: str
     top_event: str = ""
+    # Optional sample-scenario context (JSON string). Empty for normal
+    # hand-entered analyses.
+    analysis_context: str = ""
 
 
 class AnalysisUpdate(BaseModel):

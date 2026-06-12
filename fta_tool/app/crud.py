@@ -16,6 +16,7 @@ def create_analysis(db: Session, analysis: schemas.AnalysisCreate):
     db_analysis = models.Analysis(
         title=analysis.title,
         top_event=analysis.top_event,
+        analysis_context=analysis.analysis_context,
     )
     db.add(db_analysis)
     db.commit()

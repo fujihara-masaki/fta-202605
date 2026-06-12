@@ -187,3 +187,14 @@ details[open] > .fta-tree-summary { margin-bottom: 14px; }
 .tree-judgement-no { background: #e74c3c; color: #fff; }
 .tree-judgement-unknown { background: #95a5a6; color: #fff; }
 .tree-empty-msg { color: #95a5a6; font-size: 13px; padding: 8px 16px; margin: 0; }
+
+/* Sample scenario section (analysis_form.html) */
+.sample-scenario-section { margin: 8px 0 20px; }
+.sample-scenario-section .hidden { display: none; }
+.sample-scenario-box { margin-top: 10px; padding: 14px; border: 1px solid #e0e0e0; border-radius: 8px; background: #fafafa; }
+.sample-preview { margin-top: 12px; padding: 12px; border: 1px solid #e0e0e0; border-radius: 6px; background: #fff; }
+.sample-preview-label { font-size: 12px; font-weight: 700; color: #7f8c8d; margin: 10px 0 2px; }
+.sample-preview-label:first-child { margin-top: 0; }
+.sample-preview-text { font-size: 13px; margin: 0 0 4px; color: #333; }
+.sample-preview-pre { white-space: pre-wrap; }
+.sample-hint { font-size: 12px; color: #95a5a6; margin: 10px 0 0; }

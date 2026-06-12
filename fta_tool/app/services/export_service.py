@@ -43,10 +43,18 @@ def export_json(db: Session, analysis_id: int) -> str:
             "display_order": node.display_order,
         }
 
+    analysis_context = None
+    if analysis.analysis_context:
+        try:
+            analysis_context = json.loads(analysis.analysis_context)
+        except (ValueError, TypeError):
+            analysis_context = None
+
     data = {
         "id": analysis.id,
         "title": analysis.title,
         "top_event": analysis.top_event,
+        "analysis_context": analysis_context,
         "created_at": analysis.created_at.isoformat() if analysis.created_at else None,
         "updated_at": analysis.updated_at.isoformat() if analysis.updated_at else None,
         "nodes": [node_to_dict(n) for n in nodes],
@@ -119,6 +127,27 @@ def export_markdown(db: Session, analysis_id: int) -> str:
     lines.append(f"## 頂上事象")
     lines.append(f"{analysis.top_event}")
     lines.append("")
+
+    if analysis.analysis_context:
+        try:
+            ctx = json.loads(analysis.analysis_context)
+        except (ValueError, TypeError):
+            ctx = None
+        if ctx:
+            lines.append("## 分析コンテキスト（サンプルシナリオ）")
+            if ctx.get("system_context"):
+                lines.append("### システム構成")
+                lines.append(ctx["system_context"].strip())
+                lines.append("")
+            if ctx.get("incident_context"):
+                lines.append("### 障害発生時の状況")
+                lines.append(ctx["incident_context"].strip())
+                lines.append("")
+            if ctx.get("demo_points"):
+                lines.append("### デモ観点")
+                lines.append(ctx["demo_points"].strip())
+                lines.append("")
+
     lines.append(f"## FTAツリー")
     lines.append("")
 

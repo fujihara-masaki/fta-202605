@@ -14,10 +14,90 @@
       <label for="top_event">頂上事象（後から編集可）</label>
       <textarea id="top_event" name="top_event" rows="3" placeholder="例：〇〇システムでログイン障害が発生した"></textarea>
     </div>
+
+    {% if sample_scenarios %}
+    <!-- Sample scenario section: optional aid, collapsed by default -->
+    <div class="sample-scenario-section">
+      <button type="button" id="showSampleBtn" class="btn btn-outline btn-sm" onclick="showSampleSection()">
+        デモ用サンプルを利用する
+      </button>
+
+      <div id="sampleSection" class="sample-scenario-box hidden">
+        <div class="form-group">
+          <label for="sampleSelect">サンプルシナリオから入力</label>
+          <select id="sampleSelect" class="form-input" onchange="onSampleSelect()">
+            <option value="">-- 動作確認用サンプルを選択 --</option>
+            {% for s in sample_scenarios %}
+            <option value="{{ s.id }}">[{{ s.category }}] {{ s.title }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div id="samplePreview" class="sample-preview hidden">
+          <p class="sample-preview-label">頂上事象</p>
+          <p id="samplePreviewTopEvent" class="sample-preview-text"></p>
+
+          <p class="sample-preview-label">システム構成</p>
+          <p id="samplePreviewSystem" class="sample-preview-text sample-preview-pre"></p>
+
+          <p class="sample-preview-label">障害発生時の状況</p>
+          <p id="samplePreviewIncident" class="sample-preview-text sample-preview-pre"></p>
+
+          <button type="button" class="btn btn-primary btn-sm" onclick="applySample()">このサンプルを入力</button>
+        </div>
+        <p class="sample-hint">※ 動作確認用サンプルです。入力後に頂上事象は自由に編集できます。</p>
+      </div>
+    </div>
+
+    <!-- Hidden fields: populated only when a sample is applied -->
+    <input type="hidden" id="systemContextInput" name="system_context" value="">
+    <input type="hidden" id="incidentContextInput" name="incident_context" value="">
+    <input type="hidden" id="demoPointsInput" name="demo_points" value="">
+    {% endif %}
+
     <div class="form-actions">
       <a href="/" class="btn btn-outline">キャンセル</a>
       <button type="submit" class="btn btn-primary">作成して編集へ</button>
     </div>
   </form>
 </div>
+
+{% if sample_scenarios %}
+<script>
+const SAMPLE_SCENARIOS = {{ sample_scenarios | tojson }};
+
+function showSampleSection() {
+  document.getElementById('sampleSection').classList.remove('hidden');
+  document.getElementById('showSampleBtn').classList.add('hidden');
+}
+
+function onSampleSelect() {
+  const id = document.getElementById('sampleSelect').value;
+  const preview = document.getElementById('samplePreview');
+  if (!id) {
+    preview.classList.add('hidden');
+    return;
+  }
+  const sample = SAMPLE_SCENARIOS.find(s => s.id === id);
+  if (!sample) {
+    preview.classList.add('hidden');
+    return;
+  }
+  document.getElementById('samplePreviewTopEvent').textContent = sample.top_event;
+  document.getElementById('samplePreviewSystem').textContent = sample.system_context;
+  document.getElementById('samplePreviewIncident').textContent = sample.incident_context;
+  preview.classList.remove('hidden');
+}
+
+function applySample() {
+  const id = document.getElementById('sampleSelect').value;
+  const sample = SAMPLE_SCENARIOS.find(s => s.id === id);
+  if (!sample) return;
+  document.getElementById('top_event').value = sample.top_event;
+  document.getElementById('systemContextInput').value = sample.system_context;
+  document.getElementById('incidentContextInput').value = sample.incident_context;
+  document.getElementById('demoPointsInput').value = sample.demo_points;
+}
+</script>
+{% endif %}
 {% endblock %}

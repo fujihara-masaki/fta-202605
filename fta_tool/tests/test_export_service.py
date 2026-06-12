@@ -98,6 +98,74 @@ def test_export_markdown(db, sample_analysis):
     assert "## FTAツリー" in result
 
 
+def test_export_json_includes_analysis_context(db):
+    ctx = {
+        "system_context": "システム構成テキスト",
+        "incident_context": "障害状況テキスト",
+        "demo_points": "デモ観点テキスト",
+    }
+    analysis = Analysis(
+        title="サンプル分析", top_event="サンプルの頂上事象",
+        analysis_context=json.dumps(ctx, ensure_ascii=False),
+    )
+    db.add(analysis)
+    db.commit()
+    db.refresh(analysis)
+
+    data = json.loads(export_json(db, analysis.id))
+    assert data["analysis_context"] == ctx
+
+
+def test_export_json_analysis_context_none_when_absent(db, sample_analysis):
+    data = json.loads(export_json(db, sample_analysis.id))
+    assert data["analysis_context"] is None
+
+
+def test_export_markdown_includes_analysis_context(db):
+    ctx = {
+        "system_context": "システム構成テキスト",
+        "incident_context": "障害状況テキスト",
+        "demo_points": "デモ観点テキスト",
+    }
+    analysis = Analysis(
+        title="サンプル分析", top_event="サンプルの頂上事象",
+        analysis_context=json.dumps(ctx, ensure_ascii=False),
+    )
+    db.add(analysis)
+    db.commit()
+    db.refresh(analysis)
+
+    result = export_markdown(db, analysis.id)
+    assert "分析コンテキスト" in result
+    assert "システム構成テキスト" in result
+    assert "障害状況テキスト" in result
+    assert "デモ観点テキスト" in result
+
+
+def test_export_markdown_no_context_section_when_absent(db, sample_analysis):
+    result = export_markdown(db, sample_analysis.id)
+    assert "分析コンテキスト" not in result
+
+
+def test_export_csv_unaffected_by_analysis_context(db):
+    """既存のCSV列構成（親ID・要確認フラグ・警告理由含む）は変わらない。"""
+    ctx = {"system_context": "X", "incident_context": "Y", "demo_points": "Z"}
+    analysis = Analysis(
+        title="サンプル分析", top_event="サンプルの頂上事象",
+        analysis_context=json.dumps(ctx, ensure_ascii=False),
+    )
+    db.add(analysis)
+    db.commit()
+    db.refresh(analysis)
+
+    result = export_csv(db, analysis.id)
+    header = result.strip().split("\n")[0]
+    assert header == (
+        "ID,レベル,タイトル,説明,親ID,親要因,AI生成,ユーザ評価,直接要因ステータス,"
+        "直接要因コメント,根拠,再発防止策,メモ,要確認フラグ,警告理由"
+    )
+
+
 def test_no_duplicate_nodes(db, sample_analysis):
     """Test that duplicate node titles under the same parent are not allowed via crud."""
     from app.crud import node_title_exists

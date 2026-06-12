@@ -10,6 +10,10 @@ class Analysis(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(255), nullable=False)
     top_event = Column(Text, nullable=False, default="")
+    # Optional analysis context from a sample scenario (JSON string containing
+    # system_context / incident_context / demo_points). Empty for normal
+    # hand-entered analyses; generation prompts include it when present.
+    analysis_context = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

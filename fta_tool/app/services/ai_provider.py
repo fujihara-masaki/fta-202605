@@ -449,6 +449,23 @@ class OllamaProvider(AIProvider):
                 "【No評価済み要因（同名・同義・言い換えを出力禁止）】\n" + lines + "\n"
             )
 
+        analysis_context: dict = context.get("analysis_context") or {}
+        analysis_context_section = ""
+        if analysis_context.get("system_context") or analysis_context.get("incident_context"):
+            parts = ["【分析コンテキスト（サンプルシナリオの参考情報）】"]
+            if analysis_context.get("system_context"):
+                parts.append("システム構成:\n" + analysis_context["system_context"].strip())
+            if analysis_context.get("incident_context"):
+                parts.append("障害発生時の状況:\n" + analysis_context["incident_context"].strip())
+            if analysis_context.get("demo_points"):
+                parts.append("デモ観点:\n" + analysis_context["demo_points"].strip())
+            parts.append(
+                "上記のシステム構成と障害情報を参考に、発生し得る直接原因を検討すること。\n"
+                "ただし、頂上事象や親要因の単なる言い換えは出力しないこと。\n"
+                "構成要素を参考にしてよいが、根拠なく特定の機器の故障と断定しないこと。"
+            )
+            analysis_context_section = "\n\n".join(parts) + "\n"
+
         variables = {
             "level": level_name,
             "top_event": top_event,
@@ -460,6 +477,7 @@ class OllamaProvider(AIProvider):
             "desired_count": factor_count,
             "min_count": max(1, factor_count - 1),
             "existing_section": existing_section,
+            "analysis_context_section": analysis_context_section,
         }
 
         return apply_template(user_template, variables)

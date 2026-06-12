@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import pathlib
@@ -17,6 +18,7 @@ from .services.ai_provider import GeneratedFactor, get_ai_provider
 from .services.export_service import export_csv, export_json, export_markdown
 from .services.factor_quality import evaluate_factor
 from .services.prompt_loader import get_factor_generation_prompts
+from .services.sample_scenarios import get_sample_scenario, get_sample_scenarios
 
 # Load .env from fta_tool/.env, resolved relative to this file so that the
 # location is correct regardless of which directory uvicorn is started from.
@@ -95,10 +97,22 @@ def _migrate_add_warning_flags() -> None:
             logger.info("DB migration: added nodes.warning_flags column")
 
 
+def _migrate_add_analysis_context() -> None:
+    """Add analyses.analysis_context for databases created before the column existed."""
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        cols = [row[1] for row in conn.execute(text("PRAGMA table_info(analyses)"))]
+        if "analysis_context" not in cols:
+            conn.execute(text("ALTER TABLE analyses ADD COLUMN analysis_context TEXT DEFAULT ''"))
+            conn.commit()
+            logger.info("DB migration: added analyses.analysis_context column")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     models.Base.metadata.create_all(bind=engine)
     _migrate_add_warning_flags()
+    _migrate_add_analysis_context()
     _log_startup_config()
     # Pre-load and validate prompt file at startup so errors surface early.
     # Failures are non-fatal here: mock provider works without the file.
@@ -125,16 +139,32 @@ def index(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/analyses/new", response_class=HTMLResponse)
 def new_analysis_form(request: Request):
-    return templates.TemplateResponse("analysis_form.html", {"request": request})
+    return templates.TemplateResponse(
+        "analysis_form.html",
+        {"request": request, "sample_scenarios": get_sample_scenarios()},
+    )
 
 
 @app.post("/analyses")
 def create_analysis(
     title: str = Form(...),
     top_event: str = Form(""),
+    system_context: str = Form(""),
+    incident_context: str = Form(""),
+    demo_points: str = Form(""),
     db: Session = Depends(get_db),
 ):
-    analysis_data = schemas.AnalysisCreate(title=title, top_event=top_event)
+    analysis_context = ""
+    if system_context.strip() or incident_context.strip() or demo_points.strip():
+        analysis_context = json.dumps({
+            "system_context": system_context.strip(),
+            "incident_context": incident_context.strip(),
+            "demo_points": demo_points.strip(),
+        }, ensure_ascii=False)
+
+    analysis_data = schemas.AnalysisCreate(
+        title=title, top_event=top_event, analysis_context=analysis_context,
+    )
     analysis = crud.create_analysis(db, analysis_data)
     return RedirectResponse(url=f"/analyses/{analysis.id}", status_code=303)
 
@@ -257,6 +287,16 @@ async def generate_factors(
     # also catches duplicates created moments earlier.
     all_analysis_titles = [n.title for n in nodes]
 
+    # Optional sample-scenario context (system/incident/demo info). Empty for
+    # normal hand-entered analyses — providers treat a missing/empty dict the
+    # same as no context.
+    analysis_context: dict = {}
+    if analysis.analysis_context:
+        try:
+            analysis_context = json.loads(analysis.analysis_context)
+        except (ValueError, TypeError):
+            logger.warning("analysis_context のJSON解析に失敗しました | analysis_id=%s", analysis_id)
+
     for parent_node in parent_nodes:
         # Build parent path
         path_nodes = []
@@ -300,6 +340,7 @@ async def generate_factors(
                     "parent_description": parent_node.description if parent_node else "",
                     "ancestor_factors": ancestor_factors,
                     "no_rated_titles": no_rated_titles,
+                    "analysis_context": analysis_context,
                 },
             )
 
