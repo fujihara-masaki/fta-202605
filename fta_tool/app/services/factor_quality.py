@@ -37,6 +37,12 @@ _OVER_GENERIC_TITLES = frozenset({
 PARENT_SIMILARITY_THRESHOLD = 0.72
 NO_RATED_SIMILARITY_THRESHOLD = 0.78
 EXISTING_SIMILARITY_THRESHOLD = 0.82
+# Ancestor reversion uses ancestor_similarity() (core-overlap aware),
+# so the threshold is independent from the plain-ratio thresholds above.
+ANCESTOR_SIMILARITY_THRESHOLD = 0.70
+# Minimum shared-core length (chars, after normalization) for the
+# core-overlap heuristic — avoids matching on short generic words like「確認」.
+_ANCESTOR_MIN_CORE_LENGTH = 4
 
 MAX_TITLE_LENGTH = 30
 
@@ -82,6 +88,28 @@ def similarity(a: str, b: str) -> float:
     return ratio
 
 
+def ancestor_similarity(child: str, ancestor: str) -> float:
+    """Similarity in [0,1] tuned for detecting reversion to an ancestor.
+
+    A child that reverts to an ancestor often re-uses the ancestor's core
+    phrase with extra modifiers (e.g.「稼働状況確認手順の未整備」reverting
+    to「○○機器の稼働状況確認不足」), which keeps the plain ratio low.
+    So in addition to similarity(), score how much of the SHORTER
+    normalized title is covered by the longest common substring.
+    """
+    base = similarity(child, ancestor)
+    na, nb = normalize_title(child), normalize_title(ancestor)
+    if not na or not nb:
+        return base
+    shorter_len = min(len(na), len(nb))
+    match = SequenceMatcher(None, na, nb).find_longest_match(
+        0, len(na), 0, len(nb)
+    )
+    if match.size >= _ANCESTOR_MIN_CORE_LENGTH and shorter_len > 0:
+        return max(base, match.size / shorter_len)
+    return base
+
+
 @dataclass
 class QualityResult:
     """Result of checking one generated factor."""
@@ -101,6 +129,7 @@ def evaluate_factor(
     parent_description: str = "",
     existing_titles: Optional[list[str]] = None,
     no_rated_titles: Optional[list[str]] = None,
+    ancestor_titles: Optional[list[str]] = None,
 ) -> QualityResult:
     """
     Check one generated factor against its parent and the analysis context.
@@ -114,6 +143,10 @@ def evaluate_factor(
       W1. Title similar to an existing factor elsewhere in the analysis
       W2. Title is an over-generic phrase
       W3. Title longer than MAX_TITLE_LENGTH characters
+      W4. Title similar to an ancestor factor (above the immediate parent)
+          → likely reverting to a higher-level expression instead of
+            answering "why did the parent occur". Warning only, never
+            excluded — a human should judge it.
     """
     result = QualityResult()
     t = (title or "").strip()
@@ -149,6 +182,15 @@ def evaluate_factor(
         if ratio >= EXISTING_SIMILARITY_THRESHOLD:
             result.warnings.append(f"既存要因「{ex_title}」に類似")
             break  # one similar-existing warning is enough
+
+    # --- W4: reversion to an ancestor factor's expression ---
+    for anc_title in (ancestor_titles or []):
+        ratio = ancestor_similarity(t, anc_title)
+        if ratio >= ANCESTOR_SIMILARITY_THRESHOLD:
+            result.warnings.append(
+                f"祖先要因「{anc_title}」に類似（上位階層の表現への逆戻りの可能性）"
+            )
+            break  # one ancestor warning is enough
 
     # --- W2: over-generic title ---
     if t in _OVER_GENERIC_TITLES:

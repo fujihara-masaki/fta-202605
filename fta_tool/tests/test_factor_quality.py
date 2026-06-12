@@ -6,6 +6,7 @@ FTA CSVs (titles generalized — no product/region specific terms).
 """
 
 from app.services.factor_quality import (
+    ancestor_similarity,
     evaluate_factor,
     normalize_title,
     similarity,
@@ -54,6 +55,35 @@ class TestSimilarity:
 
     def test_empty(self):
         assert similarity("", "なにか") == 0.0
+
+
+# ---------------------------------------------------------------------------
+# ancestor_similarity
+# ---------------------------------------------------------------------------
+
+class TestAncestorSimilarity:
+    def test_ancestor_reversion_detected(self):
+        # CSV実例（一般化）: 三次要因が一次要因の核となる語句に逆戻り。
+        # 通常の similarity() では閾値未満だが、共通コア「稼働状況確認」が
+        # 短い方タイトルの大半を占めるため検出される
+        assert ancestor_similarity(
+            "稼働状況確認手順の未整備", "対象機器の稼働状況確認不足"
+        ) >= 0.70
+
+    def test_legitimate_child_below_threshold(self):
+        # 祖先と観点を共有するが正当に深掘りしている子要因は検出しない
+        assert ancestor_similarity(
+            "確認担当者の未設定", "対象機器の稼働状況確認不足"
+        ) < 0.70
+        assert ancestor_similarity(
+            "通知先の設定漏れ", "監視アラートの確認遅延"
+        ) < 0.70
+
+    def test_short_common_word_not_matched(self):
+        # 「確認」「設定」のような短い共通語だけでは検出しない
+        assert ancestor_similarity(
+            "接続確認項目の未定義", "対象システムへの接続が失敗した"
+        ) < 0.70
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +148,35 @@ class TestEvaluateFactor:
             parent_title="確認手順の未整備",
         )
         assert any("長すぎる" in w for w in r.warnings)
+
+    def test_ancestor_similar_warned_not_excluded(self):
+        # fta CSV実例（一般化）: 三次要因が直接の親ではなく一次要因（祖先）の
+        # 表現に逆戻り → 自動除外せず「要確認」フラグのみ
+        r = evaluate_factor(
+            title="稼働状況確認手順の未整備",
+            description="稼働状況を定期的に確認する手順が標準作業として定義されていない",
+            parent_title="接続確認項目の未定義",
+            ancestor_titles=[
+                "対象システムへの接続が失敗した",
+                "対象機器の稼働状況確認不足",
+            ],
+        )
+        assert not r.exclude
+        assert any("祖先要因" in w for w in r.warnings)
+        assert "要確認" not in r.exclude_reason  # 除外理由には入らない
+
+    def test_no_ancestor_warning_for_legitimate_child(self):
+        r = evaluate_factor(
+            title="確認担当者の未設定",
+            description="確認作業の担当者が割り当てられていない状態。",
+            parent_title="接続確認項目の未定義",
+            ancestor_titles=[
+                "対象システムへの接続が失敗した",
+                "対象機器の稼働状況確認不足",
+            ],
+        )
+        assert not r.exclude
+        assert not any("祖先要因" in w for w in r.warnings)
 
     def test_clean_factor_passes(self):
         r = evaluate_factor(

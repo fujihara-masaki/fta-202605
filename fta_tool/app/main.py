@@ -393,6 +393,7 @@ async def generate_factors(
                 parent_description=parent_description_val,
                 existing_titles=all_analysis_titles,
                 no_rated_titles=no_rated_titles,
+                ancestor_titles=ancestor_factors,
             )
             if quality.exclude:
                 logger.info(
