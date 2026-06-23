@@ -197,4 +197,16 @@ details[open] > .fta-tree-summary { margin-bottom: 14px; }
 .sample-preview-label:first-child { margin-top: 0; }
 .sample-preview-text { font-size: 13px; margin: 0 0 4px; color: #333; }
 .sample-preview-pre { white-space: pre-wrap; }
+.sample-preview-note { font-size: 12px; color: #e67e22; background: #fff8f0; border: 1px solid #f0d9c0; border-radius: 4px; padding: 8px 10px; margin: 12px 0 4px; line-height: 1.5; }
 .sample-hint { font-size: 12px; color: #95a5a6; margin: 10px 0 0; }
+
+/* Analysis-detail collapsible context (sample-scenario info) */
+.analysis-context-section { margin: 12px 24px 0; }
+.analysis-context-details { border: 1px solid #d6e4f0; border-radius: 8px; background: #f5f9fd; }
+.analysis-context-summary { cursor: pointer; padding: 10px 14px; font-size: 13px; font-weight: 700; color: #2c5d82; user-select: none; }
+.analysis-context-body { padding: 4px 16px 14px; }
+.analysis-context-item { margin-bottom: 10px; }
+.analysis-context-label { font-size: 12px; font-weight: 700; color: #5a7d96; margin: 8px 0 2px; }
+.analysis-context-text { font-size: 13px; margin: 0; color: #333; }
+.analysis-context-pre { white-space: pre-wrap; }
+.analysis-context-hint { font-size: 12px; color: #95a5a6; margin: 8px 0 0; }

@@ -399,3 +399,28 @@ def test_prompt_omits_analysis_context_when_absent():
     assert "【分析コンテキスト" not in prompt
     prompt_empty_dict = _ollama_prompt({"factor_count": 3, "analysis_context": {}})
     assert "【分析コンテキスト" not in prompt_empty_dict
+
+
+def test_prompt_includes_keito_consistency_rules():
+    """親子関係を自然にするための系統一貫性ルールが常にプロンプトに含まれる。"""
+    prompt = _ollama_prompt({"factor_count": 3})
+    assert "系統の一貫性" in prompt
+    # 別系統の要因は子要因ではなく一次要因として扱う、という指示
+    assert "一次要因" in prompt
+    # 報告された不自然な親子関係の具体例（系統が混ざる悪い例）
+    assert "DNS設定の誤り" in prompt
+
+
+def test_context_section_includes_keito_consistency_guidance():
+    """動的に挿入される分析コンテキスト節にも系統一貫性の指示が含まれる。"""
+    prompt = _ollama_prompt({
+        "factor_count": 3,
+        "analysis_context": {
+            "system_context": "DNS・認証基盤・ファイアウォールで構成される",
+            "incident_context": "一部で名前解決に失敗",
+            "demo_points": "DNS、認証、ファイアウォール観点",
+        },
+    })
+    assert "同じ系統" in prompt
+    # 別系統の要因は頂上事象の別の一次要因として扱う旨
+    assert "別の一次要因" in prompt

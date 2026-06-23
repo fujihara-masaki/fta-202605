@@ -43,6 +43,15 @@
           <p class="sample-preview-label">障害発生時の状況</p>
           <p id="samplePreviewIncident" class="sample-preview-text sample-preview-pre"></p>
 
+          <p class="sample-preview-label">デモ観点</p>
+          <p id="samplePreviewDemo" class="sample-preview-text sample-preview-pre"></p>
+
+          <p class="sample-preview-note">
+            ※ 頂上事象ノードには短文の top_event のみが入ります。<br>
+            システム構成・障害発生時の状況・デモ観点は「分析コンテキスト」として保存され、
+            詳細画面での確認と要因生成プロンプトに利用されます。
+          </p>
+
           <button type="button" class="btn btn-primary btn-sm" onclick="applySample()">このサンプルを入力</button>
         </div>
         <p class="sample-hint">※ 動作確認用サンプルです。入力後に頂上事象は自由に編集できます。</p>
@@ -86,6 +95,7 @@ function onSampleSelect() {
   document.getElementById('samplePreviewTopEvent').textContent = sample.top_event;
   document.getElementById('samplePreviewSystem').textContent = sample.system_context;
   document.getElementById('samplePreviewIncident').textContent = sample.incident_context;
+  document.getElementById('samplePreviewDemo').textContent = sample.demo_points;
   preview.classList.remove('hidden');
 }
 

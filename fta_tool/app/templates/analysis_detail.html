@@ -36,6 +36,42 @@
   <!-- Toast notification -->
   <div id="toast" class="toast hidden"></div>
 
+  {% if analysis_context %}
+  <!-- Analysis context (sample-scenario info): collapsible, top of page -->
+  <div class="analysis-context-section">
+    <details class="analysis-context-details" open>
+      <summary class="analysis-context-summary">分析コンテキスト（サンプルシナリオ情報）</summary>
+      <div class="analysis-context-body">
+        {% if analysis_context.top_event %}
+        <div class="analysis-context-item">
+          <p class="analysis-context-label">頂上事象（サンプル）</p>
+          <p class="analysis-context-text">{{ analysis_context.top_event }}</p>
+        </div>
+        {% endif %}
+        {% if analysis_context.system_context %}
+        <div class="analysis-context-item">
+          <p class="analysis-context-label">システム構成</p>
+          <p class="analysis-context-text analysis-context-pre">{{ analysis_context.system_context }}</p>
+        </div>
+        {% endif %}
+        {% if analysis_context.incident_context %}
+        <div class="analysis-context-item">
+          <p class="analysis-context-label">障害発生時の状況</p>
+          <p class="analysis-context-text analysis-context-pre">{{ analysis_context.incident_context }}</p>
+        </div>
+        {% endif %}
+        {% if analysis_context.demo_points %}
+        <div class="analysis-context-item">
+          <p class="analysis-context-label">デモ観点</p>
+          <p class="analysis-context-text analysis-context-pre">{{ analysis_context.demo_points }}</p>
+        </div>
+        {% endif %}
+        <p class="analysis-context-hint">※ サンプルシナリオ由来の参考情報です。要因生成プロンプトにも渡されます。頂上事象ノードには短文の top_event のみを使用しています。</p>
+      </div>
+    </details>
+  </div>
+  {% endif %}
+
   <!-- FTA Tree Area -->
   <div class="fta-tree-scroll">
     <div class="fta-tree-container" id="ftaTree">

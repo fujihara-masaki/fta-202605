@@ -156,7 +156,12 @@ def create_analysis(
 ):
     analysis_context = ""
     if system_context.strip() or incident_context.strip() or demo_points.strip():
+        # top_event is stored here too so the analysis-detail screen can show the
+        # full sample (top_event + the three context blocks) even after the FTA
+        # tree's top-event node is edited. The FTA top node itself still uses the
+        # short top_event only — long context never goes into the tree node.
         analysis_context = json.dumps({
+            "top_event": top_event.strip(),
             "system_context": system_context.strip(),
             "incident_context": incident_context.strip(),
             "demo_points": demo_points.strip(),
@@ -176,6 +181,20 @@ def analysis_detail(request: Request, analysis_id: int, db: Session = Depends(ge
         raise HTTPException(status_code=404, detail="分析が見つかりません")
 
     nodes = crud.get_nodes_by_analysis(db, analysis_id)
+
+    # Parse optional sample-scenario context for display (collapsible section).
+    # Invalid/empty JSON degrades gracefully to None so the section is hidden.
+    analysis_context = None
+    if analysis.analysis_context:
+        try:
+            parsed = json.loads(analysis.analysis_context)
+            if isinstance(parsed, dict) and any(
+                (parsed.get(k) or "").strip()
+                for k in ("system_context", "incident_context", "demo_points")
+            ):
+                analysis_context = parsed
+        except (ValueError, TypeError):
+            logger.warning("analysis_context のJSON解析に失敗しました | analysis_id=%s", analysis_id)
 
     # Build tree structure for template
     node_map = {n.id: n for n in nodes}
@@ -197,6 +216,7 @@ def analysis_detail(request: Request, analysis_id: int, db: Session = Depends(ge
         {
             "request": request,
             "analysis": analysis,
+            "analysis_context": analysis_context,
             "nodes": nodes,
             "level1_nodes": level1_nodes,
             "level2_nodes": level2_nodes,
