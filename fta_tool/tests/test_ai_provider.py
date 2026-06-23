@@ -390,8 +390,12 @@ def test_prompt_includes_analysis_context_when_present():
 
 
 def test_prompt_omits_analysis_context_when_absent():
-    """サンプルを使わない通常分析では analysis_context_section は空文字。"""
+    """サンプルを使わない通常分析では analysis_context_section は空文字。
+
+    ルール10に「分析コンテキスト」という語が常に含まれるため、動的に挿入される
+    セクション見出し【分析コンテキスト…】の有無で判定する。
+    """
     prompt = _ollama_prompt({"factor_count": 3})
-    assert "分析コンテキスト" not in prompt
+    assert "【分析コンテキスト" not in prompt
     prompt_empty_dict = _ollama_prompt({"factor_count": 3, "analysis_context": {}})
-    assert "分析コンテキスト" not in prompt_empty_dict
+    assert "【分析コンテキスト" not in prompt_empty_dict

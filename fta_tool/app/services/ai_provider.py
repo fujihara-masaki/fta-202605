@@ -460,8 +460,11 @@ class OllamaProvider(AIProvider):
             if analysis_context.get("demo_points"):
                 parts.append("デモ観点:\n" + analysis_context["demo_points"].strip())
             parts.append(
-                "上記のシステム構成と障害情報を参考に、発生し得る直接原因を検討すること。\n"
-                "ただし、頂上事象や親要因の単なる言い換えは出力しないこと。\n"
+                "上記のシステム構成と障害情報は参考情報である。\n"
+                "現在の親要因と因果関係がある場合にのみ、これらの構成要素を子要因に使用すること。\n"
+                "親要因と別系統の構成要素（例: 親要因が認証系なのにDNS・経路など別系統）を、"
+                "因果関係の根拠なく無理に子要因に混ぜないこと。\n"
+                "頂上事象や親要因の単なる言い換えは出力しないこと。\n"
                 "構成要素を参考にしてよいが、根拠なく特定の機器の故障と断定しないこと。"
             )
             analysis_context_section = "\n\n".join(parts) + "\n"

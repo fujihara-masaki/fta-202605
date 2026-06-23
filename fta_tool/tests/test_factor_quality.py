@@ -7,6 +7,7 @@ FTA CSVs (titles generalized — no product/region specific terms).
 
 from app.services.factor_quality import (
     ancestor_similarity,
+    distinctive_tokens,
     evaluate_factor,
     normalize_title,
     similarity,
@@ -189,3 +190,102 @@ class TestEvaluateFactor:
         assert not r.exclude
         assert r.warnings == []
         assert r.warning_flags == ""
+
+
+# ---------------------------------------------------------------------------
+# Issue 1: analysis_context must NOT be treated as an ancestor title
+# ---------------------------------------------------------------------------
+
+# A polluted top_event containing the sample system/incident context
+# (multi-line, long) — must never be a comparison target for the ancestor check.
+_CONTEXT_BLOB = (
+    "在宅勤務者がVPN接続後に社内業務システムへ接続できない\n\n"
+    "システム構成\n\n"
+    "本システムは、在宅勤務者がインターネット経由でVPN接続し、社内業務システムを利用する\n"
+    "構成である。利用者端末、インターネット、VPN装置、認証基盤、社内DNS、ファイアウォール、\n"
+    "業務アプリケーションサーバで構成される。\n\n"
+    "障害発生時の状況\n\n"
+    "一部利用者では社内DNS名の名前解決に失敗している。"
+)
+
+
+class TestAncestorContextGuard:
+    def test_context_blob_does_not_trigger_ancestor_warning(self):
+        # 一次要因「DNS設定の誤り」が、analysis_context に DNS という語が
+        # 含まれるだけで祖先類似扱いにならないこと
+        r = evaluate_factor(
+            title="DNS設定の誤り",
+            description="VPN接続後のDNS解決に失敗している利用者がいる。",
+            parent_title=None,
+            ancestor_titles=[_CONTEXT_BLOB],
+        )
+        assert not r.exclude
+        assert not any("祖先要因" in w for w in r.warnings)
+
+    def test_short_title_ancestor_still_detected(self):
+        # 通常の短い祖先タイトルへの逆戻りは従来どおり検出される（退行防止）
+        r = evaluate_factor(
+            title="認証基盤の負荷状況確認不足",
+            description="認証基盤の負荷状況を監視できていない。",
+            parent_title="DNS名前解決の失敗確認",
+            ancestor_titles=["認証基盤の負荷状況"],
+        )
+        assert not r.exclude
+        assert any("祖先要因" in w for w in r.warnings)
+
+
+# ---------------------------------------------------------------------------
+# Issue 3: No-rated system (系統) reappearing under another parent
+# ---------------------------------------------------------------------------
+
+class TestDistinctiveTokens:
+    def test_extracts_ascii_component(self):
+        assert "DNS" in distinctive_tokens("DNS設定の誤り")
+        assert "VPN" in distinctive_tokens("VPN装置の設定不備")
+        assert "TTL" in distinctive_tokens("DNSキャッシュのTTL設定不備")
+
+    def test_extracts_katakana_component(self):
+        assert any("ファイアウォール" in t for t in distinctive_tokens("ファイアウォールルールの影響"))
+
+    def test_drops_generic_tokens(self):
+        toks = distinctive_tokens("設定の確認不足")
+        assert "設定" not in toks
+        assert "確認" not in toks
+
+    def test_normalizes_fullwidth_and_case(self):
+        # 全角ＤＮＳ・小文字 dns はいずれも DNS に正規化される
+        assert distinctive_tokens("ＤＮＳ設定") == distinctive_tokens("dns設定")
+
+
+class TestNoRatedSystemReappearance:
+    def test_no_rated_dns_reappears_under_other_parent_warned(self):
+        # No評価済み「DNS設定の誤り」がある状態で、別親配下に DNS系要因が
+        # 出た場合 → 自動除外ではなく要確認
+        r = evaluate_factor(
+            title="DNS名前解決の失敗確認",
+            description="社内DNS名の名前解決に失敗している利用者を確認する。",
+            parent_title="認証基盤の負荷状況",
+            no_rated_titles=["DNS設定の誤り"],
+        )
+        assert not r.exclude
+        assert any("同じ系統" in w and "DNS" in w for w in r.warnings)
+
+    def test_unrelated_system_not_warned(self):
+        # No評価済みと別系統（語の重なりなし）なら警告しない
+        r = evaluate_factor(
+            title="ファイアウォールルールの不整合",
+            description="VPN通信を遮断するルールが残っている。",
+            parent_title="VPN接続後の通信失敗",
+            no_rated_titles=["DNS設定の誤り"],
+        )
+        assert not r.exclude
+        assert not any("同じ系統" in w for w in r.warnings)
+
+    def test_no_warning_when_no_no_rated(self):
+        r = evaluate_factor(
+            title="DNS名前解決の失敗確認",
+            description="名前解決に失敗している。",
+            parent_title="認証基盤の負荷状況",
+            no_rated_titles=[],
+        )
+        assert not any("同じ系統" in w for w in r.warnings)

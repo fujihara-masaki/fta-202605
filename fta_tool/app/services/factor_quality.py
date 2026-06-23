@@ -33,6 +33,30 @@ _OVER_GENERIC_TITLES = frozenset({
     "連携不足", "周知不足", "教育不足", "検討不足", "調整不足",
 })
 
+# A real factor/top-event title is a single short line. Sample-scenario
+# context (system_context / incident_context / demo_points) is multi-line and
+# long. The ancestor check must compare against titles only, so any candidate
+# that is multi-line or longer than this is treated as non-title text and
+# skipped (prevents context blobs from triggering false ancestor warnings).
+_MAX_TITLE_LIKE_LENGTH = 60
+
+# Generic tokens that, on their own, do not identify a system component /
+# 系統. Excluded from distinctive-token extraction so the No-rated reappearance
+# check keys off meaningful component names (DNS, VPN, ファイアウォール, …),
+# not bookkeeping words shared by almost every factor title.
+_GENERIC_TOKENS = frozenset({
+    # generic kanji nouns
+    "設定", "確認", "管理", "対応", "不足", "不備", "問題", "状況",
+    "影響", "内容", "作業", "手順", "情報", "原因", "要因", "実施",
+    "発生", "処理", "利用", "検証", "監視", "機器", "装置", "障害",
+    "異常", "状態", "更新", "変更", "誤り", "漏れ", "遅延", "失敗",
+    "負荷", "設計", "仕様", "記録", "担当", "通知", "範囲", "条件",
+    # generic katakana nouns
+    "システム", "サーバ", "アクセス", "データ", "ユーザ", "メモリ",
+    "ネットワーク", "サービス", "ファイル", "エラー", "リソース",
+    "プロセス", "タイミング", "チェック", "テスト",
+})
+
 # Similarity thresholds (SequenceMatcher.ratio on normalized strings)
 PARENT_SIMILARITY_THRESHOLD = 0.72
 NO_RATED_SIMILARITY_THRESHOLD = 0.78
@@ -110,6 +134,50 @@ def ancestor_similarity(child: str, ancestor: str) -> float:
     return base
 
 
+def _is_title_like(s: str) -> bool:
+    """Return True if *s* looks like a factor/top-event title.
+
+    Used to keep the ancestor-similarity check restricted to titles: a real
+    title is a single short line, whereas analysis_context text (system /
+    incident / demo) is multi-line and long.
+    """
+    if not s:
+        return False
+    if "\n" in s or "\r" in s:
+        return False
+    return len(s.strip()) <= _MAX_TITLE_LIKE_LENGTH
+
+
+def distinctive_tokens(title: str) -> set[str]:
+    """Extract system-component / 系統 identifiers from a factor title.
+
+    Lightweight, dictionary-free extraction (no morphological analysis):
+      - ASCII alphanumeric runs of length >= 2  (DNS, VPN, API, TTL, CPU)
+      - Katakana runs of length >= 3            (ファイアウォール, キャッシュ)
+      - Kanji runs of length >= 2               (認証基盤, 経路制御)
+
+    Generic bookkeeping tokens (_GENERIC_TOKENS) are dropped so the result
+    keeps only meaningful component names. Returned tokens are NFKC-normalized
+    and ASCII is upper-cased so「ＤＮＳ」and「dns」compare equal.
+    """
+    if not title:
+        return set()
+    t = unicodedata.normalize("NFKC", title)
+    tokens: set[str] = set()
+
+    for m in re.findall(r"[A-Za-z0-9]{2,}", t):
+        tok = m.upper()
+        if tok not in _GENERIC_TOKENS:
+            tokens.add(tok)
+    for m in re.findall(r"[ァ-ヴー]{3,}", t):
+        if m not in _GENERIC_TOKENS:
+            tokens.add(m)
+    for m in re.findall(r"[一-龠々]{2,}", t):
+        if m not in _GENERIC_TOKENS:
+            tokens.add(m)
+    return tokens
+
+
 @dataclass
 class QualityResult:
     """Result of checking one generated factor."""
@@ -145,8 +213,12 @@ def evaluate_factor(
       W3. Title longer than MAX_TITLE_LENGTH characters
       W4. Title similar to an ancestor factor (above the immediate parent)
           → likely reverting to a higher-level expression instead of
-            answering "why did the parent occur". Warning only, never
-            excluded — a human should judge it.
+            answering "why did the parent occur". Only title-shaped ancestor
+            strings are compared (analysis_context text is ignored). Warning
+            only, never excluded — a human should judge it.
+      W5. Title shares a system-component token (DNS, VPN, 認証基盤, …) with a
+          No-rated factor → the same 系統 reappeared after being rejected.
+          Warning only, never excluded.
     """
     result = QualityResult()
     t = (title or "").strip()
@@ -184,13 +256,31 @@ def evaluate_factor(
             break  # one similar-existing warning is enough
 
     # --- W4: reversion to an ancestor factor's expression ---
+    # Only compare against title-shaped ancestors; analysis_context text
+    # (multi-line / long) is never a comparison target.
     for anc_title in (ancestor_titles or []):
+        if not _is_title_like(anc_title):
+            continue
         ratio = ancestor_similarity(t, anc_title)
         if ratio >= ANCESTOR_SIMILARITY_THRESHOLD:
             result.warnings.append(
                 f"祖先要因「{anc_title}」に類似（上位階層の表現への逆戻りの可能性）"
             )
             break  # one ancestor warning is enough
+
+    # --- W5: same system-component (系統) as a No-rated factor reappears ---
+    if no_rated_titles:
+        cand_tokens = distinctive_tokens(t)
+        if cand_tokens:
+            no_rated_tokens: set[str] = set()
+            for nt in no_rated_titles:
+                no_rated_tokens |= distinctive_tokens(nt)
+            shared = cand_tokens & no_rated_tokens
+            if shared:
+                joined = "、".join(sorted(shared))
+                result.warnings.append(
+                    f"No評価済み要因と同じ系統の語「{joined}」を含む（要確認）"
+                )
 
     # --- W2: over-generic title ---
     if t in _OVER_GENERIC_TITLES:
