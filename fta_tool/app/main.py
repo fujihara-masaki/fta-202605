@@ -16,7 +16,7 @@ from . import crud, models, schemas
 from .database import SessionLocal, engine, get_db
 from .services.ai_provider import GeneratedFactor, get_ai_provider
 from .services.export_service import export_csv, export_json, export_markdown
-from .services.factor_quality import evaluate_factor
+from .services.factor_quality import compute_factor_score, evaluate_factor
 from .services.prompt_loader import get_factor_generation_prompts
 from .services.sample_scenarios import get_sample_scenario, get_sample_scenarios
 
@@ -69,6 +69,12 @@ def _log_startup_config() -> None:
     logger.info("  FTA_ADDITIONAL_FACTOR_COUNT= %s", os.environ.get("FTA_ADDITIONAL_FACTOR_COUNT", "2"))
     logger.info("  FTA_RETRY_BELOW_MIN        = %s", os.environ.get("FTA_RETRY_BELOW_MIN", "true"))
     logger.info("  FTA_RETRY_BELOW_TARGET     = %s", os.environ.get("FTA_RETRY_BELOW_TARGET", "false"))
+    logger.info("  ENABLE_STRUCTURED_LLM_OUTPUT = %s", os.environ.get("ENABLE_STRUCTURED_LLM_OUTPUT", "true"))
+    logger.info("  ENABLE_GENERATION_METRICS  = %s", os.environ.get("ENABLE_GENERATION_METRICS", "true"))
+    logger.info("  ENABLE_GENERATION_RETRY    = %s", os.environ.get("ENABLE_GENERATION_RETRY", "true"))
+    logger.info("  OLLAMA_GENERATION_MAX_RETRIES = %s", os.environ.get("OLLAMA_GENERATION_MAX_RETRIES", "1"))
+    logger.info("  OLLAMA_GENERATION_RETRY_DELAY_SECONDS = %s", os.environ.get("OLLAMA_GENERATION_RETRY_DELAY_SECONDS", "1"))
+    logger.info("  OLLAMA_FORMAT_FROM_PYDANTIC = %s", os.environ.get("OLLAMA_FORMAT_FROM_PYDANTIC", "false"))
     prompt_file = os.environ.get("FTA_PROMPT_FILE", "config/prompts.yaml")
     logger.info("  FTA_PROMPT_FILE            = %s", prompt_file)
     if ai_provider == "ollama":
@@ -280,6 +286,12 @@ async def generate_factors(
     total_created = 0
     total_skipped = 0
     errors = []
+    # Aggregated quality scores for created factors (Step 1: structured score of
+    # the post-generation check; not used for branching yet).
+    quality_scores: list[int] = []
+    judgment_counts: dict[str, int] = {
+        "pass": 0, "warning": 0, "retry_recommended": 0, "fail": 0,
+    }
     t_start = time.time()
 
     # Titles across the whole analysis (any parent/level) for similarity warnings.
@@ -436,20 +448,31 @@ async def generate_factors(
                 no_rated_titles=no_rated_titles,
                 ancestor_titles=ancestor_factors,
             )
+            # Score the post-generation check (structured, for later use).
+            quality.score = compute_factor_score(
+                quality, factor.title, factor.description, parent_factor
+            )
             if quality.exclude:
                 logger.info(
-                    "quality exclude | level=%d parent=%r title=%r reason=%s",
+                    "quality exclude | level=%d parent=%r title=%r reason=%s score=%d judgment=%s",
                     level, parent_factor or "(top event)",
                     factor.title, quality.exclude_reason,
+                    quality.score.overall_score, quality.score.judgment,
                 )
                 skipped_dedup_this += 1
                 continue
             if quality.warnings:
                 logger.info(
-                    "quality warning | level=%d parent=%r title=%r warnings=%s",
+                    "quality warning | level=%d parent=%r title=%r warnings=%s "
+                    "score=%d judgment=%s",
                     level, parent_factor or "(top event)",
                     factor.title, quality.warning_flags,
+                    quality.score.overall_score, quality.score.judgment,
                 )
+            quality_scores.append(quality.score.overall_score)
+            judgment_counts[quality.score.judgment] = (
+                judgment_counts.get(quality.score.judgment, 0) + 1
+            )
 
             node_data = {
                 "parent_id": parent_id_val,
@@ -478,6 +501,17 @@ async def generate_factors(
     elapsed_ms = int((time.time() - t_start) * 1000)
     skip_note = f"（{total_skipped}件重複スキップ）" if total_skipped else ""
 
+    # Additive quality summary for created factors (existing UI ignores it).
+    avg_score = (
+        int(round(sum(quality_scores) / len(quality_scores)))
+        if quality_scores else None
+    )
+    quality_summary = {
+        "scored_count": len(quality_scores),
+        "average_overall_score": avg_score,
+        "judgment_counts": judgment_counts,
+    }
+
     if errors:
         return JSONResponse({
             "success": False,
@@ -486,6 +520,7 @@ async def generate_factors(
             "skipped": total_skipped,
             "elapsed_ms": elapsed_ms,
             "parent_id": parent_id,
+            "quality_summary": quality_summary,
         })
 
     return JSONResponse({
@@ -495,6 +530,7 @@ async def generate_factors(
         "skipped": total_skipped,
         "elapsed_ms": elapsed_ms,
         "parent_id": parent_id,
+        "quality_summary": quality_summary,
     })
 
 

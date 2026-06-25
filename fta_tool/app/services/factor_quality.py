@@ -179,11 +179,45 @@ def distinctive_tokens(title: str) -> set[str]:
 
 
 @dataclass
+class FactorScore:
+    """Scored view of a post-generation quality check (Step 1).
+
+    Scores are integers in [0, 100] (higher = better).  ``judgment`` is one of
+    ``pass`` / ``warning`` / ``retry_recommended`` / ``fail`` and is intended
+    to drive a later LangGraph inspect-then-generate branch — Step 1 only
+    computes it, it does not branch on it.
+    """
+    overall_score: int = 100
+    direct_cause_score: int = 100
+    parent_child_consistency_score: int = 100
+    duplicate_score: int = 100
+    specificity_score: int = 100
+    hierarchy_score: int = 100
+    expression_score: int = 100
+    judgment: str = "pass"
+
+    def as_dict(self) -> dict:
+        return {
+            "overall_score": self.overall_score,
+            "direct_cause_score": self.direct_cause_score,
+            "parent_child_consistency_score": self.parent_child_consistency_score,
+            "duplicate_score": self.duplicate_score,
+            "specificity_score": self.specificity_score,
+            "hierarchy_score": self.hierarchy_score,
+            "expression_score": self.expression_score,
+            "judgment": self.judgment,
+        }
+
+
+@dataclass
 class QualityResult:
     """Result of checking one generated factor."""
     exclude: bool = False
     exclude_reason: str = ""
     warnings: list[str] = field(default_factory=list)
+    # Optional structured score, attached by compute_factor_score(). Stays
+    # None for callers that only use exclude/warnings (backward compatible).
+    score: Optional["FactorScore"] = None
 
     @property
     def warning_flags(self) -> str:
@@ -291,3 +325,110 @@ def evaluate_factor(
         result.warnings.append(f"要因名が長すぎる（{len(t)}文字）")
 
     return result
+
+
+# Score weights for the overall_score (sum = 1.0).
+_SCORE_WEIGHTS = {
+    "direct_cause_score": 0.20,
+    "parent_child_consistency_score": 0.25,
+    "duplicate_score": 0.15,
+    "specificity_score": 0.15,
+    "hierarchy_score": 0.15,
+    "expression_score": 0.10,
+}
+
+
+def _clamp(v: int) -> int:
+    return max(0, min(100, int(round(v))))
+
+
+def compute_factor_score(
+    result: QualityResult,
+    title: str,
+    description: str,
+    parent_title: Optional[str] = None,
+) -> FactorScore:
+    """Turn a QualityResult into a structured FactorScore.
+
+    Step 1 only: derives 0–100 sub-scores and a judgment
+    (pass/warning/retry_recommended/fail) from the existing rule outputs plus a
+    few lightweight heuristics, so a later LangGraph gate can branch on them.
+    The QualityResult itself (exclude/warnings) is unchanged.
+    """
+    t = (title or "").strip()
+    desc = (description or "").strip()
+    warnings_text = " ".join(result.warnings)
+    reason = result.exclude_reason or ""
+
+    # --- parent/child consistency: penalize paraphrase / parent-similarity ---
+    if "親要因の言い換え" in reason or "説明文が親要因と同一" in reason:
+        parent_child = 10
+    elif parent_title:
+        sim = similarity(t, parent_title)
+        if sim >= PARENT_SIMILARITY_THRESHOLD:
+            parent_child = 25
+        elif sim >= 0.5:
+            parent_child = 60
+        else:
+            parent_child = 100
+    else:
+        parent_child = 100
+
+    # --- duplicate / similarity ---
+    if "No評価済み要因" in reason and "類似" in reason:
+        duplicate = 0
+    elif "既存要因" in warnings_text and "類似" in warnings_text:
+        duplicate = 50
+    else:
+        duplicate = 100
+
+    # --- direct-cause likeness: rests on an informative description ---
+    if not desc:
+        direct_cause = 30
+    elif len(desc) < 15:
+        direct_cause = 65
+    else:
+        direct_cause = 100
+
+    # --- specificity: generic name / very short title ---
+    specificity = 100
+    if "汎用的すぎる要因名" in warnings_text or t in _OVER_GENERIC_TITLES:
+        specificity = 40
+    elif len(t) <= 3:
+        specificity = 60
+
+    # --- hierarchy: reversion to an ancestor expression ---
+    hierarchy = 50 if "祖先要因" in warnings_text else 100
+
+    # --- expression naturalness as an FTA factor ---
+    expression = 100
+    if "要因名が長すぎる" in warnings_text:
+        expression = min(expression, 60)
+    if "同じ系統の語" in warnings_text:
+        expression = min(expression, 70)
+
+    if result.exclude:
+        # An excluded factor cannot score well overall regardless of sub-scores.
+        direct_cause = min(direct_cause, 30)
+
+    sub = {
+        "direct_cause_score": _clamp(direct_cause),
+        "parent_child_consistency_score": _clamp(parent_child),
+        "duplicate_score": _clamp(duplicate),
+        "specificity_score": _clamp(specificity),
+        "hierarchy_score": _clamp(hierarchy),
+        "expression_score": _clamp(expression),
+    }
+    overall = _clamp(sum(sub[k] * w for k, w in _SCORE_WEIGHTS.items()))
+
+    if result.exclude:
+        judgment = "fail"
+        overall = min(overall, 30)
+    elif overall < 60:
+        judgment = "retry_recommended"
+    elif result.warnings:
+        judgment = "warning"
+    else:
+        judgment = "pass"
+
+    return FactorScore(overall_score=overall, judgment=judgment, **sub)
