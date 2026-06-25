@@ -17,11 +17,16 @@ Set AI_PROVIDER environment variable to select provider:
 import json
 import logging
 import os
+import time
 from abc import ABC, abstractmethod
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
+
+from . import generation_config
+from .llm_models import GenerationMetrics, LLMFactorList
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +36,20 @@ class GeneratedFactor(BaseModel):
     description: str
     rationale: str
     check_points: list[str]
+
+
+class OllamaGenerationError(RuntimeError):
+    """Raised by OllamaProvider for a failed generation attempt.
+
+    Subclasses ``RuntimeError`` so existing ``except RuntimeError`` handlers in
+    main.py continue to work unchanged.  Carries a ``kind`` (for logging) and a
+    ``retryable`` flag used by the provider-internal retry loop.
+    """
+
+    def __init__(self, message: str, *, kind: str = "unknown", retryable: bool = True):
+        super().__init__(message)
+        self.kind = kind
+        self.retryable = retryable
 
 
 class AIProvider(ABC):
@@ -584,6 +603,107 @@ class OllamaProvider(AIProvider):
         return normalized
 
     @staticmethod
+    def _coerce_for_validation(parsed: object) -> dict:
+        """Reshape any parsed JSON into a ``{"factors": [...]}`` dict.
+
+        Used only to feed Pydantic validation.  When the inner items are not
+        dicts (e.g. list[str] or legacy {title,...}), validation will fail and
+        the caller falls back to the tolerant legacy normalizer.
+        """
+        if isinstance(parsed, dict):
+            for key in ("factors", "results", "items", "data"):
+                if isinstance(parsed.get(key), list):
+                    return {"factors": parsed[key]}
+            for v in parsed.values():
+                if isinstance(v, list):
+                    return {"factors": v}
+            return {"factors": []}
+        if isinstance(parsed, list):
+            return {"factors": parsed}
+        return {"factors": []}
+
+    @staticmethod
+    def _to_generated(validated: LLMFactorList) -> list[GeneratedFactor]:
+        """Convert a validated LLMFactorList into list[GeneratedFactor]."""
+        results: list[GeneratedFactor] = []
+        for f in validated.factors:
+            base = f.reason.strip() if f.reason else f"AI信頼度: {f.confidence_label()}"
+            rationale = (
+                f"{base}（要因種別: {f.factor_type}）" if f.factor_type else base
+            )
+            results.append(GeneratedFactor(
+                title=f.name,
+                description=f.description,
+                rationale=rationale,
+                check_points=[],
+            ))
+        return results
+
+    @classmethod
+    def _extract_factors_validated(
+        cls, content: str, *, level: int, parent: Optional[str]
+    ) -> list[GeneratedFactor]:
+        """Parse + (optionally) Pydantic-validate the LLM content.
+
+        When ENABLE_STRUCTURED_LLM_OUTPUT is on, the parsed JSON is validated
+        against LLMFactorList first; on a ValidationError it logs
+        ``structured_output_validation_failed`` and ``generation_fallback`` and
+        falls back to the legacy ``_normalize_factors`` path.  Raises
+        OllamaGenerationError on empty content or unparseable JSON.
+        """
+        if not content or not content.strip():
+            raise OllamaGenerationError(
+                "Ollamaが空の応答を返しました。", kind="empty_response", retryable=True
+            )
+
+        stripped = content.strip()
+        if stripped.startswith("```"):
+            lines = stripped.splitlines()
+            inner = lines[1:] if len(lines) > 1 else lines
+            if inner and inner[-1].strip() == "```":
+                inner = inner[:-1]
+            stripped = "\n".join(inner).strip()
+
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError as e:
+            snippet = stripped[:500]
+            logger.error("Ollama JSON parse error: %s | raw content: %s", e, snippet)
+            raise OllamaGenerationError(
+                f"OllamaのレスポンスをJSONとして解析できませんでした。\nエラー: {e}\n"
+                f"モデル出力（先頭500文字）: {snippet}",
+                kind="json_parse", retryable=True,
+            ) from e
+
+        if generation_config.structured_output_enabled():
+            try:
+                validated = LLMFactorList.model_validate(
+                    cls._coerce_for_validation(parsed)
+                )
+                if validated.factors:
+                    logger.info(
+                        "structured_output_validation_success | level=%d parent=%r factors=%d",
+                        level, parent or "(top event)", len(validated.factors),
+                    )
+                    return cls._to_generated(validated)
+                # Empty after validation → let legacy path try (and zero-check later)
+            except ValidationError as e:
+                logger.warning(
+                    "structured_output_validation_failed | level=%d parent=%r errors=%d",
+                    level, parent or "(top event)", len(e.errors()),
+                )
+                logger.info(
+                    "generation_fallback | level=%d parent=%r reason=structured_validation_error",
+                    level, parent or "(top event)",
+                )
+
+        try:
+            return cls._normalize_factors(parsed)
+        except RuntimeError as e:
+            # Normalizer rejected the shape → treat as a retryable bad response.
+            raise OllamaGenerationError(str(e), kind="bad_shape", retryable=True) from e
+
+    @staticmethod
     def _extract_factors(content: str) -> list[GeneratedFactor]:
         """
         Parse the raw LLM text content into list[GeneratedFactor].
@@ -612,6 +732,108 @@ class OllamaProvider(AIProvider):
             ) from e
 
         return OllamaProvider._normalize_factors(parsed)
+
+    def _post_chat(
+        self, payload: dict, *, level: int, parent: Optional[str]
+    ) -> dict:
+        """POST to Ollama /api/chat and return the parsed response dict.
+
+        Raises OllamaGenerationError (RuntimeError subclass) on any transport
+        or response-structure failure, tagging it with a ``kind`` and a
+        ``retryable`` flag for the retry loop.
+        """
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.post(self.chat_url, json=payload)
+                response.raise_for_status()
+        except httpx.TimeoutException as e:
+            logger.error(
+                "Ollama timeout | url=%s payload_model=%s timeout=%.0fs level=%d parent=%s",
+                self.chat_url, payload["model"], self.timeout, level,
+                parent or "(top event)",
+            )
+            raise OllamaGenerationError(
+                f"Ollamaがタイムアウトしました（{self.timeout:.0f}秒）。\n"
+                f"モデル: {payload['model']} / URL: {self.chat_url}\n"
+                "対処法: .env の OLLAMA_TIMEOUT_SECONDS を大きくするか、"
+                "より軽量なモデル（例: llama3.2:3b）に変更してください。",
+                kind="timeout", retryable=True,
+            ) from e
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "Ollama HTTP error: status=%d payload_model=%s body=%s",
+                e.response.status_code, payload["model"], e.response.text[:500],
+            )
+            raise OllamaGenerationError(
+                f"Ollama APIエラー: HTTPステータス {e.response.status_code} "
+                f"(model={payload['model']})\n{e.response.text[:300]}",
+                kind="http_status", retryable=e.response.status_code >= 500,
+            ) from e
+        except httpx.ConnectError as e:
+            logger.error("Ollama connect error: %s", e)
+            raise OllamaGenerationError(
+                f"Ollamaに接続できません ({self.base_url})。\n"
+                "Ollamaが起動しているか確認してください。\n"
+                "起動コマンド: ollama serve",
+                kind="connect", retryable=True,
+            ) from e
+        except httpx.RequestError as e:
+            logger.error(
+                "Ollama request error: %s | payload_model=%s", e, payload["model"]
+            )
+            raise OllamaGenerationError(
+                f"Ollama 通信エラー: {e}", kind="request", retryable=True
+            ) from e
+
+        try:
+            data = response.json()
+            # touch message.content so a malformed structure fails here
+            _ = data["message"]["content"]
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.error(
+                "Ollama response structure error: %s | body: %s", e, response.text[:500]
+            )
+            raise OllamaGenerationError(
+                f"Ollamaのレスポンス構造が想定外です: {e}",
+                kind="bad_response", retryable=True,
+            ) from e
+        return data
+
+    def _generate_once(
+        self, payload: dict, *, level: int, parent: Optional[str]
+    ) -> tuple[list[GeneratedFactor], dict]:
+        """Perform one Ollama call: POST → validate/parse → factors.
+
+        Raises OllamaGenerationError on empty response, parse/validation
+        failure, or zero factors (all retryable).
+        """
+        data = self._post_chat(payload, level=level, parent=parent)
+        content: str = data["message"]["content"]
+        logger.debug(
+            "Ollama raw content | level=%d parent=%r len=%d:\n%s",
+            level, parent or "(top event)", len(content or ""), content,
+        )
+        factors = self._extract_factors_validated(content, level=level, parent=parent)
+        if not factors:
+            raise OllamaGenerationError(
+                "Ollamaが要因を0件返しました。", kind="zero_factors", retryable=True
+            )
+        return factors, data
+
+    def _log_metrics(
+        self, data: Optional[dict], *, model: str, level: int,
+        parent: Optional[str], start_dt: datetime, end_dt: datetime,
+        elapsed_ms: int, success: bool, retries: int, error: Optional[str] = None,
+    ) -> None:
+        """Emit a structured ``generation_metrics`` log line (token + timing)."""
+        if not generation_config.metrics_enabled():
+            return
+        metrics = GenerationMetrics.from_ollama_response(
+            data, model_name=model, level=level, parent=parent,
+            start_time=start_dt.isoformat(), end_time=end_dt.isoformat(),
+            elapsed_ms=elapsed_ms, success=success, retries=retries, error=error,
+        )
+        logger.info("generation_metrics | %s", metrics.model_dump_json())
 
     def generate_factors(
         self,
@@ -678,80 +900,68 @@ class OllamaProvider(AIProvider):
             parent_factor or "(top event)",
         )
 
-        try:
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(self.chat_url, json=payload)
-                response.raise_for_status()
-        except httpx.TimeoutException as e:
-            logger.error(
-                "Ollama timeout | url=%s payload_model=%s timeout=%.0fs level=%d parent=%s",
-                self.chat_url,
-                payload["model"],
-                self.timeout,
-                target_level,
-                parent_factor or "(top event)",
-            )
-            raise RuntimeError(
-                f"Ollamaがタイムアウトしました（{self.timeout:.0f}秒）。\n"
-                f"モデル: {payload['model']} / URL: {self.chat_url}\n"
-                "対処法: .env の OLLAMA_TIMEOUT_SECONDS を大きくするか、"
-                "より軽量なモデル（例: llama3.2:3b）に変更してください。"
-            ) from e
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                "Ollama HTTP error: status=%d payload_model=%s body=%s",
-                e.response.status_code,
-                payload["model"],
-                e.response.text[:500],
-            )
-            raise RuntimeError(
-                f"Ollama APIエラー: HTTPステータス {e.response.status_code} "
-                f"(model={payload['model']})\n"
-                f"{e.response.text[:300]}"
-            ) from e
-        except httpx.ConnectError as e:
-            logger.error("Ollama connect error: %s", e)
-            raise RuntimeError(
-                f"Ollamaに接続できません ({self.base_url})。\n"
-                "Ollamaが起動しているか確認してください。\n"
-                "起動コマンド: ollama serve"
-            ) from e
-        except httpx.RequestError as e:
-            logger.error(
-                "Ollama request error: %s | payload_model=%s", e, payload["model"]
-            )
-            raise RuntimeError(f"Ollama 通信エラー: {e}") from e
-
-        try:
-            data = response.json()
-            content: str = data["message"]["content"]
-        except (json.JSONDecodeError, KeyError) as e:
-            logger.error(
-                "Ollama response structure error: %s | body: %s", e, response.text[:500]
-            )
-            raise RuntimeError(f"Ollamaのレスポンス構造が想定外です: {e}") from e
-
-        # Log Ollama eval metrics for performance analysis
-        eval_count        = data.get("eval_count", 0)
-        eval_dur_s        = data.get("eval_duration", 0) / 1e9
-        total_dur_s       = data.get("total_duration", 0) / 1e9
-        load_dur_s        = data.get("load_duration", 0) / 1e9
-        prompt_tokens     = data.get("prompt_eval_count", 0)
-        prompt_eval_dur_s = data.get("prompt_eval_duration", 0) / 1e9
-        logger.info(
-            "Ollama stats | model=%s level=%d parent=%r "
-            "prompt_tokens=%d prompt_eval_time=%.1fs "
-            "eval_tokens=%d eval_time=%.1fs "
-            "load_time=%.1fs total_time=%.1fs content_len=%d",
-            data.get("model", self.model), target_level, parent_factor or "(top event)",
-            prompt_tokens, prompt_eval_dur_s,
-            eval_count, eval_dur_s,
-            load_dur_s, total_dur_s, len(content),
+        # --- Generation with provider-internal retry (Step 1) -------------
+        max_retries = (
+            generation_config.get_max_retries()
+            if generation_config.retry_enabled() else 0
         )
-        logger.debug("Ollama raw content | level=%d parent=%r len=%d:\n%s",
-                     target_level, parent_factor or "(top event)", len(content), content)
+        retry_delay = generation_config.get_retry_delay_seconds()
+        attempt = 0
+        factors: list[GeneratedFactor] = []
+        while True:
+            start_dt = datetime.now(timezone.utc)
+            t0 = time.time()
+            logger.info(
+                "generation_start | model=%s level=%d parent=%r attempt=%d/%d",
+                payload["model"], target_level, parent_factor or "(top event)",
+                attempt, max_retries,
+            )
+            try:
+                factors, data = self._generate_once(
+                    payload, level=target_level, parent=parent_factor
+                )
+            except OllamaGenerationError as e:
+                elapsed_ms = int((time.time() - t0) * 1000)
+                self._log_metrics(
+                    None, model=payload["model"], level=target_level,
+                    parent=parent_factor, start_dt=start_dt,
+                    end_dt=datetime.now(timezone.utc), elapsed_ms=elapsed_ms,
+                    success=False, retries=attempt, error=e.kind,
+                )
+                logger.warning(
+                    "generation_failed | level=%d parent=%r kind=%s attempt=%d "
+                    "retryable=%s elapsed_ms=%d",
+                    target_level, parent_factor or "(top event)", e.kind,
+                    attempt, e.retryable, elapsed_ms,
+                )
+                if e.retryable and attempt < max_retries:
+                    attempt += 1
+                    logger.warning(
+                        "generation_retry | level=%d parent=%r next_attempt=%d/%d "
+                        "delay=%.1fs kind=%s",
+                        target_level, parent_factor or "(top event)", attempt,
+                        max_retries, retry_delay, e.kind,
+                    )
+                    if retry_delay > 0:
+                        time.sleep(retry_delay)
+                    continue
+                raise
 
-        factors = self._extract_factors(content)
+            elapsed_ms = int((time.time() - t0) * 1000)
+            self._log_metrics(
+                data, model=data.get("model", payload["model"]), level=target_level,
+                parent=parent_factor, start_dt=start_dt,
+                end_dt=datetime.now(timezone.utc), elapsed_ms=elapsed_ms,
+                success=True, retries=attempt,
+            )
+            logger.info(
+                "generation_success | model=%s level=%d parent=%r raw=%d "
+                "attempt=%d elapsed_ms=%d",
+                data.get("model", payload["model"]), target_level,
+                parent_factor or "(top event)", len(factors), attempt, elapsed_ms,
+            )
+            break
+
         raw_count = len(factors)
 
         # Quality filter: remove abstract, duplicate, or trivially bad factors
