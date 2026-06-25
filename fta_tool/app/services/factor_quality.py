@@ -432,3 +432,32 @@ def compute_factor_score(
         judgment = "pass"
 
     return FactorScore(overall_score=overall, judgment=judgment, **sub)
+
+
+# Short, user-facing label used when a candidate is skipped as a duplicate of
+# an existing node already saved in the analysis (DB-level dedup in main.py).
+DEDUP_REASON_LABEL = "既存要因との重複・類似"
+
+
+def summarize_exclusion_reason(reason: str) -> str:
+    """Collapse a detailed exclusion/skip reason into a short UI-friendly label.
+
+    The detailed text (with similarity ratios etc.) stays in the logs; the UI
+    only shows these rolled-up categories so a「+0件」result is explainable.
+    """
+    r = reason or ""
+    if "親要因の言い換え" in r:
+        return "親要因の言い換え"
+    if "親要因と同一" in r or "説明文が親要因と同一" in r:
+        return "親要因と内容が同一"
+    if "No評価済み" in r:
+        return "No評価済み要因との類似"
+    if "既存要因" in r or "重複" in r:
+        return DEDUP_REASON_LABEL
+    if "汎用" in r or "抽象" in r:
+        return "抽象的すぎる要因名"
+    if "祖先" in r or "逆戻り" in r:
+        return "上位階層への逆戻り"
+    if "長すぎる" in r:
+        return "要因名が長すぎる"
+    return "品質チェックにより除外"

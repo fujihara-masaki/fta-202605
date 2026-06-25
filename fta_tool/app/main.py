@@ -16,7 +16,12 @@ from . import crud, models, schemas
 from .database import SessionLocal, engine, get_db
 from .services.ai_provider import GeneratedFactor, get_ai_provider
 from .services.export_service import export_csv, export_json, export_markdown
-from .services.factor_quality import compute_factor_score, evaluate_factor
+from .services.factor_quality import (
+    DEDUP_REASON_LABEL,
+    compute_factor_score,
+    evaluate_factor,
+    summarize_exclusion_reason,
+)
 from .services.prompt_loader import get_factor_generation_prompts
 from .services.sample_scenarios import get_sample_scenario, get_sample_scenarios
 
@@ -292,6 +297,12 @@ async def generate_factors(
     judgment_counts: dict[str, int] = {
         "pass": 0, "warning": 0, "retry_recommended": 0, "fail": 0,
     }
+    # Step 1.5: make「+0件」explainable — distinguish "LLM returned no candidate"
+    # from "candidates returned but all rejected by the quality check".
+    total_ai_returned = 0          # candidates received from the provider
+    total_excluded_quality = 0     # dropped by evaluate_factor (paraphrase / No-rated …)
+    total_excluded_dedup = 0       # dropped as a duplicate of an existing node
+    exclusion_reasons: list[str] = []  # short labels, order-preserving (deduped later)
     t_start = time.time()
 
     # Titles across the whole analysis (any parent/level) for similarity warnings.
@@ -426,14 +437,17 @@ async def generate_factors(
         parent_description_val = parent_node.description if parent_node else ""
 
         created_this = 0
-        skipped_dedup_this = 0
+        dedup_skipped_this = 0
+        quality_excluded_this = 0
+        parent_reasons: list[str] = []
         for i, factor in enumerate(factors):
             if crud.node_title_exists(db, analysis_id, parent_id_val, level, factor.title):
                 logger.info(
                     "dedup skip | level=%d parent=%r title=%r (already in DB)",
                     level, parent_factor or "(top event)", factor.title,
                 )
-                skipped_dedup_this += 1
+                dedup_skipped_this += 1
+                parent_reasons.append(DEDUP_REASON_LABEL)
                 continue
 
             # Rule-based quality check (provider-agnostic):
@@ -459,7 +473,8 @@ async def generate_factors(
                     factor.title, quality.exclude_reason,
                     quality.score.overall_score, quality.score.judgment,
                 )
-                skipped_dedup_this += 1
+                quality_excluded_this += 1
+                parent_reasons.append(summarize_exclusion_reason(quality.exclude_reason))
                 continue
             if quality.warnings:
                 logger.info(
@@ -489,19 +504,49 @@ async def generate_factors(
             all_analysis_titles.append(factor.title)
             created_this += 1
 
+        skipped_this = dedup_skipped_this + quality_excluded_this
+        ai_returned_this = len(factors)
         total_created += created_this
-        total_skipped += skipped_dedup_this
+        total_skipped += skipped_this
+        total_ai_returned += ai_returned_this
+        total_excluded_quality += quality_excluded_this
+        total_excluded_dedup += dedup_skipped_this
+        exclusion_reasons.extend(parent_reasons)
+
+        # Step 1.5: candidates existed but all were rejected → explicit log so
+        # ops can tell this apart from an LLM failure or a 0-candidate response.
+        if ai_returned_this > 0 and created_this == 0:
+            unique_reasons = list(dict.fromkeys(parent_reasons))
+            logger.warning(
+                "quality_all_excluded | analysis=%d level=%d parent=%r "
+                "ai_returned=%d excluded=%d reasons='%s'",
+                analysis_id, level, parent_factor or "(top event)",
+                ai_returned_this, skipped_this, ", ".join(unique_reasons),
+            )
+
         logger.info(
             "generate_factors summary | analysis=%d level=%d parent=%r "
-            "limit=%d ai_returned=%d created=%d skipped_dedup=%d elapsed=%dms",
+            "limit=%d ai_returned=%d created=%d excluded_quality=%d skipped_dedup=%d elapsed=%dms",
             analysis_id, level, parent_factor or "(top event)",
-            factor_count, len(factors), created_this, skipped_dedup_this, elapsed_node_ms,
+            factor_count, ai_returned_this, created_this,
+            quality_excluded_this, dedup_skipped_this, elapsed_node_ms,
         )
 
     elapsed_ms = int((time.time() - t_start) * 1000)
     skip_note = f"（{total_skipped}件重複スキップ）" if total_skipped else ""
 
-    # Additive quality summary for created factors (existing UI ignores it).
+    # --- Step 1.5: classify the outcome so「+0件」is explainable ----------
+    # all candidates rejected by the quality check (vs. LLM returned nothing)
+    all_candidates_excluded = total_ai_returned > 0 and total_created == 0
+    reason_summary = list(dict.fromkeys(exclusion_reasons))  # unique, ordered
+    if total_created > 0:
+        outcome = "partial" if total_skipped > 0 else "created"
+    elif all_candidates_excluded:
+        outcome = "all_excluded"
+    else:
+        outcome = "no_candidates"
+
+    # Additive quality summary (existing UI ignores unknown keys).
     avg_score = (
         int(round(sum(quality_scores) / len(quality_scores)))
         if quality_scores else None
@@ -510,6 +555,15 @@ async def generate_factors(
         "scored_count": len(quality_scores),
         "average_overall_score": avg_score,
         "judgment_counts": judgment_counts,
+        # Step 1.5 fields
+        "ai_returned": total_ai_returned,
+        "created": total_created,
+        "excluded": total_skipped,
+        "excluded_by_quality": total_excluded_quality,
+        "excluded_by_dedup": total_excluded_dedup,
+        "all_candidates_excluded": all_candidates_excluded,
+        "outcome": outcome,
+        "reason_summary": reason_summary,
     }
 
     if errors:
@@ -523,9 +577,23 @@ async def generate_factors(
             "quality_summary": quality_summary,
         })
 
+    # Build a message that explains a 0-created result instead of just「0件」.
+    if all_candidates_excluded:
+        reason_note = (
+            f" 主な理由: {'、'.join(reason_summary)}" if reason_summary else ""
+        )
+        message = (
+            f"生成候補は{total_ai_returned}件ありましたが、"
+            f"品質チェックによりすべて除外されました。{reason_note}"
+        )
+    elif total_created == 0:
+        message = "生成候補がありませんでした（LLMが要因を返しませんでした）。"
+    else:
+        message = f"{total_created}件の要因を生成しました{skip_note}"
+
     return JSONResponse({
         "success": True,
-        "message": f"{total_created}件の要因を生成しました{skip_note}",
+        "message": message,
         "created": total_created,
         "skipped": total_skipped,
         "elapsed_ms": elapsed_ms,

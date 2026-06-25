@@ -1,9 +1,13 @@
 """Tests for the post-generation quality scoring (Step 1)."""
 
+import pytest
+
 from app.services.factor_quality import (
+    DEDUP_REASON_LABEL,
     FactorScore,
     compute_factor_score,
     evaluate_factor,
+    summarize_exclusion_reason,
 )
 
 
@@ -83,3 +87,33 @@ def test_evaluate_factor_backward_compatible():
     result = evaluate_factor(title="技術的要因", description="技術的な観点", parent_title=None)
     assert result.score is None
     assert not result.exclude
+
+
+# --- summarize_exclusion_reason (Step 1.5) ---
+
+@pytest.mark.parametrize("detail,expected", [
+    ("親要因の言い換え（類似度0.94）", "親要因の言い換え"),
+    ("説明文が親要因と同一", "親要因と内容が同一"),
+    ("No評価済み要因「DNS設定の誤り」に類似（類似度1.00）", "No評価済み要因との類似"),
+    ("既存要因「設定変更の反映漏れ」に類似", DEDUP_REASON_LABEL),
+    ("汎用的すぎる要因名", "抽象的すぎる要因名"),
+    ("祖先要因「○○」に類似（上位階層の表現への逆戻りの可能性）", "上位階層への逆戻り"),
+    ("要因名が長すぎる（35文字）", "要因名が長すぎる"),
+])
+def test_summarize_exclusion_reason_maps_to_short_label(detail, expected):
+    assert summarize_exclusion_reason(detail) == expected
+
+
+def test_summarize_exclusion_reason_unknown_falls_back():
+    assert summarize_exclusion_reason("謎の理由") == "品質チェックにより除外"
+    assert summarize_exclusion_reason("") == "品質チェックにより除外"
+
+
+def test_summarize_real_exclude_reason_from_evaluate_factor():
+    """The label derives correctly from an actual evaluate_factor exclusion."""
+    result = evaluate_factor(
+        title="ログイン処理の失敗", description="失敗した",
+        parent_title="ログイン処理の失敗",
+    )
+    assert result.exclude
+    assert summarize_exclusion_reason(result.exclude_reason) == "親要因の言い換え"

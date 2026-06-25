@@ -132,6 +132,7 @@ a:hover { text-decoration: underline; }
 .toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: 7px; color: #fff; font-size: 13px; z-index: 300; box-shadow: 0 4px 16px rgba(0,0,0,0.2); transition: opacity 0.3s; }
 .toast.success { background: #27ae60; }
 .toast.error { background: #e74c3c; }
+.toast.warning { background: #e67e22; }
 .toast.hidden { display: none; }
 
 /* ===== Generation Status Badge ===== */
@@ -139,6 +140,7 @@ a:hover { text-decoration: underline; }
 .gen-status-generating { background: #fef9e7; color: #d68910; border: 1px solid #f0c030; animation: badge-pulse 1s ease-in-out infinite; }
 .gen-status-done { background: #eafaf1; color: #27ae60; border: 1px solid #a9dfbf; }
 .gen-status-error { background: #fdedec; color: #c0392b; border: 1px solid #e74c3c; }
+.gen-status-excluded { background: #fef5e7; color: #b9770e; border: 1px solid #f5cba7; }
 @keyframes badge-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 
 /* ===== Loading ===== */

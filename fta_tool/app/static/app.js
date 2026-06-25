@@ -6,7 +6,10 @@ function showToast(message, type = 'success') {
   if (!toast) return;
   toast.textContent = message;
   toast.className = `toast ${type}`;
-  setTimeout(() => { toast.className = 'toast hidden'; }, 3000);
+  // Warnings (e.g. all candidates excluded) carry a longer reason note, so
+  // keep them on screen a little longer than success/error toasts.
+  const duration = type === 'warning' ? 6000 : 3000;
+  setTimeout(() => { toast.className = 'toast hidden'; }, duration);
 }
 
 // ===== Analysis Title =====
@@ -155,6 +158,7 @@ function setNodeGenStatus(nodeId, status, count) {
   badge.className = `gen-status-badge gen-status-${status}`;
   if (status === 'generating') badge.textContent = '生成中…';
   else if (status === 'done') badge.textContent = `+${count}件`;
+  else if (status === 'excluded') badge.textContent = '0件(除外)';
   else if (status === 'error') badge.textContent = 'エラー';
   else badge.textContent = '';
 }
@@ -175,9 +179,20 @@ async function generateFactors(analysisId, level) {
       body: JSON.stringify({}),
     });
     const data = await res.json();
-    if (data.success || data.created > 0) {
+    const qs = data.quality_summary || {};
+    if (data.created > 0) {
       showToast(data.message || `${data.created}件の要因を生成しました`);
       setTimeout(() => location.reload(), 800);
+    } else if (qs.all_candidates_excluded) {
+      // Candidates were generated but the quality check rejected all of them.
+      showToast(
+        data.message || '生成候補は品質チェックによりすべて除外されました',
+        'warning',
+      );
+      if (overlay) overlay.classList.add('hidden');
+    } else if (data.success) {
+      showToast(data.message || '新規要因はありませんでした', 'warning');
+      if (overlay) overlay.classList.add('hidden');
     } else {
       showToast(data.message || '生成に失敗しました', 'error');
       if (overlay) overlay.classList.add('hidden');
@@ -202,6 +217,8 @@ async function generateFactorsSequential(analysisId, level) {
 
   let totalCreated = 0;
   let totalErrors = 0;
+  let totalExcludedCandidates = 0;  // candidates rejected by the quality check
+  const reasonSet = new Set();
 
   for (const card of parentCards) {
     const nodeId = card.dataset.nodeId;
@@ -214,9 +231,17 @@ async function generateFactorsSequential(analysisId, level) {
         body: JSON.stringify({ parent_id: parseInt(nodeId) }),
       });
       const data = await res.json();
-      if (data.success || data.created > 0) {
+      const qs = data.quality_summary || {};
+      if (data.created > 0) {
         setNodeGenStatus(nodeId, 'done', data.created);
         totalCreated += data.created;
+      } else if (qs.all_candidates_excluded) {
+        // Generated but all rejected — show「除外」on this parent's badge.
+        setNodeGenStatus(nodeId, 'excluded');
+        totalExcludedCandidates += (qs.ai_returned || 0);
+        (qs.reason_summary || []).forEach((r) => reasonSet.add(r));
+      } else if (data.success) {
+        setNodeGenStatus(nodeId, 'done', 0);
       } else {
         setNodeGenStatus(nodeId, 'error');
         totalErrors++;
@@ -228,11 +253,20 @@ async function generateFactorsSequential(analysisId, level) {
   }
 
   if (totalCreated > 0) {
-    showToast(`合計${totalCreated}件の要因を生成しました`);
+    const note = totalExcludedCandidates > 0
+      ? `（うち候補${totalExcludedCandidates}件は品質チェックで除外）` : '';
+    showToast(`合計${totalCreated}件の要因を生成しました${note}`);
     setTimeout(() => location.reload(), 1200);
+  } else if (totalExcludedCandidates > 0) {
+    const reasons = reasonSet.size ? ` 主な理由: ${[...reasonSet].join('、')}` : '';
+    showToast(
+      `生成候補は${totalExcludedCandidates}件ありましたが、品質チェックによりすべて除外されました。${reasons}`,
+      'warning',
+    );
+  } else if (totalErrors > 0) {
+    showToast('エラーが発生しました', 'error');
   } else {
-    const msg = totalErrors > 0 ? 'エラーが発生しました' : '新規要因はありませんでした';
-    showToast(msg, totalErrors > 0 ? 'error' : 'success');
+    showToast('新規要因はありませんでした', 'warning');
   }
 }
 
