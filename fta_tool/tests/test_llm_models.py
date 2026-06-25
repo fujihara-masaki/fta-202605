@@ -7,6 +7,7 @@ from app.services.llm_models import (
     GenerationMetrics,
     LLMFactor,
     LLMFactorList,
+    ollama_format_schema_from_pydantic,
 )
 
 
@@ -91,6 +92,72 @@ def test_generation_metrics_from_ollama_response():
     assert m.success is True
     # JSON serializable for logging
     assert "prompt_eval_count" in m.model_dump_json()
+
+
+# --- Ollama format schema (structured output) -------------------------------
+
+def _item_schema(schema: dict) -> dict:
+    return schema["properties"]["factors"]["items"]
+
+
+def test_pydantic_format_schema_is_ref_free():
+    """Derived schema must not contain $ref/$defs (older Ollama compatibility)."""
+    import json
+    schema = ollama_format_schema_from_pydantic()
+    blob = json.dumps(schema)
+    assert "$ref" not in blob
+    assert "$defs" not in blob
+
+
+def test_pydantic_format_schema_matches_inline_semantically():
+    """Drift guard: Pydantic-derived schema and the inline _FORMAT_SCHEMA agree
+    on object type, required fields, properties and the confidence enum."""
+    from app.services.ai_provider import OllamaProvider
+
+    derived = ollama_format_schema_from_pydantic()
+    inline = OllamaProvider._FORMAT_SCHEMA
+
+    assert derived["type"] == inline["type"] == "object"
+    assert derived["required"] == inline["required"] == ["factors"]
+
+    d_item, i_item = _item_schema(derived), _item_schema(inline)
+    assert set(d_item["properties"]) == set(i_item["properties"]) == {
+        "name", "description", "confidence",
+    }
+    assert sorted(d_item["required"]) == sorted(i_item["required"])
+    assert d_item["properties"]["confidence"]["enum"] == \
+        i_item["properties"]["confidence"]["enum"] == ["high", "medium", "low"]
+
+
+def test_format_schema_default_is_inline(monkeypatch):
+    from app.services.ai_provider import OllamaProvider
+    monkeypatch.delenv("OLLAMA_FORMAT_FROM_PYDANTIC", raising=False)
+    assert OllamaProvider._format_schema() is OllamaProvider._FORMAT_SCHEMA
+
+
+def test_format_schema_pydantic_when_enabled(monkeypatch):
+    from app.services.ai_provider import OllamaProvider
+    monkeypatch.setenv("OLLAMA_FORMAT_FROM_PYDANTIC", "true")
+    schema = OllamaProvider._format_schema()
+    assert schema is not OllamaProvider._FORMAT_SCHEMA
+    assert schema["required"] == ["factors"]
+
+
+def test_format_schema_falls_back_on_error(monkeypatch):
+    """If derivation raises, _format_schema falls back to the inline schema."""
+    from app.services import ai_provider
+    from app.services.ai_provider import OllamaProvider
+    monkeypatch.setenv("OLLAMA_FORMAT_FROM_PYDANTIC", "true")
+    monkeypatch.setattr(
+        ai_provider.generation_config, "format_schema_from_pydantic", lambda: True
+    )
+
+    def _boom():
+        raise RuntimeError("schema build failed")
+
+    import app.services.llm_models as llm_models
+    monkeypatch.setattr(llm_models, "ollama_format_schema_from_pydantic", _boom)
+    assert OllamaProvider._format_schema() is OllamaProvider._FORMAT_SCHEMA
 
 
 def test_generation_metrics_missing_fields_are_none():

@@ -46,9 +46,11 @@ class _PostChatStub:
     def __init__(self, script):
         self.script = list(script)
         self.calls = 0
+        self.last_payload = None
 
     def __call__(self, payload, *, level, parent):
         self.calls += 1
+        self.last_payload = payload
         item = self.script.pop(0)
         if isinstance(item, OllamaGenerationError):
             raise item
@@ -194,6 +196,37 @@ def test_validation_error_triggers_retry_then_fallback_success(monkeypatch):
     factors = _generate(provider)
     assert stub.calls == 2
     assert all(isinstance(f, GeneratedFactor) for f in factors)
+
+
+# --- format (JSON Schema) is sent to Ollama ---------------------------------
+
+def test_payload_includes_json_schema_format(monkeypatch):
+    """The request payload carries a JSON Schema in `format` (not format='json')."""
+    provider = _make_provider(monkeypatch)
+    stub = _PostChatStub([GOOD_CONTENT])
+    monkeypatch.setattr(provider, "_post_chat", stub)
+
+    _generate(provider)
+
+    fmt = stub.last_payload["format"]
+    assert isinstance(fmt, dict)  # a JSON Schema object, not the string "json"
+    assert fmt["type"] == "object"
+    assert fmt["required"] == ["factors"]
+    item = fmt["properties"]["factors"]["items"]
+    assert set(item["required"]) == {"name", "description", "confidence"}
+
+
+def test_payload_format_from_pydantic_when_enabled(monkeypatch):
+    monkeypatch.setenv("OLLAMA_FORMAT_FROM_PYDANTIC", "true")
+    provider = _make_provider(monkeypatch)
+    stub = _PostChatStub([GOOD_CONTENT])
+    monkeypatch.setattr(provider, "_post_chat", stub)
+
+    _generate(provider)
+
+    fmt = stub.last_payload["format"]
+    assert fmt is not OllamaProvider._FORMAT_SCHEMA
+    assert fmt["required"] == ["factors"]
 
 
 # --- metrics ----------------------------------------------------------------

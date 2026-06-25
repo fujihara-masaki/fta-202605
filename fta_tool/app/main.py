@@ -74,6 +74,7 @@ def _log_startup_config() -> None:
     logger.info("  ENABLE_GENERATION_RETRY    = %s", os.environ.get("ENABLE_GENERATION_RETRY", "true"))
     logger.info("  OLLAMA_GENERATION_MAX_RETRIES = %s", os.environ.get("OLLAMA_GENERATION_MAX_RETRIES", "1"))
     logger.info("  OLLAMA_GENERATION_RETRY_DELAY_SECONDS = %s", os.environ.get("OLLAMA_GENERATION_RETRY_DELAY_SECONDS", "1"))
+    logger.info("  OLLAMA_FORMAT_FROM_PYDANTIC = %s", os.environ.get("OLLAMA_FORMAT_FROM_PYDANTIC", "false"))
     prompt_file = os.environ.get("FTA_PROMPT_FILE", "config/prompts.yaml")
     logger.info("  FTA_PROMPT_FILE            = %s", prompt_file)
     if ai_provider == "ollama":

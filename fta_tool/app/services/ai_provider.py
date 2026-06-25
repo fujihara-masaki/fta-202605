@@ -381,6 +381,28 @@ class OllamaProvider(AIProvider):
         "required": ["factors"],
     }
 
+    @classmethod
+    def _format_schema(cls) -> dict:
+        """Return the JSON Schema sent in the Ollama ``format`` field.
+
+        Default: the proven inline schema (``_FORMAT_SCHEMA``).  When
+        OLLAMA_FORMAT_FROM_PYDANTIC is on, derive it from the strict Pydantic
+        model instead; on any failure, fall back to the inline schema so old
+        Ollama environments and edge cases keep working.
+        """
+        if generation_config.format_schema_from_pydantic():
+            try:
+                from .llm_models import ollama_format_schema_from_pydantic
+                schema = ollama_format_schema_from_pydantic()
+                logger.debug("Using Pydantic-derived Ollama format schema")
+                return schema
+            except Exception as e:  # pragma: no cover - defensive fallback
+                logger.warning(
+                    "Pydantic-derived format schema failed (%s); "
+                    "falling back to inline _FORMAT_SCHEMA", e,
+                )
+        return cls._FORMAT_SCHEMA
+
     # Default values used when a model returns list[str] instead of list[dict]
     _STR_RESCUE_DESCRIPTION = (
         "ローカルLLMが文字列のみで返した候補です。詳細は手動で補足してください。"
@@ -880,7 +902,7 @@ class OllamaProvider(AIProvider):
             ],
             "stream": False,
             "keep_alive": self.keep_alive,
-            "format": OllamaProvider._FORMAT_SCHEMA,
+            "format": self._format_schema(),
             "options": {
                 "temperature": self.temperature,
                 "num_predict": self.num_predict,

@@ -12,7 +12,7 @@ LangGraph / agent code is introduced here.
     generation call so it can be logged and, later, fed into a quality gate.
 """
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -68,6 +68,63 @@ class LLMFactorList(BaseModel):
     model_name: Optional[str] = None
 
     model_config = {"extra": "ignore", "protected_namespaces": ()}
+
+
+# ---------------------------------------------------------------------------
+# Ollama structured-output (format) schema
+# ---------------------------------------------------------------------------
+#
+# These STRICT models describe exactly what Ollama is *constrained to emit*
+# (sent in the request's ``format`` field).  They are intentionally separate
+# from the lenient ``LLMFactor`` above, which is used to *parse* responses and
+# tolerates missing/extra fields.  Keeping a strict Pydantic source of truth
+# lets a unit test assert the hand-written inline schema has not drifted.
+
+
+class OllamaStructuredFactor(BaseModel):
+    """One factor as the model is constrained to produce it."""
+
+    name: str
+    description: str
+    confidence: Literal["high", "medium", "low"]
+
+
+class OllamaStructuredOutput(BaseModel):
+    """Top-level structured-output contract: ``{"factors": [...]}``."""
+
+    factors: list[OllamaStructuredFactor]
+
+
+def _strip_titles(node):
+    """Recursively drop Pydantic-added ``title`` keys (noise for Ollama)."""
+    if isinstance(node, dict):
+        return {k: _strip_titles(v) for k, v in node.items() if k != "title"}
+    if isinstance(node, list):
+        return [_strip_titles(x) for x in node]
+    return node
+
+
+def ollama_format_schema_from_pydantic() -> dict:
+    """Build an Ollama ``format`` JSON Schema from the strict Pydantic model.
+
+    Pydantic emits ``$defs`` + ``$ref`` and ``title`` keys.  Some older Ollama
+    builds do not resolve ``$ref``, so the refs are inlined and titles removed,
+    producing a flat schema equivalent to the hand-written inline one.
+    """
+    schema = OllamaStructuredOutput.model_json_schema()
+    defs = schema.pop("$defs", {})
+
+    def _resolve(node):
+        if isinstance(node, dict):
+            if "$ref" in node:
+                ref_name = node["$ref"].split("/")[-1]
+                return _resolve(dict(defs[ref_name]))
+            return {k: _resolve(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [_resolve(x) for x in node]
+        return node
+
+    return _strip_titles(_resolve(schema))
 
 
 class GenerationMetrics(BaseModel):

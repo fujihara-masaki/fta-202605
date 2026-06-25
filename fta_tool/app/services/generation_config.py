@@ -18,6 +18,7 @@ Environment variables
   ENABLE_GENERATION_RETRY               (default: true)
   OLLAMA_GENERATION_MAX_RETRIES         (default: 1)
   OLLAMA_GENERATION_RETRY_DELAY_SECONDS (default: 1)
+  OLLAMA_FORMAT_FROM_PYDANTIC           (default: false)
 """
 
 import logging
@@ -45,6 +46,16 @@ def metrics_enabled() -> bool:
 def retry_enabled() -> bool:
     """Retry Ollama generation on transient/hard failures (default on)."""
     return _bool_env("ENABLE_GENERATION_RETRY", "true")
+
+
+def format_schema_from_pydantic() -> bool:
+    """Build the Ollama ``format`` JSON Schema from the Pydantic model.
+
+    Default off so the exact, proven inline schema is sent (safe for older
+    Ollama builds).  When on, the Pydantic-derived (ref-free) schema is used,
+    with a fallback to the inline schema if derivation fails.
+    """
+    return _bool_env("OLLAMA_FORMAT_FROM_PYDANTIC", "false")
 
 
 def get_max_retries() -> int:
