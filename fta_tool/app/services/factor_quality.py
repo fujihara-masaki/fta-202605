@@ -14,7 +14,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import Optional
+from typing import Any, Optional
 
 # Generic suffix words that carry little meaning on their own.
 # Removing them before comparison makes「確認手順の未整備」and
@@ -461,3 +461,166 @@ def summarize_exclusion_reason(reason: str) -> str:
     if "長すぎる" in r:
         return "要因名が長すぎる"
     return "品質チェックにより除外"
+
+
+# ---------------------------------------------------------------------------
+# Candidate evaluation / outcome classification (Step 2-A refactor)
+# ---------------------------------------------------------------------------
+#
+# These are PURE functions (no DB / no logging / no side effects).  They lift
+# the per-candidate quality handling and the outcome classification that were
+# previously inlined in main.py's generate endpoint, so the live endpoint and
+# the planned LangGraph workflow can share a single source of truth.
+#
+# DB-dependent duplicate detection (crud.node_title_exists) is intentionally
+# NOT handled here — it stays in main.py.
+
+
+@dataclass
+class EvaluatedCandidate:
+    """Quality-evaluation result for a single generated candidate.
+
+    ``factor`` is the original candidate object (duck-typed: it only needs
+    ``.title`` and ``.description``), returned as-is so the caller can persist
+    it.  ``reason_label`` is the short, UI-friendly label and is only set when
+    ``excluded`` is True.
+    """
+
+    factor: Any
+    score: FactorScore
+    excluded: bool = False
+    exclude_reason: str = ""          # detailed reason (for logs); set when excluded
+    reason_label: str = ""            # short summarized label; set when excluded
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def warning_flags(self) -> str:
+        return "; ".join(self.warnings)
+
+    @property
+    def judgment(self) -> str:
+        return self.score.judgment
+
+
+@dataclass
+class CandidateEvaluation:
+    """Aggregated evaluation over a batch of candidates (one parent's worth)."""
+
+    kept: list[EvaluatedCandidate] = field(default_factory=list)
+    excluded: list[EvaluatedCandidate] = field(default_factory=list)
+    # Short exclusion-reason labels in input order (for reason_summary).
+    reasons: list[str] = field(default_factory=list)
+
+    @property
+    def excluded_quality(self) -> int:
+        return len(self.excluded)
+
+    @property
+    def scores(self) -> list[int]:
+        """overall_score of each kept candidate (for averaging)."""
+        return [c.score.overall_score for c in self.kept]
+
+    @property
+    def judgment_counts(self) -> dict:
+        counts = {"pass": 0, "warning": 0, "retry_recommended": 0, "fail": 0}
+        for c in self.kept:
+            counts[c.judgment] = counts.get(c.judgment, 0) + 1
+        return counts
+
+
+def evaluate_candidate(
+    factor: Any,
+    *,
+    parent_factor: Optional[str],
+    parent_description: str = "",
+    existing_titles: Optional[list[str]] = None,
+    no_rated_titles: Optional[list[str]] = None,
+    ancestor_titles: Optional[list[str]] = None,
+) -> EvaluatedCandidate:
+    """Evaluate ONE candidate (pure): rule check + score + reason summary.
+
+    Wraps ``evaluate_factor`` + ``compute_factor_score`` and, for excluded
+    candidates, ``summarize_exclusion_reason``.  No DB access, no logging.
+    """
+    quality = evaluate_factor(
+        title=factor.title,
+        description=factor.description,
+        parent_title=parent_factor,
+        parent_description=parent_description,
+        existing_titles=existing_titles,
+        no_rated_titles=no_rated_titles,
+        ancestor_titles=ancestor_titles,
+    )
+    quality.score = compute_factor_score(
+        quality, factor.title, factor.description, parent_factor
+    )
+    if quality.exclude:
+        return EvaluatedCandidate(
+            factor=factor,
+            score=quality.score,
+            excluded=True,
+            exclude_reason=quality.exclude_reason,
+            reason_label=summarize_exclusion_reason(quality.exclude_reason),
+            warnings=list(quality.warnings),
+        )
+    return EvaluatedCandidate(
+        factor=factor,
+        score=quality.score,
+        excluded=False,
+        warnings=list(quality.warnings),
+    )
+
+
+def evaluate_candidates(
+    factors: list,
+    *,
+    parent_factor: Optional[str],
+    parent_description: str = "",
+    existing_titles: Optional[list[str]] = None,
+    no_rated_titles: Optional[list[str]] = None,
+    ancestor_titles: Optional[list[str]] = None,
+) -> CandidateEvaluation:
+    """Evaluate a batch of candidates (pure), mirroring main.py's per-factor loop.
+
+    Kept candidates' titles accumulate into the working existing-titles list as
+    iteration proceeds, so within-batch near-duplicates get the same
+    "既存要因に類似" warning as the live endpoint (which grows
+    ``all_analysis_titles`` while creating nodes).
+
+    DB-level dedup is NOT performed here; callers that need it (main.py) do it
+    separately before/around this evaluation.
+    """
+    working_existing = list(existing_titles or [])
+    result = CandidateEvaluation()
+    for factor in factors:
+        ec = evaluate_candidate(
+            factor,
+            parent_factor=parent_factor,
+            parent_description=parent_description,
+            existing_titles=working_existing,
+            no_rated_titles=no_rated_titles,
+            ancestor_titles=ancestor_titles,
+        )
+        if ec.excluded:
+            result.excluded.append(ec)
+            result.reasons.append(ec.reason_label)
+        else:
+            result.kept.append(ec)
+            working_existing.append(ec.factor.title)
+    return result
+
+
+def classify_outcome(ai_returned: int, created: int, excluded: int) -> str:
+    """Classify a generation result (Step 1.5 semantics).
+
+    - ``created``       : every candidate was kept (created > 0, none excluded)
+    - ``partial``       : some kept, some excluded (created > 0, excluded > 0)
+    - ``all_excluded``  : candidates existed but all were rejected (created == 0,
+                          ai_returned > 0)
+    - ``no_candidates`` : the LLM returned nothing (ai_returned == 0)
+    """
+    if created > 0:
+        return "partial" if excluded > 0 else "created"
+    if ai_returned > 0:
+        return "all_excluded"
+    return "no_candidates"
