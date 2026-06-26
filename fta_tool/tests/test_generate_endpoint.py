@@ -46,6 +46,31 @@ def _use_stub(monkeypatch, factors):
     monkeypatch.setenv("FTA_RETRY_BELOW_TARGET", "false")
 
 
+class _SeqStubProvider:
+    """Returns the next scripted list per call (for workflow regeneration)."""
+
+    def __init__(self, scripts):
+        self.scripts = list(scripts)
+        self.calls = 0
+
+    def generate_factors(self, **kwargs):
+        idx = min(self.calls, len(self.scripts) - 1)
+        self.calls += 1
+        return [
+            GeneratedFactor(title=t, description=d, rationale="t", check_points=[])
+            for (t, d) in self.scripts[idx]
+        ]
+
+
+def _use_workflow_stub(monkeypatch, scripts, *, max_retries=1):
+    provider = _SeqStubProvider(scripts)
+    monkeypatch.setattr(main_module, "get_ai_provider", lambda: provider)
+    monkeypatch.setenv("ENABLE_LANGGRAPH_GENERATION_WORKFLOW", "true")
+    monkeypatch.setenv("LANGGRAPH_GENERATION_MAX_RETRIES", str(max_retries))
+    monkeypatch.setenv("FTA_RETRY_BELOW_MIN", "false")
+    return provider
+
+
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     monkeypatch.delenv("AI_PROVIDER", raising=False)  # default mock provider
@@ -210,6 +235,91 @@ def test_no_candidates_returned(client, monkeypatch):
     assert qs["outcome"] == "no_candidates"
     assert qs["reason_summary"] == []
     assert "候補がありません" in data["message"]
+
+
+# --- Step 2-1: LangGraph workflow path -------------------------------------
+
+def test_flag_off_uses_legacy_path(client, monkeypatch):
+    """Default (flag off): workflow=legacy, no regeneration, response intact."""
+    monkeypatch.delenv("ENABLE_LANGGRAPH_GENERATION_WORKFLOW", raising=False)
+    res = client.post(
+        f"/analyses/{client.analysis_id}/generate/level/1",
+        json={"parent_id": None},
+    )
+    qs = res.json()["quality_summary"]
+    assert qs["workflow"] == "legacy"
+    assert qs["regenerated"] is False
+    assert qs["retry_count"] == 0
+    assert qs["workflow_error"] is None
+
+
+def test_flag_on_workflow_created_no_regen(client, monkeypatch):
+    """Flag on, good candidates first time → workflow used, no regeneration."""
+    parent_id = _add_node(client, "認証基盤の問題", level=1, judgement="yes")
+    provider = _use_workflow_stub(monkeypatch, [
+        [("証明書の有効期限切れ", "TLS証明書の有効期限を確認する"),
+         ("DNS応答の遅延", "DNSサーバの応答時間を確認する")],
+    ])
+    res = client.post(
+        f"/analyses/{client.analysis_id}/generate/level/2",
+        json={"parent_id": parent_id},
+    )
+    data = res.json()
+    qs = data["quality_summary"]
+    assert qs["workflow"] == "langgraph"
+    assert qs["regenerated"] is False
+    assert qs["retry_count"] == 0
+    assert data["created"] == 2
+    assert provider.calls == 1  # generated once, no regeneration
+
+
+def test_flag_on_all_excluded_regenerates(client, monkeypatch):
+    """Flag on, first round all excluded → regenerate once → created."""
+    parent_id = _add_node(client, "認証基盤の問題", level=1, judgement="yes")
+    provider = _use_workflow_stub(monkeypatch, [
+        [("認証基盤の問題", "認証基盤に問題がある可能性")],          # paraphrase → excluded
+        [("証明書の有効期限切れ", "TLS証明書の有効期限を確認する")],  # good
+    ])
+    res = client.post(
+        f"/analyses/{client.analysis_id}/generate/level/2",
+        json={"parent_id": parent_id},
+    )
+    data = res.json()
+    qs = data["quality_summary"]
+    assert qs["workflow"] == "langgraph"
+    assert qs["regenerated"] is True
+    assert qs["retry_count"] == 1
+    assert data["created"] == 1
+    assert provider.calls == 2  # initial + one regeneration
+
+
+def test_flag_on_fallback_on_workflow_exception(client, monkeypatch):
+    """If the workflow raises, main.py falls back to the legacy path."""
+    parent_id = _add_node(client, "設定管理の不備", level=1, judgement="yes")
+    # Legacy path will use this normal stub and succeed.
+    monkeypatch.setattr(main_module, "get_ai_provider",
+                        lambda: _StubProvider([("証明書の有効期限切れ", "TLS証明書の有効期限を確認する")]))
+    monkeypatch.setenv("ENABLE_LANGGRAPH_GENERATION_WORKFLOW", "true")
+    monkeypatch.setenv("FTA_RETRY_BELOW_MIN", "false")
+
+    # Make the workflow blow up.
+    import app.services.generation_workflow as gw
+
+    def _boom(**kwargs):
+        raise RuntimeError("workflow exploded")
+
+    monkeypatch.setattr(gw, "run_generation_workflow", _boom)
+
+    res = client.post(
+        f"/analyses/{client.analysis_id}/generate/level/2",
+        json={"parent_id": parent_id},
+    )
+    data = res.json()
+    qs = data["quality_summary"]
+    assert qs["workflow"] == "legacy_fallback"
+    assert qs["workflow_error"] is not None
+    assert "workflow exploded" in qs["workflow_error"]
+    assert data["created"] == 1  # legacy path still produced the factor
 
 
 # --- Step 2-A: DB-level dedup stays in main.py (not in evaluate_candidates) -
