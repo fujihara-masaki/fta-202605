@@ -48,6 +48,28 @@ def retry_enabled() -> bool:
     return _bool_env("ENABLE_GENERATION_RETRY", "true")
 
 
+def langgraph_workflow_enabled() -> bool:
+    """Run per-parent generation through the LangGraph workflow (default off).
+
+    Default off so the existing generation path is used unchanged and
+    ``langgraph`` is not imported at all.  When on, main.py runs the
+    inspect-then-(maybe)-regenerate StateGraph for each parent.
+    """
+    return _bool_env("ENABLE_LANGGRAPH_GENERATION_WORKFLOW", "false")
+
+
+def langgraph_max_retries() -> int:
+    """Max quality-gate regenerations in the LangGraph workflow (default 1)."""
+    raw = os.environ.get("LANGGRAPH_GENERATION_MAX_RETRIES", "1")
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        logger.warning(
+            "LANGGRAPH_GENERATION_MAX_RETRIES=%r is not an integer; using 1", raw
+        )
+        return 1
+
+
 def format_schema_from_pydantic() -> bool:
     """Build the Ollama ``format`` JSON Schema from the Pydantic model.
 

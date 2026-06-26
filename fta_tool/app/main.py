@@ -4,6 +4,7 @@ import os
 import pathlib
 import time
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from . import crud, models, schemas
 from .database import SessionLocal, engine, get_db
+from .services import generation_config
 from .services.ai_provider import GeneratedFactor, get_ai_provider
 from .services.export_service import export_csv, export_json, export_markdown
 from .services.factor_quality import (
@@ -79,6 +81,8 @@ def _log_startup_config() -> None:
     logger.info("  OLLAMA_GENERATION_MAX_RETRIES = %s", os.environ.get("OLLAMA_GENERATION_MAX_RETRIES", "1"))
     logger.info("  OLLAMA_GENERATION_RETRY_DELAY_SECONDS = %s", os.environ.get("OLLAMA_GENERATION_RETRY_DELAY_SECONDS", "1"))
     logger.info("  OLLAMA_FORMAT_FROM_PYDANTIC = %s", os.environ.get("OLLAMA_FORMAT_FROM_PYDANTIC", "false"))
+    logger.info("  ENABLE_LANGGRAPH_GENERATION_WORKFLOW = %s", os.environ.get("ENABLE_LANGGRAPH_GENERATION_WORKFLOW", "false"))
+    logger.info("  LANGGRAPH_GENERATION_MAX_RETRIES = %s", os.environ.get("LANGGRAPH_GENERATION_MAX_RETRIES", "1"))
     prompt_file = os.environ.get("FTA_PROMPT_FILE", "config/prompts.yaml")
     logger.info("  FTA_PROMPT_FILE            = %s", prompt_file)
     if ai_provider == "ollama":
@@ -302,6 +306,11 @@ async def generate_factors(
     total_excluded_quality = 0     # dropped by the quality check (paraphrase / No-rated …)
     total_excluded_dedup = 0       # dropped as a duplicate of an existing node
     exclusion_reasons: list[str] = []  # short labels, order-preserving (deduped later)
+    # Step 2-1: LangGraph workflow bookkeeping (additive; legacy when flag off).
+    workflow_modes: set[str] = set()
+    workflow_any_regenerated = False
+    workflow_total_retries = 0
+    workflow_first_error: Optional[str] = None
     t_start = time.time()
 
     # Titles across the whole analysis (any parent/level) for similarity warnings.
@@ -366,74 +375,142 @@ async def generate_factors(
                 },
             )
 
-        try:
-            t_node_start = time.time()
-            factors: list[GeneratedFactor] = _call_ai([])
-            elapsed_node_ms = int((time.time() - t_node_start) * 1000)
-        except RuntimeError as e:
-            logger.error("AI generation error | analysis=%d level=%d parent=%r: %s",
-                         analysis_id, level, parent_factor or "(top event)", e)
-            errors.append(str(e))
-            continue
+        parent_description_val = parent_node.description if parent_node else ""
 
-        # Retry logic — controlled by env vars (all levels)
-        #   FTA_RETRY_BELOW_MIN=true    retry when got < desired-1  (default: true)
-        #   FTA_RETRY_BELOW_TARGET=true retry when got < desired     (default: false)
-        retry_below_min = os.environ.get("FTA_RETRY_BELOW_MIN", "true").lower() == "true"
-        retry_below_target = os.environ.get("FTA_RETRY_BELOW_TARGET", "false").lower() == "true"
-        min_threshold = max(1, factor_count - 1)
-        should_retry = (
-            (retry_below_target and len(factors) < factor_count) or
-            (retry_below_min and len(factors) < min_threshold)
-        )
-
-        if should_retry:
-            trigger = "below_target" if (retry_below_target and len(factors) < factor_count) else "below_min"
-            logger.warning(
-                "generate_factors | %s | level=%d parent=%r desired=%d got=%d — retrying once",
-                trigger, level, parent_factor or "(top event)", factor_count, len(factors),
-            )
+        # --- Step 2-1: optional LangGraph inspect-then-regenerate workflow ---
+        # Flag off (default): legacy path below, langgraph never imported.
+        # Flag on: run the per-parent workflow; on any exception fall back to
+        # the legacy path. The workflow OWNS regeneration, so the count-based
+        # retry is bypassed (avoids triple-retry latency).
+        workflow_succeeded = False
+        wf_meta: dict = {
+            "workflow": "legacy", "regenerated": False,
+            "retry_count": 0, "workflow_error": None,
+        }
+        factors: Optional[list[GeneratedFactor]] = None
+        elapsed_node_ms = 0
+        if generation_config.langgraph_workflow_enabled():
             try:
-                t_retry_start = time.time()
-                retry_factors = _call_ai([f.title for f in factors])
-                elapsed_retry_ms = int((time.time() - t_retry_start) * 1000)
-                existing_set = {f.title for f in factors}
-                added = 0
-                for rf in retry_factors:
-                    if rf.title not in existing_set:
-                        factors.append(rf)
-                        existing_set.add(rf.title)
-                        added += 1
-                if factor_count > 0 and len(factors) > factor_count:
-                    factors = factors[:factor_count]
-                logger.info(
-                    "generate_factors retry | level=%d parent=%r added=%d total=%d elapsed=%dms",
-                    level, parent_factor or "(top event)", added, len(factors), elapsed_retry_ms,
+                from .services.generation_workflow import run_generation_workflow
+                t_node_start = time.time()
+                wf = run_generation_workflow(
+                    generate_fn=_call_ai,
+                    analysis_title=analysis.title,
+                    top_event=analysis.top_event,
+                    target_level=level,
+                    parent_factor=parent_factor,
+                    parent_description=parent_description_val,
+                    existing_titles=existing_titles,
+                    all_titles=all_analysis_titles,
+                    no_rated_titles=no_rated_titles,
+                    ancestor_factors=ancestor_factors,
+                    analysis_context=analysis_context,
+                    factor_count=factor_count,
+                    max_retries=generation_config.langgraph_max_retries(),
                 )
-            except RuntimeError as retry_err:
+                elapsed_node_ms = int((time.time() - t_node_start) * 1000)
+                if wf.error:
+                    raise RuntimeError(wf.error)
+                factors = wf.candidates
+                workflow_succeeded = True
+                wf_meta = {
+                    "workflow": "langgraph",
+                    "regenerated": wf.regenerated,
+                    "retry_count": wf.retry_count,
+                    "workflow_error": None,
+                }
+                logger.info(
+                    "langgraph workflow | level=%d parent=%r outcome=%s regenerated=%s "
+                    "retry=%d returned=%d elapsed=%dms",
+                    level, parent_factor or "(top event)", wf.outcome,
+                    wf.regenerated, wf.retry_count, len(factors), elapsed_node_ms,
+                )
+            except Exception as wf_err:
                 logger.warning(
-                    "generate_factors retry failed | level=%d parent=%r: %s",
-                    level, parent_factor or "(top event)", retry_err,
+                    "langgraph workflow failed → fallback to legacy | level=%d parent=%r: %s",
+                    level, parent_factor or "(top event)", wf_err,
+                )
+                wf_meta = {
+                    "workflow": "legacy_fallback", "regenerated": False,
+                    "retry_count": 0, "workflow_error": str(wf_err),
+                }
+                factors = None  # fall through to the legacy path below
+
+        if not workflow_succeeded:
+            # --- Legacy path (unchanged): single generate + count-based retry ---
+            try:
+                t_node_start = time.time()
+                factors = _call_ai([])
+                elapsed_node_ms = int((time.time() - t_node_start) * 1000)
+            except RuntimeError as e:
+                logger.error("AI generation error | analysis=%d level=%d parent=%r: %s",
+                             analysis_id, level, parent_factor or "(top event)", e)
+                errors.append(str(e))
+                continue
+
+            # Retry logic — controlled by env vars (all levels)
+            #   FTA_RETRY_BELOW_MIN=true    retry when got < desired-1  (default: true)
+            #   FTA_RETRY_BELOW_TARGET=true retry when got < desired     (default: false)
+            retry_below_min = os.environ.get("FTA_RETRY_BELOW_MIN", "true").lower() == "true"
+            retry_below_target = os.environ.get("FTA_RETRY_BELOW_TARGET", "false").lower() == "true"
+            min_threshold = max(1, factor_count - 1)
+            should_retry = (
+                (retry_below_target and len(factors) < factor_count) or
+                (retry_below_min and len(factors) < min_threshold)
+            )
+
+            if should_retry:
+                trigger = "below_target" if (retry_below_target and len(factors) < factor_count) else "below_min"
+                logger.warning(
+                    "generate_factors | %s | level=%d parent=%r desired=%d got=%d — retrying once",
+                    trigger, level, parent_factor or "(top event)", factor_count, len(factors),
+                )
+                try:
+                    t_retry_start = time.time()
+                    retry_factors = _call_ai([f.title for f in factors])
+                    elapsed_retry_ms = int((time.time() - t_retry_start) * 1000)
+                    existing_set = {f.title for f in factors}
+                    added = 0
+                    for rf in retry_factors:
+                        if rf.title not in existing_set:
+                            factors.append(rf)
+                            existing_set.add(rf.title)
+                            added += 1
+                    if factor_count > 0 and len(factors) > factor_count:
+                        factors = factors[:factor_count]
+                    logger.info(
+                        "generate_factors retry | level=%d parent=%r added=%d total=%d elapsed=%dms",
+                        level, parent_factor or "(top event)", added, len(factors), elapsed_retry_ms,
+                    )
+                except RuntimeError as retry_err:
+                    logger.warning(
+                        "generate_factors retry failed | level=%d parent=%r: %s",
+                        level, parent_factor or "(top event)", retry_err,
+                    )
+
+            # Warn when final count is still below target (all levels)
+            if len(factors) < min_threshold:
+                logger.warning(
+                    "generate_factors | below min | level=%d parent=%r desired=%d got=%d",
+                    level, parent_factor or "(top event)", factor_count, len(factors),
+                )
+            elif len(factors) < factor_count:
+                logger.warning(
+                    "generate_factors | below target | level=%d parent=%r desired=%d got=%d",
+                    level, parent_factor or "(top event)", factor_count, len(factors),
                 )
 
-        # Warn when final count is still below target (all levels)
-        if len(factors) < min_threshold:
-            logger.warning(
-                "generate_factors | below min | level=%d parent=%r desired=%d got=%d",
-                level, parent_factor or "(top event)", factor_count, len(factors),
-            )
-        elif len(factors) < factor_count:
-            logger.warning(
-                "generate_factors | below target | level=%d parent=%r desired=%d got=%d",
-                level, parent_factor or "(top event)", factor_count, len(factors),
-            )
+        # Aggregate per-parent workflow metadata for the response.
+        workflow_modes.add(wf_meta["workflow"])
+        workflow_any_regenerated = workflow_any_regenerated or wf_meta["regenerated"]
+        workflow_total_retries += wf_meta["retry_count"]
+        if wf_meta["workflow_error"] and workflow_first_error is None:
+            workflow_first_error = wf_meta["workflow_error"]
 
         existing_max_order = max(
             (n.display_order for n in nodes if n.level == level and n.parent_id == parent_id_val),
             default=-1,
         )
-
-        parent_description_val = parent_node.description if parent_node else ""
 
         created_this = 0
         dedup_skipped_this = 0
@@ -537,6 +614,16 @@ async def generate_factors(
     outcome = classify_outcome(total_ai_returned, total_created, total_skipped)
     all_candidates_excluded = outcome == "all_excluded"
 
+    # Step 2-1: which generation path actually ran (per request).
+    if "langgraph" in workflow_modes and "legacy_fallback" in workflow_modes:
+        workflow_mode = "mixed"
+    elif "langgraph" in workflow_modes:
+        workflow_mode = "langgraph"
+    elif "legacy_fallback" in workflow_modes:
+        workflow_mode = "legacy_fallback"
+    else:
+        workflow_mode = "legacy"
+
     # Additive quality summary (existing UI ignores unknown keys).
     avg_score = (
         int(round(sum(quality_scores) / len(quality_scores)))
@@ -555,6 +642,11 @@ async def generate_factors(
         "all_candidates_excluded": all_candidates_excluded,
         "outcome": outcome,
         "reason_summary": reason_summary,
+        # Step 2-1 fields (additive)
+        "workflow": workflow_mode,
+        "regenerated": workflow_any_regenerated,
+        "retry_count": workflow_total_retries,
+        "workflow_error": workflow_first_error,
     }
 
     if errors:
