@@ -18,9 +18,8 @@ from .services.ai_provider import GeneratedFactor, get_ai_provider
 from .services.export_service import export_csv, export_json, export_markdown
 from .services.factor_quality import (
     DEDUP_REASON_LABEL,
-    compute_factor_score,
-    evaluate_factor,
-    summarize_exclusion_reason,
+    classify_outcome,
+    evaluate_candidate,
 )
 from .services.prompt_loader import get_factor_generation_prompts
 from .services.sample_scenarios import get_sample_scenario, get_sample_scenarios
@@ -300,7 +299,7 @@ async def generate_factors(
     # Step 1.5: make「+0件」explainable — distinguish "LLM returned no candidate"
     # from "candidates returned but all rejected by the quality check".
     total_ai_returned = 0          # candidates received from the provider
-    total_excluded_quality = 0     # dropped by evaluate_factor (paraphrase / No-rated …)
+    total_excluded_quality = 0     # dropped by the quality check (paraphrase / No-rated …)
     total_excluded_dedup = 0       # dropped as a duplicate of an existing node
     exclusion_reasons: list[str] = []  # short labels, order-preserving (deduped later)
     t_start = time.time()
@@ -450,43 +449,40 @@ async def generate_factors(
                 parent_reasons.append(DEDUP_REASON_LABEL)
                 continue
 
-            # Rule-based quality check (provider-agnostic):
+            # Rule-based quality check (provider-agnostic, pure):
             # parent paraphrase / No-rated similar → exclude;
-            # analysis-wide similar / generic / long → save with warning_flags
-            quality = evaluate_factor(
-                title=factor.title,
-                description=factor.description,
-                parent_title=parent_factor,
+            # analysis-wide similar / generic / long → save with warning_flags.
+            # Shared with the planned LangGraph workflow (Step 2-A extraction).
+            ec = evaluate_candidate(
+                factor,
+                parent_factor=parent_factor,
                 parent_description=parent_description_val,
                 existing_titles=all_analysis_titles,
                 no_rated_titles=no_rated_titles,
                 ancestor_titles=ancestor_factors,
             )
-            # Score the post-generation check (structured, for later use).
-            quality.score = compute_factor_score(
-                quality, factor.title, factor.description, parent_factor
-            )
-            if quality.exclude:
+            score = ec.score
+            if ec.excluded:
                 logger.info(
                     "quality exclude | level=%d parent=%r title=%r reason=%s score=%d judgment=%s",
                     level, parent_factor or "(top event)",
-                    factor.title, quality.exclude_reason,
-                    quality.score.overall_score, quality.score.judgment,
+                    factor.title, ec.exclude_reason,
+                    score.overall_score, score.judgment,
                 )
                 quality_excluded_this += 1
-                parent_reasons.append(summarize_exclusion_reason(quality.exclude_reason))
+                parent_reasons.append(ec.reason_label)
                 continue
-            if quality.warnings:
+            if ec.warnings:
                 logger.info(
                     "quality warning | level=%d parent=%r title=%r warnings=%s "
                     "score=%d judgment=%s",
                     level, parent_factor or "(top event)",
-                    factor.title, quality.warning_flags,
-                    quality.score.overall_score, quality.score.judgment,
+                    factor.title, ec.warning_flags,
+                    score.overall_score, score.judgment,
                 )
-            quality_scores.append(quality.score.overall_score)
-            judgment_counts[quality.score.judgment] = (
-                judgment_counts.get(quality.score.judgment, 0) + 1
+            quality_scores.append(score.overall_score)
+            judgment_counts[score.judgment] = (
+                judgment_counts.get(score.judgment, 0) + 1
             )
 
             node_data = {
@@ -498,7 +494,7 @@ async def generate_factors(
                 "user_judgement": "unknown",
                 "direct_cause_status": "unknown",
                 "display_order": existing_max_order + i + 1,
-                "warning_flags": quality.warning_flags,
+                "warning_flags": ec.warning_flags,
             }
             crud.create_node(db, analysis_id, node_data)
             all_analysis_titles.append(factor.title)
@@ -537,14 +533,9 @@ async def generate_factors(
 
     # --- Step 1.5: classify the outcome so「+0件」is explainable ----------
     # all candidates rejected by the quality check (vs. LLM returned nothing)
-    all_candidates_excluded = total_ai_returned > 0 and total_created == 0
     reason_summary = list(dict.fromkeys(exclusion_reasons))  # unique, ordered
-    if total_created > 0:
-        outcome = "partial" if total_skipped > 0 else "created"
-    elif all_candidates_excluded:
-        outcome = "all_excluded"
-    else:
-        outcome = "no_candidates"
+    outcome = classify_outcome(total_ai_returned, total_created, total_skipped)
+    all_candidates_excluded = outcome == "all_excluded"
 
     # Additive quality summary (existing UI ignores unknown keys).
     avg_score = (

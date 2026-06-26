@@ -212,6 +212,33 @@ def test_no_candidates_returned(client, monkeypatch):
     assert "候補がありません" in data["message"]
 
 
+# --- Step 2-A: DB-level dedup stays in main.py (not in evaluate_candidates) -
+
+def test_db_dedup_handled_in_main(client, monkeypatch):
+    """A candidate whose title already exists in the DB (same parent/level) is
+    skipped via crud.node_title_exists in main.py and counted as a dedup
+    exclusion — separate from quality exclusions."""
+    parent_id = _add_node(client, "設定管理の不備", level=1, judgement="yes")
+    # Pre-existing level-2 child under the parent.
+    _add_node(client, "既存の子要因", level=2, parent_id=parent_id, judgement="unknown")
+    # Stub returns the duplicate + one good new candidate.
+    _use_stub(monkeypatch, [
+        ("既存の子要因", "既存の子要因に関する説明"),
+        ("証明書の有効期限切れ", "TLS証明書の有効期限を確認する"),
+    ])
+
+    res = client.post(
+        f"/analyses/{client.analysis_id}/generate/level/2",
+        json={"parent_id": parent_id},
+    )
+    data = res.json()
+    qs = data["quality_summary"]
+    assert data["created"] == 1
+    assert qs["excluded_by_dedup"] == 1
+    assert qs["excluded_by_quality"] == 0
+    assert qs["outcome"] == "partial"
+
+
 # --- Step 1.5: normal partial (some created, some excluded) ----------------
 
 def test_partial_created_and_excluded(client, monkeypatch):
