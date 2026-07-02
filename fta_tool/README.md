@@ -298,6 +298,24 @@ FTA_PROMPT_FILE=config/prompts.yaml         # デフォルト（fta_tool/ から
 FTA_PROMPT_FILE=/absolute/path/my_prompts.yaml  # 絶対パスも可
 ```
 
+## LangGraph 検査付き生成ワークフロー（Step 3・既定OFF）
+
+生成 → 構造検証 → 品質評価 → 判定（accept / regenerate / fail_soft）→ 必要な場合だけ再生成、
+という LangGraph の状態管理・分岐制御を実装しています。既定ではすべて OFF で、従来の生成処理がそのまま動きます。
+
+```ini
+# LangGraphワークフロー（Step 2-1から継続、既定 false）
+ENABLE_LANGGRAPH_GENERATION_WORKFLOW=false
+# スコアベース品質ゲート（Step 3新設、既定 false）
+ENABLE_LANGGRAPH_QUALITY_GATE=false
+# 再生成回数の上限（既定 1）
+LANGGRAPH_GENERATION_MAX_RETRIES=1
+# accept閾値 0〜1（既定 0.7 = 平均FactorScore 70/100）
+LANGGRAPH_QUALITY_THRESHOLD=0.7
+```
+
+ノード構成・分岐仕様・ログの見方・Step 4 候補は [docs/langgraph_step3.md](docs/langgraph_step3.md) を参照してください。
+
 ## テストの実行
 
 ```bash

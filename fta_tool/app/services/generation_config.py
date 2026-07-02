@@ -19,6 +19,10 @@ Environment variables
   OLLAMA_GENERATION_MAX_RETRIES         (default: 1)
   OLLAMA_GENERATION_RETRY_DELAY_SECONDS (default: 1)
   OLLAMA_FORMAT_FROM_PYDANTIC           (default: false)
+  ENABLE_LANGGRAPH_GENERATION_WORKFLOW  (default: false)
+  ENABLE_LANGGRAPH_QUALITY_GATE         (default: false)
+  LANGGRAPH_GENERATION_MAX_RETRIES      (default: 1)
+  LANGGRAPH_QUALITY_THRESHOLD           (default: 0.7)
 """
 
 import logging
@@ -56,6 +60,35 @@ def langgraph_workflow_enabled() -> bool:
     inspect-then-(maybe)-regenerate StateGraph for each parent.
     """
     return _bool_env("ENABLE_LANGGRAPH_GENERATION_WORKFLOW", "false")
+
+
+def langgraph_quality_gate_enabled() -> bool:
+    """Score-based quality gate inside the LangGraph workflow (default off).
+
+    Off: the workflow keeps Step 2-1 behaviour (regenerate only when the
+    outcome is all_excluded / no_candidates).  On: candidates whose average
+    quality score falls below LANGGRAPH_QUALITY_THRESHOLD also trigger
+    regeneration, up to LANGGRAPH_GENERATION_MAX_RETRIES attempts, then
+    fail_soft (best attempt is returned with warnings).
+    Only meaningful when ENABLE_LANGGRAPH_GENERATION_WORKFLOW is also on.
+    """
+    return _bool_env("ENABLE_LANGGRAPH_QUALITY_GATE", "false")
+
+
+def langgraph_quality_threshold() -> float:
+    """Quality-gate accept threshold in [0, 1] (default 0.7).
+
+    Compared against the average per-candidate overall_score normalized to
+    0–1 (i.e. 0.7 means an average FactorScore of 70/100).
+    """
+    raw = os.environ.get("LANGGRAPH_QUALITY_THRESHOLD", "0.7")
+    try:
+        return min(1.0, max(0.0, float(raw)))
+    except ValueError:
+        logger.warning(
+            "LANGGRAPH_QUALITY_THRESHOLD=%r is not a number; using 0.7", raw
+        )
+        return 0.7
 
 
 def langgraph_max_retries() -> int:

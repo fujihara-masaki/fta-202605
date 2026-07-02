@@ -82,7 +82,9 @@ def _log_startup_config() -> None:
     logger.info("  OLLAMA_GENERATION_RETRY_DELAY_SECONDS = %s", os.environ.get("OLLAMA_GENERATION_RETRY_DELAY_SECONDS", "1"))
     logger.info("  OLLAMA_FORMAT_FROM_PYDANTIC = %s", os.environ.get("OLLAMA_FORMAT_FROM_PYDANTIC", "false"))
     logger.info("  ENABLE_LANGGRAPH_GENERATION_WORKFLOW = %s", os.environ.get("ENABLE_LANGGRAPH_GENERATION_WORKFLOW", "false"))
+    logger.info("  ENABLE_LANGGRAPH_QUALITY_GATE = %s", os.environ.get("ENABLE_LANGGRAPH_QUALITY_GATE", "false"))
     logger.info("  LANGGRAPH_GENERATION_MAX_RETRIES = %s", os.environ.get("LANGGRAPH_GENERATION_MAX_RETRIES", "1"))
+    logger.info("  LANGGRAPH_QUALITY_THRESHOLD = %s", os.environ.get("LANGGRAPH_QUALITY_THRESHOLD", "0.7"))
     prompt_file = os.environ.get("FTA_PROMPT_FILE", "config/prompts.yaml")
     logger.info("  FTA_PROMPT_FILE            = %s", prompt_file)
     if ai_provider == "ollama":
@@ -311,6 +313,12 @@ async def generate_factors(
     workflow_any_regenerated = False
     workflow_total_retries = 0
     workflow_first_error: Optional[str] = None
+    # Step 3: quality-gate bookkeeping (additive).
+    langgraph_enabled = generation_config.langgraph_workflow_enabled()
+    quality_gate_enabled = (
+        langgraph_enabled and generation_config.langgraph_quality_gate_enabled()
+    )
+    workflow_decisions: list[str] = []     # per-parent accept / fail_soft
     t_start = time.time()
 
     # Titles across the whole analysis (any parent/level) for similarity warnings.
@@ -385,11 +393,11 @@ async def generate_factors(
         workflow_succeeded = False
         wf_meta: dict = {
             "workflow": "legacy", "regenerated": False,
-            "retry_count": 0, "workflow_error": None,
+            "retry_count": 0, "workflow_error": None, "decision": None,
         }
         factors: Optional[list[GeneratedFactor]] = None
         elapsed_node_ms = 0
-        if generation_config.langgraph_workflow_enabled():
+        if langgraph_enabled:
             try:
                 from .services.generation_workflow import run_generation_workflow
                 t_node_start = time.time()
@@ -407,6 +415,8 @@ async def generate_factors(
                     analysis_context=analysis_context,
                     factor_count=factor_count,
                     max_retries=generation_config.langgraph_max_retries(),
+                    quality_gate=quality_gate_enabled,
+                    quality_threshold=generation_config.langgraph_quality_threshold(),
                 )
                 elapsed_node_ms = int((time.time() - t_node_start) * 1000)
                 if wf.error:
@@ -418,12 +428,16 @@ async def generate_factors(
                     "regenerated": wf.regenerated,
                     "retry_count": wf.retry_count,
                     "workflow_error": None,
+                    "decision": wf.decision,
                 }
                 logger.info(
-                    "langgraph workflow | level=%d parent=%r outcome=%s regenerated=%s "
-                    "retry=%d returned=%d elapsed=%dms",
-                    level, parent_factor or "(top event)", wf.outcome,
-                    wf.regenerated, wf.retry_count, len(factors), elapsed_node_ms,
+                    "langgraph workflow | level=%d parent=%r decision=%s outcome=%s "
+                    "quality_gate=%s quality_score=%.2f warnings=%d critical=%s "
+                    "regenerated=%s retry=%d returned=%d elapsed=%dms",
+                    level, parent_factor or "(top event)", wf.decision, wf.outcome,
+                    quality_gate_enabled, wf.quality_score, wf.warning_count,
+                    wf.has_critical_warning, wf.regenerated, wf.retry_count,
+                    len(factors), elapsed_node_ms,
                 )
             except Exception as wf_err:
                 logger.warning(
@@ -433,6 +447,7 @@ async def generate_factors(
                 wf_meta = {
                     "workflow": "legacy_fallback", "regenerated": False,
                     "retry_count": 0, "workflow_error": str(wf_err),
+                    "decision": None,
                 }
                 factors = None  # fall through to the legacy path below
 
@@ -506,6 +521,8 @@ async def generate_factors(
         workflow_total_retries += wf_meta["retry_count"]
         if wf_meta["workflow_error"] and workflow_first_error is None:
             workflow_first_error = wf_meta["workflow_error"]
+        if wf_meta["decision"]:
+            workflow_decisions.append(wf_meta["decision"])
 
         existing_max_order = max(
             (n.display_order for n in nodes if n.level == level and n.parent_id == parent_id_val),
@@ -647,7 +664,22 @@ async def generate_factors(
         "regenerated": workflow_any_regenerated,
         "retry_count": workflow_total_retries,
         "workflow_error": workflow_first_error,
+        # Step 3 fields (additive)
+        "quality_gate": quality_gate_enabled,
+        "decisions": workflow_decisions,
     }
+
+    # Step 3: one grep-friendly line per request for LangGraph ON/OFF and
+    # quality-gate ON/OFF comparison from PowerShell logs.
+    logger.info(
+        "generate_factors workflow | analysis=%d level=%d langgraph=%s "
+        "quality_gate=%s mode=%s decisions=%s regenerated=%s retries=%d "
+        "outcome=%s created=%d elapsed_ms=%d",
+        analysis_id, level, langgraph_enabled, quality_gate_enabled,
+        workflow_mode, ",".join(workflow_decisions) or "-",
+        workflow_any_regenerated, workflow_total_retries,
+        outcome, total_created, elapsed_ms,
+    )
 
     if errors:
         return JSONResponse({

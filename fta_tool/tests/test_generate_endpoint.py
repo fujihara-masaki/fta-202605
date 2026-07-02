@@ -322,6 +322,71 @@ def test_flag_on_fallback_on_workflow_exception(client, monkeypatch):
     assert data["created"] == 1  # legacy path still produced the factor
 
 
+# --- Step 3: quality gate through the endpoint ------------------------------
+
+def test_step3_fields_present_and_gate_off_by_default(client, monkeypatch):
+    """quality_summary carries the additive Step 3 fields; gate defaults off."""
+    monkeypatch.delenv("ENABLE_LANGGRAPH_QUALITY_GATE", raising=False)
+    parent_id = _add_node(client, "認証基盤の問題", level=1, judgement="yes")
+    provider = _use_workflow_stub(monkeypatch, [
+        [("証明書の有効期限切れ", "TLS証明書の有効期限を確認する")],
+    ])
+    res = client.post(
+        f"/analyses/{client.analysis_id}/generate/level/2",
+        json={"parent_id": parent_id},
+    )
+    qs = res.json()["quality_summary"]
+    assert qs["quality_gate"] is False
+    assert qs["decisions"] == ["accept"]
+    assert provider.calls == 1
+
+
+def test_step3_gate_on_low_quality_regenerates(client, monkeypatch):
+    """Gate on + kept-but-low-scoring first round → regeneration branch."""
+    parent_id = _add_node(client, "認証基盤の問題", level=1, judgement="yes")
+    provider = _use_workflow_stub(monkeypatch, [
+        [("確認不足", "作業前後の確認が実施されていないか確認する")],  # kept, warned
+        [("証明書の有効期限切れ", "TLS証明書の有効期限を確認する")],
+    ])
+    monkeypatch.setenv("ENABLE_LANGGRAPH_QUALITY_GATE", "true")
+    monkeypatch.setenv("LANGGRAPH_QUALITY_THRESHOLD", "0.95")
+    res = client.post(
+        f"/analyses/{client.analysis_id}/generate/level/2",
+        json={"parent_id": parent_id},
+    )
+    data = res.json()
+    qs = data["quality_summary"]
+    assert qs["quality_gate"] is True
+    assert qs["regenerated"] is True
+    assert qs["retry_count"] == 1
+    assert qs["decisions"] == ["accept"]
+    assert data["created"] == 1
+    assert provider.calls == 2
+
+
+def test_step3_gate_on_fail_soft_returns_best_attempt(client, monkeypatch):
+    """Retry budget spent below threshold → fail_soft, best attempt persisted."""
+    parent_id = _add_node(client, "認証基盤の問題", level=1, judgement="yes")
+    provider = _use_workflow_stub(monkeypatch, [
+        [("確認不足", "作業前後の確認が実施されていないか確認する")],  # kept, warned
+        [("認証基盤の問題", "認証基盤に問題がある可能性")],            # all excluded
+    ], max_retries=1)
+    monkeypatch.setenv("ENABLE_LANGGRAPH_QUALITY_GATE", "true")
+    monkeypatch.setenv("LANGGRAPH_QUALITY_THRESHOLD", "0.95")
+    res = client.post(
+        f"/analyses/{client.analysis_id}/generate/level/2",
+        json={"parent_id": parent_id},
+    )
+    data = res.json()
+    qs = data["quality_summary"]
+    assert qs["decisions"] == ["fail_soft"]
+    assert qs["regenerated"] is True
+    # Best attempt (the warned-but-kept candidate) was persisted, not dropped.
+    assert data["created"] == 1
+    assert qs["workflow_error"] is None
+    assert provider.calls == 2
+
+
 # --- Step 2-A: DB-level dedup stays in main.py (not in evaluate_candidates) -
 
 def test_db_dedup_handled_in_main(client, monkeypatch):
