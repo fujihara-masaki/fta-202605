@@ -180,12 +180,20 @@ def evaluate_quality(state: GenerationState) -> dict:
     # structure/quality checks, or the provider returned no candidates).
     has_critical = outcome in ("all_excluded", "no_candidates")
 
+    # Per-attempt record. Besides what fail_soft needs to pick the best
+    # attempt, it keeps the kept/excluded split (titles + exclusion-reason
+    # labels) so a future partial-regeneration step can regenerate only the
+    # low-quality part of an attempt.
     attempt_record = {
         "attempt": state.get("retry_count", 0),
         "candidates": candidates,
         "kept_count": len(kept),
+        "kept_titles": [ec.factor.title for ec in ev.kept],
+        "excluded_titles": [ec.factor.title for ec in ev.excluded],
+        "reasons": list(ev.reasons),
         "quality_score": quality_score,
         "warnings": warnings,
+        "warning_count": len(warnings),
         "outcome": outcome,
     }
     return {
@@ -269,12 +277,30 @@ def finalize_result(state: GenerationState) -> dict:
     ``fail_soft`` never raises: it hands back the attempt with the most kept
     candidates (score as tie-break, later attempts win ties) so main.py can
     persist it as a normal warning-carrying result.
+
+    Error semantics (contract with main.py):
+      - ``error`` survives to the WorkflowResult ONLY when no attempt produced
+        a usable (quality-kept) candidate — i.e. generation itself failed.
+        main.py then falls back to the legacy path.
+      - If an error occurred (e.g. the provider died during regeneration) but
+        an earlier attempt DID keep candidates, the error is cleared here and
+        the run ends as a normal fail_soft result with that best attempt, so
+        main.py does not regenerate from scratch.
     """
     decision = state.get("decision") or (
         DECISION_FAIL_SOFT if state.get("error") else DECISION_ACCEPT
     )
     updates: dict = {"decision": decision}
     attempts = state.get("attempts") or []
+    if state.get("error") and any(a["kept_count"] > 0 for a in attempts):
+        logger.info(
+            "langgraph error recovered as fail_soft | error=%r "
+            "(a usable earlier attempt exists; legacy fallback not needed)",
+            state.get("error"),
+        )
+        updates["error"] = None
+        decision = DECISION_FAIL_SOFT
+        updates["decision"] = decision
     if decision == DECISION_FAIL_SOFT and attempts:
         best = max(
             attempts,

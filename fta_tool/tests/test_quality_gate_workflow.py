@@ -169,9 +169,26 @@ def test_validate_candidate_structure_never_raises():
     assert len(errors) == 2
 
 
-# --- provider exception -------------------------------------------------------
+# --- provider exception / error-vs-fallback contract --------------------------
+
+class _FlakyGen:
+    """Succeeds on scripted calls, raises once the script is exhausted."""
+
+    def __init__(self, scripts):
+        self.scripts = list(scripts)
+        self.calls = 0
+
+    def __call__(self, extra_existing):
+        idx = self.calls
+        self.calls += 1
+        if idx >= len(self.scripts):
+            raise RuntimeError("provider down")
+        return [_f(t, d) for (t, d) in self.scripts[idx]]
+
 
 def test_provider_exception_is_fail_soft_with_error():
+    """Initial generation fails → no usable attempt → error survives so
+    main.py can fall back to the legacy path."""
     def boom(extra_existing):
         raise RuntimeError("provider down")
 
@@ -180,6 +197,55 @@ def test_provider_exception_is_fail_soft_with_error():
     assert res.error == "provider down"
     assert res.decision == "fail_soft"
     assert res.candidates == []
+
+
+def test_regen_failure_with_usable_attempt_recovers_as_fail_soft():
+    """Provider dies during regeneration but attempt 0 kept a candidate →
+    normal fail_soft result with that attempt, error cleared (no legacy
+    fallback / no regeneration from scratch in main.py)."""
+    gen = _FlakyGen([[GENERIC]])           # call 1 ok, call 2 raises
+    res, _ = _run([], quality_gate=True, quality_threshold=0.95, factors=gen)
+    assert gen.calls == 2
+    assert res.error is None
+    assert res.decision == "fail_soft"
+    assert res.regenerated is True
+    assert [c.title for c in res.candidates] == [GENERIC[0]]
+
+
+def test_regen_failure_without_usable_attempt_keeps_error():
+    """Attempt 0 was all-excluded and the regeneration call fails → nothing
+    usable exists, so the error survives and main.py falls back."""
+    gen = _FlakyGen([[PARAPHRASE]])        # call 1 all-excluded, call 2 raises
+    res, _ = _run([], quality_gate=False, factors=gen)
+    assert gen.calls == 2
+    assert res.error == "provider down"
+    assert res.decision == "fail_soft"
+
+
+# --- attempts record (Step 4 partial-regeneration groundwork) -----------------
+
+def test_attempt_record_keeps_partial_regen_info():
+    from app.services.generation_workflow import evaluate_quality
+
+    state = {
+        "candidates": [_f(*GOOD), _f(*PARAPHRASE)],
+        "parent_factor": PARENT,
+        "parent_description": "",
+        "all_titles": [],
+        "no_rated_titles": [],
+        "ancestor_factors": [],
+        "ai_returned": 2,
+        "retry_count": 0,
+        "attempts": [],
+    }
+    updates = evaluate_quality(state)
+    (rec,) = updates["attempts"]
+    assert rec["kept_titles"] == [GOOD[0]]
+    assert rec["excluded_titles"] == [PARAPHRASE[0]]
+    assert rec["reasons"] == ["親要因の言い換え"]
+    assert rec["kept_count"] == 1
+    assert rec["warning_count"] == len(rec["warnings"])
+    assert rec["outcome"] == "partial"
 
 
 # --- observability ------------------------------------------------------------

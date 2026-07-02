@@ -46,15 +46,29 @@ START
   （保存件数 → 品質スコア → 新しい試行の順で比較）の候補を採用します。
 - 各ノードはロギング＋計測＋例外ガードでラップされており、ノード内の想定外例外は
   `error` 状態に変換され fail_soft で終端します（リクエスト全体は落ちません）。
-- 再生成は現状「全体再生成」ですが、試行ごとの kept/excluded を state に記録しているため、
-  低品質部分のみの部分再生成へグラフ形状を変えずに拡張できます
+- 再生成は現状「全体再生成」ですが、試行ごとの記録（`state["attempts"]`）に
+  `kept_titles` / `excluded_titles` / `reasons`（除外理由ラベル）/ `warning_count` を
+  保持しているため、低品質部分のみの部分再生成へグラフ形状を変えずに拡張できます
   （`regenerate_candidates` の docstring 参照）。
+
+### エラーと legacy fallback の関係
+
+`WorkflowResult.error`（= `quality_summary.workflow_error`）は
+**どの試行からも採用可能な候補が 1 件も得られなかった場合のみ** セットされ、
+main.py はこのときだけ従来パス（legacy fallback）で再生成します。
+
+- provider の初回生成が失敗し、使える試行がゼロ → `error` あり → legacy fallback
+- 再生成中に provider が失敗しても、それ以前の試行に採用可能な候補があれば
+  `finalize_result` が `error` を解除し、その最良試行を **fail_soft の通常結果**
+  として返します（ゼロからの再生成はしません）
+- 品質ゲートによる fail_soft・再生成上限到達・構造検証での除外は、
+  すべてワークフローの通常結果であり `workflow_error` にはなりません
 
 ### 分岐仕様（decide_next_action）
 
 | 条件 | 判定 |
 |------|------|
-| 生成処理でエラー発生 | `fail_soft`（error は結果に載り、main.py が従来パスへフォールバック） |
+| 生成処理でエラー発生 | `fail_soft`（使える試行があればその最良試行を通常結果として返す。使える試行がゼロのときのみ error が結果に載り、main.py が従来パスへフォールバック） |
 | **ゲートON**: 重大警告なし かつ 品質スコア ≥ 閾値 | `accept` |
 | **ゲートON**: 上記以外 かつ 再生成回数 < 上限 | `regenerate` |
 | **ゲートON**: 再生成上限に到達 | `fail_soft`（最良試行を警告付きで返す） |

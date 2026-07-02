@@ -419,6 +419,11 @@ async def generate_factors(
                     quality_threshold=generation_config.langgraph_quality_threshold(),
                 )
                 elapsed_node_ms = int((time.time() - t_node_start) * 1000)
+                # Contract with the workflow: wf.error is only set when NO
+                # attempt produced a usable candidate (generation itself
+                # failed). Quality-gate fail_soft, regeneration-limit
+                # exhaustion and structure-validation rejections are normal
+                # workflow results (error=None) and never fall back.
                 if wf.error:
                     raise RuntimeError(wf.error)
                 factors = wf.candidates
