@@ -74,6 +74,14 @@ def _use_workflow_stub(monkeypatch, scripts, *, max_retries=1):
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     monkeypatch.delenv("AI_PROVIDER", raising=False)  # default mock provider
+    # Endpoint tests must not depend on the local .env: main.py loads it with
+    # override=True at import time, so a developer's .env with the LangGraph
+    # workflow / quality gate enabled would silently flip the path under test.
+    # Default every test to the legacy path; workflow/gate tests opt back in
+    # via _use_workflow_stub / their own monkeypatch.setenv (which run after
+    # this fixture and therefore win).
+    monkeypatch.setenv("ENABLE_LANGGRAPH_GENERATION_WORKFLOW", "false")
+    monkeypatch.setenv("ENABLE_LANGGRAPH_QUALITY_GATE", "false")
     db_file = tmp_path / "test.db"
     engine = create_engine(
         f"sqlite:///{db_file}", connect_args={"check_same_thread": False}

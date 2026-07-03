@@ -45,6 +45,11 @@ def _run(scripts, *, parent_factor=PARENT, max_retries=1, no_rated=None):
         analysis_context={},
         factor_count=4,
         max_retries=max_retries,
+        # This file tests the Step 2-1 (gate OFF) semantics. Pass the flag
+        # explicitly: when omitted, run_generation_workflow reads
+        # ENABLE_LANGGRAPH_QUALITY_GATE from the environment, and a local
+        # .env with the gate enabled would change the behaviour under test.
+        quality_gate=False,
     )
     return result, gen
 
@@ -134,6 +139,7 @@ def test_exception_sets_error():
         analysis_context={},
         factor_count=4,
         max_retries=1,
+        quality_gate=False,   # env-independent (see _run)
     )
     assert isinstance(res, WorkflowResult)
     assert res.error == "provider down"
