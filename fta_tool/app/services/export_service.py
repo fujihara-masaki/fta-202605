@@ -6,6 +6,33 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from .. import crud, models
+from .factor_quality import REGENERATED_FLAG_LABEL
+
+
+def quality_status_label(warning_flags: str) -> str:
+    """Roll warning_flags up into a short quality-status label for the CSV.
+
+    Distinguishes (additive last column; existing columns unchanged):
+      - ""                : no findings
+      - "警告のみ"         : warnings, but the factor was never regenerated
+      - "再生成"           : produced by a quality-gate regeneration, no
+                            remaining warnings
+      - "再生成（警告あり）": produced by a regeneration and still warned
+    Excluded/rejected candidates are never persisted as nodes, so they do not
+    appear in the CSV; they are visible in the generation logs and the
+    quality_summary of the generate response.
+    """
+    warning = warning_flags or ""
+    if not warning:
+        return ""
+    entries = [e.strip() for e in warning.split(";") if e.strip()]
+    regenerated = any(REGENERATED_FLAG_LABEL in e for e in entries)
+    others = [e for e in entries if REGENERATED_FLAG_LABEL not in e]
+    if regenerated and others:
+        return "再生成（警告あり）"
+    if regenerated:
+        return "再生成"
+    return "警告のみ"
 
 
 def build_tree(nodes: list[models.Node]) -> dict[int, list[models.Node]]:
@@ -72,11 +99,13 @@ def export_csv(db: Session, analysis_id: int) -> str:
 
     output = io.StringIO()
     writer = csv.writer(output)
+    # 品質ステータス is additive (appended last) so existing consumers that
+    # read columns by position keep working.
     writer.writerow([
         "ID", "レベル", "タイトル", "説明", "親ID", "親要因",
         "AI生成", "ユーザ評価", "直接要因ステータス",
         "直接要因コメント", "根拠", "再発防止策", "メモ",
-        "要確認フラグ", "警告理由"
+        "要確認フラグ", "警告理由", "品質ステータス"
     ])
 
     level_labels = {0: "頂上事象", 1: "一次要因", 2: "二次要因", 3: "三次要因"}
@@ -108,6 +137,7 @@ def export_csv(db: Session, analysis_id: int) -> str:
             node.memo,
             "要確認" if warning else "",
             warning,
+            quality_status_label(warning),
         ])
 
     return output.getvalue()

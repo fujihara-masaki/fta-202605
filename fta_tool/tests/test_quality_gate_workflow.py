@@ -115,19 +115,20 @@ def test_gate_on_low_quality_triggers_regeneration():
     assert [c.title for c in res.candidates] == [GOOD[0]]
 
 
-def test_gate_on_retry_budget_spent_fail_soft_returns_best_attempt():
-    """Both attempts below threshold → fail_soft with the better attempt."""
+def test_gate_on_retry_budget_spent_accepts_best_attempt_with_warning():
+    """Both attempts below threshold → budget spent → the usable (non-critical)
+    part of the best attempt is accepted with warning, not dropped."""
     res, gen = _run(
         [[GENERIC], [PARAPHRASE]], quality_gate=True,
         quality_threshold=0.95, max_retries=1,
     )
-    assert res.decision == "fail_soft"
+    assert res.decision == "accept_with_warning"
     assert res.regenerated is True
     assert gen.calls == 2
     # Attempt 0 kept the generic candidate; attempt 1 kept nothing → best is 0.
     assert [c.title for c in res.candidates] == [GENERIC[0]]
     assert res.quality_score > 0.0
-    assert res.error is None               # fail_soft, not an exception
+    assert res.error is None               # graded accept, not an exception
 
 
 def test_gate_on_critical_warning_regenerates():
@@ -149,12 +150,13 @@ def test_structure_invalid_candidate_becomes_warning_not_exception():
     assert res.error is None
 
 
-def test_all_structure_invalid_ends_fail_soft_without_exception():
+def test_all_structure_invalid_ends_reject_without_exception():
     res, gen = _run(
         [[("", "名前なし")], [("", "また名前なし")]],
         quality_gate=True, max_retries=1,
     )
-    assert res.decision == "fail_soft"
+    # Budget spent and no usable candidate in any attempt → graded reject.
+    assert res.decision == "reject"
     assert res.candidates == []
     assert res.has_critical_warning is True
     assert res.error is None

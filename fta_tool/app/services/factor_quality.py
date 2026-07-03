@@ -25,6 +25,11 @@ _SUFFIX_WORDS = (
     "の誤り", "誤り", "の未実施", "未実施", "の未設定", "未設定",
     "のミス", "ミス", "の不徹底", "不徹底", "の不十分", "不十分",
     "の遅延", "遅延", "の欠落", "欠落", "の未取得", "未取得",
+    # Negation forms:「Xが配布されない」and「Xの配布漏れ」describe the same
+    # failure, so the negated verb ending is stripped the same way as the
+    # deficiency-noun suffixes above.
+    "されていない", "されない", "できていない", "できない",
+    "していない", "しない", "がない",
 )
 
 # Words that are too generic to be a useful factor title on their own
@@ -438,6 +443,67 @@ def compute_factor_score(
 # an existing node already saved in the analysis (DB-level dedup in main.py).
 DEDUP_REASON_LABEL = "既存要因との重複・類似"
 
+# ---------------------------------------------------------------------------
+# Severity classification for the LangGraph quality gate (additive)
+# ---------------------------------------------------------------------------
+#
+# The legacy path only knows exclude/warn.  The quality gate needs a third
+# axis: which kept-with-warning candidates are serious enough to REGENERATE
+# (and, if regeneration does not help, to drop).  Severity is computed from
+# the existing rule outputs, so the exclude/warn behaviour of the legacy
+# path is untouched.
+#
+#   critical: parent paraphrase / description identical to parent /
+#             high similarity to a No-rated factor (all already excluded),
+#             plus reversion to an ancestor title and high similarity to an
+#             existing factor (kept-with-warning in the legacy path).
+#             → regeneration target for the gate.
+#   warning:  minor issues a human can resolve (generic-token overlap with a
+#             No-rated factor, over-generic name, over-long name).
+#             → accept_with_warning, never a regeneration trigger.
+#   ok:       no findings.
+#
+# Token-level overlap of domain-generic words (DNS, VPN, 認証, ファイア
+# ウォール, …) is NEVER critical: the similarity() checks compare whole
+# normalized titles, and the No-rated token check (W5) stays a warning.
+
+SEVERITY_OK = "ok"
+SEVERITY_WARNING = "warning"
+SEVERITY_CRITICAL = "critical"
+
+# Short labels for critical reasons (aligned with summarize_exclusion_reason
+# so reason_summary / logs use one vocabulary).
+CRITICAL_ANCESTOR_LABEL = "上位階層への逆戻り"
+CRITICAL_EXISTING_LABEL = DEDUP_REASON_LABEL
+
+# warning_flags marker appended (by main.py) to factors that were produced by
+# a quality-gate regeneration, so the CSV export can tell "warning only" apart
+# from "regenerated" / "regenerated but still warned".
+REGENERATED_FLAG_LABEL = "再生成により生成"
+
+
+def classify_warning_severity(warnings: list[str]) -> tuple[str, list[str]]:
+    """Classify kept-candidate warnings into a severity + critical labels.
+
+    Only the two structurally-serious warnings become critical:
+      - 祖先要因への逆戻り (W4): the candidate is not a deeper cause but a
+        return to a higher level of the tree
+      - 既存要因との高類似 (W1): semantic near-duplicate inside the analysis
+    Everything else (No-rated token overlap, generic name, long name) is a
+    minor warning.
+    """
+    critical: list[str] = []
+    for w in warnings or []:
+        if "祖先要因" in w:
+            critical.append(CRITICAL_ANCESTOR_LABEL)
+        elif w.startswith("既存要因") and "類似" in w:
+            critical.append(CRITICAL_EXISTING_LABEL)
+    if critical:
+        return SEVERITY_CRITICAL, list(dict.fromkeys(critical))
+    if warnings:
+        return SEVERITY_WARNING, []
+    return SEVERITY_OK, []
+
 
 def summarize_exclusion_reason(reason: str) -> str:
     """Collapse a detailed exclusion/skip reason into a short UI-friendly label.
@@ -492,6 +558,10 @@ class EvaluatedCandidate:
     exclude_reason: str = ""          # detailed reason (for logs); set when excluded
     reason_label: str = ""            # short summarized label; set when excluded
     warnings: list[str] = field(default_factory=list)
+    # Quality-gate severity (additive; legacy callers ignore these):
+    # ok / warning / critical, plus short labels for the critical findings.
+    severity: str = SEVERITY_OK
+    critical_reasons: list[str] = field(default_factory=list)
 
     @property
     def warning_flags(self) -> str:
@@ -555,19 +625,25 @@ def evaluate_candidate(
         quality, factor.title, factor.description, parent_factor
     )
     if quality.exclude:
+        reason_label = summarize_exclusion_reason(quality.exclude_reason)
         return EvaluatedCandidate(
             factor=factor,
             score=quality.score,
             excluded=True,
             exclude_reason=quality.exclude_reason,
-            reason_label=summarize_exclusion_reason(quality.exclude_reason),
+            reason_label=reason_label,
             warnings=list(quality.warnings),
+            severity=SEVERITY_CRITICAL,
+            critical_reasons=[reason_label],
         )
+    severity, critical_reasons = classify_warning_severity(quality.warnings)
     return EvaluatedCandidate(
         factor=factor,
         score=quality.score,
         excluded=False,
         warnings=list(quality.warnings),
+        severity=severity,
+        critical_reasons=critical_reasons,
     )
 
 
