@@ -127,6 +127,63 @@ def ollama_format_schema_from_pydantic() -> dict:
     return _strip_titles(_resolve(schema))
 
 
+# ---------------------------------------------------------------------------
+# Candidate structure validation (Step 3: LangGraph validate_structure node)
+# ---------------------------------------------------------------------------
+
+
+class CandidateStructure(BaseModel):
+    """Structural contract a generated candidate must satisfy before the
+    quality evaluation runs (Step 3 ``validate_structure`` node).
+
+    Validates the *shape* only (non-empty title, string fields, list of check
+    points) — semantic quality (duplicates, ancestor reversion, …) is the
+    quality-evaluation step's job.  ``from_attributes`` lets it validate both
+    ``GeneratedFactor`` instances and duck-typed test doubles.
+    """
+
+    title: str
+    description: str = ""
+    rationale: str = ""
+    check_points: list[str] = Field(default_factory=list)
+
+    model_config = {"extra": "ignore", "from_attributes": True}
+
+    @field_validator("title")
+    @classmethod
+    def _title_must_be_nonempty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("title must be a non-empty string")
+        return v
+
+    @field_validator("description", "rationale", mode="before")
+    @classmethod
+    def _none_to_empty(cls, v):
+        return "" if v is None else v
+
+
+def validate_candidate_structure(candidates: list) -> tuple[list, list[str]]:
+    """Validate each candidate's structure; never raises.
+
+    Returns ``(valid_candidates, error_messages)``: the original candidate
+    objects that passed validation (unchanged, so downstream code keeps the
+    exact objects it would have seen), and one short message per rejected
+    candidate.  Any unexpected error is captured as a message, not raised.
+    """
+    valid: list = []
+    errors: list[str] = []
+    for i, candidate in enumerate(candidates):
+        try:
+            CandidateStructure.model_validate(candidate)
+            valid.append(candidate)
+        except Exception as e:
+            title = getattr(candidate, "title", None)
+            errors.append(
+                f"構造検証エラー candidate[{i}] title={title!r}: {e}".splitlines()[0]
+            )
+    return valid, errors
+
+
 class GenerationMetrics(BaseModel):
     """Timing / token metrics for one Ollama generation call.
 
