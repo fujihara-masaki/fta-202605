@@ -364,8 +364,9 @@ def test_step3_gate_on_low_quality_regenerates(client, monkeypatch):
     assert provider.calls == 2
 
 
-def test_step3_gate_on_fail_soft_returns_best_attempt(client, monkeypatch):
-    """Retry budget spent below threshold → fail_soft, best attempt persisted."""
+def test_step3_gate_on_budget_spent_accepts_best_attempt_with_warning(client, monkeypatch):
+    """Retry budget spent below threshold → accept_with_warning, best attempt
+    persisted (usable candidates are never dropped by the budget limit)."""
     parent_id = _add_node(client, "認証基盤の問題", level=1, judgement="yes")
     provider = _use_workflow_stub(monkeypatch, [
         [("確認不足", "作業前後の確認が実施されていないか確認する")],  # kept, warned
@@ -379,12 +380,71 @@ def test_step3_gate_on_fail_soft_returns_best_attempt(client, monkeypatch):
     )
     data = res.json()
     qs = data["quality_summary"]
-    assert qs["decisions"] == ["fail_soft"]
+    assert qs["decisions"] == ["accept_with_warning"]
     assert qs["regenerated"] is True
     # Best attempt (the warned-but-kept candidate) was persisted, not dropped.
     assert data["created"] == 1
     assert qs["workflow_error"] is None
     assert provider.calls == 2
+
+
+# --- Step 3.5: graded gate — rejection accounting / regeneration marker ------
+
+def test_step35_gate_rejects_are_counted_as_quality_exclusions(client, monkeypatch):
+    """再生成後も言い換えが残った候補は除外（reject）され、
+    excluded_by_quality / reason_summary / rejected_by_gate に反映される。"""
+    parent_id = _add_node(client, "認証基盤の問題", level=1, judgement="yes")
+    provider = _use_workflow_stub(monkeypatch, [
+        [("証明書の有効期限切れ", "TLS証明書の有効期限を確認する"),
+         ("認証基盤の問題", "認証基盤に問題がある可能性")],   # good + paraphrase
+        [("認証基盤の不備", "認証基盤側の不備の可能性")],      # paraphrase again
+    ], max_retries=1)
+    monkeypatch.setenv("ENABLE_LANGGRAPH_QUALITY_GATE", "true")
+    res = client.post(
+        f"/analyses/{client.analysis_id}/generate/level/2",
+        json={"parent_id": parent_id},
+    )
+    data = res.json()
+    qs = data["quality_summary"]
+    assert qs["decisions"] == ["accept_with_warning"]
+    assert data["created"] == 1                    # 良い候補は維持
+    assert qs["rejected_by_gate"] == 1             # 言い換えは除外
+    assert qs["excluded_by_quality"] == 1
+    assert qs["ai_returned"] == 2
+    assert "親要因の言い換え" in qs["reason_summary"]
+    assert provider.calls == 2
+
+
+def test_step35_regenerated_factor_gets_warning_flag_marker(client, monkeypatch):
+    """再生成で生成された要因には warning_flags にマーカーが付き、
+    CSVで「再生成」と判別できる。"""
+    from app.services.factor_quality import REGENERATED_FLAG_LABEL
+
+    parent_id = _add_node(client, "認証基盤の問題", level=1, judgement="yes")
+    provider = _use_workflow_stub(monkeypatch, [
+        [("認証基盤の問題", "認証基盤に問題がある可能性")],          # paraphrase → 再生成
+        [("証明書の有効期限切れ", "TLS証明書の有効期限を確認する")],  # good
+    ])
+    monkeypatch.setenv("ENABLE_LANGGRAPH_QUALITY_GATE", "true")
+    res = client.post(
+        f"/analyses/{client.analysis_id}/generate/level/2",
+        json={"parent_id": parent_id},
+    )
+    data = res.json()
+    assert data["created"] == 1
+    assert data["quality_summary"]["regenerated_created"] == 1
+    assert provider.calls == 2
+
+    db = client.SessionLocal()
+    try:
+        node = (
+            db.query(models.Node)
+            .filter(models.Node.parent_id == parent_id)
+            .one()
+        )
+        assert REGENERATED_FLAG_LABEL in (node.warning_flags or "")
+    finally:
+        db.close()
 
 
 # --- Step 2-A: DB-level dedup stays in main.py (not in evaluate_candidates) -

@@ -1,5 +1,12 @@
 # Step 3: LangGraph 検査付き生成ワークフロー（品質ゲート）
 
+> **Step 3.5 での更新**: ゲートON時の判定は
+> accept / accept_with_warning / regenerate(retry) / reject の段階判定に
+> 拡張され、問題候補のみの部分再生成が入りました。最新の判定仕様は
+> [langgraph_quality_gate_rules.md](langgraph_quality_gate_rules.md) を
+> 参照してください（本書のゲートON分岐表は Step 3 時点の記述です。
+> ゲートOFF・フラグ体系・fail_soft/legacy fallback の契約は変わりません）。
+
 ## 目的
 
 Step 2/2-1 では既存の生成処理を LangGraph ワークフロー経由でも動かせるようにしましたが、

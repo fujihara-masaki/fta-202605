@@ -12,9 +12,22 @@ Scope:
       * quality gate OFF (default): Step 2-1 behaviour — accept when the
         outcome is created/partial, regenerate only for all_excluded /
         no_candidates, fail_soft when the retry budget is spent.
-      * quality gate ON: additionally regenerate when the average quality
-        score of the kept candidates is below the threshold or a critical
-        warning is present; fail_soft returns the BEST attempt so far.
+      * quality gate ON (Step 3.5 graded decisions):
+          accept              — no critical candidate, score >= threshold,
+                                no warnings
+          accept_with_warning — minor warnings only, OR the retry budget is
+                                spent and usable (non-critical) candidates
+                                remain; critical candidates are dropped
+                                (reported in ``rejected``)
+          regenerate (retry)  — a critical candidate exists (parent
+                                paraphrase, ancestor reversion, near-duplicate,
+                                No-rated similar) or the average score is
+                                below the threshold, and budget remains;
+                                only the problematic part is regenerated
+          reject              — budget spent and no usable candidate remains
+        Critical = per-candidate severity from factor_quality (paraphrase /
+        ancestor reversion / near-duplicate / No-rated similar).  Generic
+        token overlap (DNS, VPN, …) is never critical — warning only.
 
 What this module does NOT do (stays in main.py):
   - DB access (crud.node_title_exists / crud.create_node), display_order,
@@ -50,14 +63,26 @@ from typing import Callable, Optional, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from . import generation_config
-from .factor_quality import classify_outcome, evaluate_candidates
+from .factor_quality import (
+    SEVERITY_CRITICAL,
+    SEVERITY_OK,
+    SEVERITY_WARNING,
+    classify_outcome,
+    evaluate_candidates,
+)
 from .llm_models import validate_candidate_structure
 
 logger = logging.getLogger(__name__)
 
-# Terminal decisions produced by decide_next_action.
+# Decisions produced by decide_next_action.
+# ``regenerate`` is the transient "retry" decision (routes back into the
+# loop); the others are terminal.  ``fail_soft`` remains the terminal state
+# for provider/node errors (gate ON and OFF) and for the gate-OFF budget-spent
+# case, unchanged from Step 3.
 DECISION_ACCEPT = "accept"
+DECISION_ACCEPT_WITH_WARNING = "accept_with_warning"
 DECISION_REGENERATE = "regenerate"
+DECISION_REJECT = "reject"
 DECISION_FAIL_SOFT = "fail_soft"
 
 
@@ -66,6 +91,7 @@ class GenerationState(TypedDict, total=False):
     analysis_title: str
     top_event: str
     target_level: int
+    parent_id: Optional[int]        # DB id of the parent node (log correlation)
     parent_factor: Optional[str]
     parent_description: str
     factor_count: int
@@ -99,9 +125,19 @@ class GenerationState(TypedDict, total=False):
     warnings: list                  # warning messages (kept candidates + structure)
     warning_count: int
     has_critical_warning: bool      # nothing usable in this attempt
-    decision: str                   # accept / regenerate / fail_soft
+    decision: str                   # accept / accept_with_warning / regenerate / reject / fail_soft
     attempts: list                  # per-attempt records (for fail_soft best pick)
     node_timings: list              # [(node_name, elapsed_ms), …] in execution order
+
+    # --- Step 3.5: graded gate / partial regeneration ---
+    severity: str                   # attempt severity: ok / warning / critical
+    critical_count: int             # per-candidate critical findings (this attempt)
+    critical_items: list            # [{"title":…, "reasons":[…]}, …] (this attempt)
+    regen_keep: list                # factor objects kept as-is on partial regen
+    regen_added_titles: list        # titles introduced by any regeneration
+    decision_basis: str             # "pass" / "budget_spent" / "" (why decided)
+    rejected: list                  # final rejected candidates (critical, budget spent)
+    regenerated_titles: list        # final candidates that came from a regeneration
 
     # --- internal: injected provider call (not serialized; in-process only) ---
     # signature: (extra_existing_titles: list[str]) -> list[GeneratedFactor]
@@ -166,9 +202,56 @@ def evaluate_quality(state: GenerationState) -> dict:
     scores = ev.scores  # per-kept overall_score, 0–100
     quality_score = (sum(scores) / len(scores) / 100.0) if scores else 0.0
 
-    warnings: list = list(state.get("structure_errors") or [])
+    structure_errors: list = list(state.get("structure_errors") or [])
+    warnings: list = list(structure_errors)
     for ec in ev.kept:
         warnings.extend(ec.warnings)
+
+    # --- Step 3.5: per-candidate severity split (quality gate) -------------
+    # critical = excluded (paraphrase / same description / No-rated similar)
+    # or kept-with-critical-warning (ancestor reversion / near-duplicate of an
+    # existing factor).  These are the gate's regeneration targets; generic
+    # token overlap and other minor findings stay "warning".
+    threshold = float(state.get("quality_threshold", 0.7))
+    kept_noncritical = [ec for ec in ev.kept if ec.severity != SEVERITY_CRITICAL]
+    kept_critical = [ec for ec in ev.kept if ec.severity == SEVERITY_CRITICAL]
+    critical_items = [
+        {
+            "title": ec.factor.title,
+            "reasons": list(ec.critical_reasons)
+            or [ec.reason_label or "品質チェックにより除外"],
+        }
+        for ec in kept_critical + list(ev.excluded)
+    ]
+    critical_count = len(critical_items)
+    if critical_count:
+        severity = SEVERITY_CRITICAL
+    elif warnings:
+        severity = SEVERITY_WARNING
+    else:
+        severity = SEVERITY_OK
+    # Candidates kept as-is when a partial regeneration is triggered:
+    # non-critical AND individually at/above the score threshold.
+    regen_keep = [
+        ec.factor for ec in kept_noncritical
+        if ec.score.overall_score >= threshold * 100.0
+    ]
+    noncritical_warnings = list(structure_errors)
+    for ec in kept_noncritical:
+        noncritical_warnings.extend(ec.warnings)
+
+    # One grep-friendly line per candidate (PowerShell-side comparison).
+    attempt = state.get("retry_count", 0)
+    for ec in list(ev.kept) + list(ev.excluded):
+        logger.info(
+            "langgraph candidate | parent_id=%s level=%d parent=%r attempt=%d "
+            "title=%r score=%d severity=%s excluded=%s warnings=%r "
+            "critical_reasons=%r",
+            state.get("parent_id"), state.get("target_level", 0),
+            state.get("parent_factor") or "(top event)", attempt,
+            ec.factor.title, ec.score.overall_score, ec.severity, ec.excluded,
+            "; ".join(ec.warnings), "; ".join(ec.critical_reasons),
+        )
 
     ai_returned = state.get("ai_returned", len(candidates))
     outcome = classify_outcome(
@@ -182,11 +265,12 @@ def evaluate_quality(state: GenerationState) -> dict:
 
     # Per-attempt record. Besides what fail_soft needs to pick the best
     # attempt, it keeps the kept/excluded split (titles + exclusion-reason
-    # labels) so a future partial-regeneration step can regenerate only the
-    # low-quality part of an attempt.
+    # labels) and the non-critical subset, so finalize_result can adopt only
+    # the usable part of the best attempt.
     attempt_record = {
         "attempt": state.get("retry_count", 0),
         "candidates": candidates,
+        "ai_returned": ai_returned,
         "kept_count": len(kept),
         "kept_titles": [ec.factor.title for ec in ev.kept],
         "excluded_titles": [ec.factor.title for ec in ev.excluded],
@@ -195,6 +279,12 @@ def evaluate_quality(state: GenerationState) -> dict:
         "warnings": warnings,
         "warning_count": len(warnings),
         "outcome": outcome,
+        # Step 3.5 fields
+        "severity": severity,
+        "critical_items": critical_items,
+        "kept_noncritical": [ec.factor for ec in kept_noncritical],
+        "kept_noncritical_count": len(kept_noncritical),
+        "noncritical_warnings": noncritical_warnings,
     }
     return {
         "kept": kept,
@@ -205,17 +295,32 @@ def evaluate_quality(state: GenerationState) -> dict:
         "warning_count": len(warnings),
         "has_critical_warning": has_critical,
         "outcome": outcome,
+        "severity": severity,
+        "critical_count": critical_count,
+        "critical_items": critical_items,
+        "regen_keep": regen_keep,
         "attempts": list(state.get("attempts") or []) + [attempt_record],
     }
 
 
 def decide_next_action(state: GenerationState) -> dict:
-    """Decide accept / regenerate / fail_soft from the current attempt.
+    """Decide the next action from the current attempt.
 
     Gate OFF (default): Step 2-1 semantics — created/partial is accepted
-    as-is; only all_excluded/no_candidates spends the retry budget.
-    Gate ON: a below-threshold average score or a critical warning also
-    triggers regeneration; when the budget is spent the run fail_softs.
+    as-is; only all_excluded/no_candidates spends the retry budget; the
+    budget-spent terminal stays ``fail_soft``.
+
+    Gate ON (graded, Step 3.5):
+      - no critical candidate and score >= threshold
+            → ``accept`` (or ``accept_with_warning`` when minor warnings exist)
+      - a critical candidate exists (parent paraphrase / ancestor reversion /
+        near-duplicate / No-rated similar) or the score is below the
+        threshold, and budget remains
+            → ``regenerate`` (retry; only the problematic part is replaced)
+      - budget spent
+            → ``accept_with_warning`` when a usable (non-critical) candidate
+              exists in any attempt (criticals are dropped in finalize),
+              otherwise ``reject``
     """
     retry_count = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 0)
@@ -223,17 +328,32 @@ def decide_next_action(state: GenerationState) -> dict:
     threshold = float(state.get("quality_threshold", 0.7))
     quality_score = float(state.get("quality_score", 0.0))
     has_critical = bool(state.get("has_critical_warning", False))
+    critical_count = int(state.get("critical_count", 0))
+    severity = state.get("severity", "")
+    warning_count = int(state.get("warning_count", 0))
     outcome = state.get("outcome", "")
+    basis = ""
 
     if state.get("error"):
         decision = DECISION_FAIL_SOFT
     elif gate:
-        if not has_critical and quality_score >= threshold:
-            decision = DECISION_ACCEPT
+        if critical_count == 0 and quality_score >= threshold:
+            basis = "pass"
+            decision = (
+                DECISION_ACCEPT_WITH_WARNING if warning_count
+                else DECISION_ACCEPT
+            )
         elif retry_count < max_retries:
             decision = DECISION_REGENERATE
         else:
-            decision = DECISION_FAIL_SOFT
+            basis = "budget_spent"
+            usable = any(
+                a.get("kept_noncritical_count", 0) > 0
+                for a in (state.get("attempts") or [])
+            )
+            decision = (
+                DECISION_ACCEPT_WITH_WARNING if usable else DECISION_REJECT
+            )
     else:
         if outcome in ("created", "partial"):
             decision = DECISION_ACCEPT
@@ -243,32 +363,70 @@ def decide_next_action(state: GenerationState) -> dict:
             decision = DECISION_FAIL_SOFT
 
     logger.info(
-        "langgraph decide | decision=%s outcome=%s quality_gate=%s "
-        "quality_score=%.2f threshold=%.2f warnings=%d critical=%s "
-        "retry_count=%d max_retries=%d",
-        decision, outcome, gate, quality_score, threshold,
-        state.get("warning_count", 0), has_critical, retry_count, max_retries,
+        "langgraph decide | decision=%s basis=%s severity=%s outcome=%s "
+        "quality_gate=%s quality_score=%.2f threshold=%.2f warnings=%d "
+        "critical_count=%d critical=%s retry_count=%d max_retries=%d",
+        decision, basis or "-", severity or "-", outcome, gate,
+        quality_score, threshold, warning_count,
+        critical_count, has_critical, retry_count, max_retries,
     )
-    return {"decision": decision}
+    return {"decision": decision, "decision_basis": basis}
 
 
 def regenerate_candidates(state: GenerationState) -> dict:
     """Regenerate, asking the provider to avoid this attempt's titles.
 
-    Currently regenerates the whole candidate list.  Partial regeneration
-    (keep the high-scoring kept candidates, regenerate only the shortfall) can
-    be added here later by seeding ``candidates`` with the kept subset and
-    shrinking the requested count — the graph shape does not change.
+    Gate OFF: whole-list regeneration (Step 2-1 behaviour, unchanged).
+
+    Gate ON (partial regeneration): the current attempt's usable candidates
+    (``regen_keep``: non-critical AND individually at/above the threshold)
+    are carried over as-is; the provider is asked to avoid ALL current titles
+    and only the shortfall is taken from its answer, so a single bad candidate
+    does not cost a full re-generation of the good ones.
     """
     fn = state["_generate_fn"]
-    excluded_titles = [c.title for c in state.get("candidates", [])]
+    avoid_titles = [c.title for c in state.get("candidates", [])]
     next_retry = state.get("retry_count", 0) + 1
+    gate = bool(state.get("quality_gate", False))
+
+    if not gate:
+        try:
+            candidates = list(fn(avoid_titles))
+        except Exception as e:
+            logger.warning("generation_workflow regenerate error: %s", e)
+            return {"regenerated": True, "retry_count": next_retry, "error": str(e)}
+        return {"candidates": candidates, "regenerated": True, "retry_count": next_retry}
+
+    # --- gate ON: partial regeneration ---
+    keep = list(state.get("regen_keep") or [])
+    keep_titles = {c.title for c in keep}
+    problem_titles = [t for t in avoid_titles if t not in keep_titles]
     try:
-        candidates = list(fn(excluded_titles))
+        new_candidates = list(fn(avoid_titles))
     except Exception as e:
         logger.warning("generation_workflow regenerate error: %s", e)
         return {"regenerated": True, "retry_count": next_retry, "error": str(e)}
-    return {"candidates": candidates, "regenerated": True, "retry_count": next_retry}
+    fresh = [c for c in new_candidates if c.title not in keep_titles]
+    factor_count = int(state.get("factor_count", 0) or 0)
+    if factor_count > 0:
+        fresh = fresh[: max(1, factor_count - len(keep))]
+    added_titles = [c.title for c in fresh]
+    # before/after in one line for PowerShell-side comparison.
+    logger.info(
+        "langgraph regen partial | parent_id=%s level=%d parent=%r attempt=%d "
+        "kept=%r before=%r after=%r",
+        state.get("parent_id"), state.get("target_level", 0),
+        state.get("parent_factor") or "(top event)", next_retry,
+        "; ".join(c.title for c in keep),
+        "; ".join(problem_titles), "; ".join(added_titles),
+    )
+    return {
+        "candidates": keep + fresh,
+        "regenerated": True,
+        "retry_count": next_retry,
+        "regen_added_titles":
+            list(state.get("regen_added_titles") or []) + added_titles,
+    }
 
 
 def finalize_result(state: GenerationState) -> dict:
@@ -322,6 +480,62 @@ def finalize_result(state: GenerationState) -> dict:
                 "has_critical_warning": best["outcome"]
                 in ("all_excluded", "no_candidates"),
             })
+
+    # --- Step 3.5: gate-ON terminal decisions adopt only usable candidates ---
+    # accept / accept_with_warning / reject: the final candidate list is the
+    # non-critical subset of the chosen attempt; its critical candidates are
+    # dropped and reported in ``rejected`` (with reasons) instead of being
+    # persisted as warning-carrying nodes.
+    gate = bool(state.get("quality_gate", False))
+    if gate and not updates.get("error", state.get("error")) and attempts and \
+            decision in (DECISION_ACCEPT, DECISION_ACCEPT_WITH_WARNING,
+                         DECISION_REJECT):
+        if state.get("decision_basis") == "budget_spent":
+            chosen = max(
+                attempts,
+                key=lambda a: (a.get("kept_noncritical_count", 0),
+                               a["quality_score"], a["attempt"]),
+            )
+        else:
+            chosen = attempts[-1]
+        final_candidates = list(chosen.get("kept_noncritical") or [])
+        rejected = list(chosen.get("critical_items") or [])
+        regen_added = set(state.get("regen_added_titles") or [])
+        regenerated_titles = [
+            c.title for c in final_candidates if c.title in regen_added
+        ]
+        for item in rejected:
+            logger.info(
+                "langgraph reject candidate | parent_id=%s level=%d parent=%r "
+                "title=%r reasons=%r decision=%s attempt=%d",
+                state.get("parent_id"), state.get("target_level", 0),
+                state.get("parent_factor") or "(top event)",
+                item.get("title"), "; ".join(item.get("reasons") or []),
+                decision, chosen["attempt"],
+            )
+        warnings = list(chosen.get("noncritical_warnings")
+                        if chosen.get("noncritical_warnings") is not None
+                        else chosen.get("warnings") or [])
+        ai_returned = int(chosen.get("ai_returned", 0))
+        final_outcome = classify_outcome(
+            ai_returned=ai_returned,
+            created=len(final_candidates),
+            excluded=max(0, ai_returned - len(final_candidates)),
+        )
+        updates.update({
+            "candidates": final_candidates,
+            "rejected": rejected,
+            "regenerated_titles": regenerated_titles,
+            "quality_score": chosen["quality_score"],
+            "warnings": warnings,
+            "warning_count": len(warnings),
+            "outcome": final_outcome,
+            "has_critical_warning": final_outcome
+            in ("all_excluded", "no_candidates"),
+            "severity": SEVERITY_CRITICAL if rejected else (
+                SEVERITY_WARNING if warnings else SEVERITY_OK
+            ),
+        })
     return updates
 
 
@@ -411,11 +625,20 @@ class WorkflowResult:
     retry_count: int
     error: Optional[str] = None
     # Step 3 fields (additive)
-    decision: str = ""                      # accept / regenerate / fail_soft
+    decision: str = ""                      # accept / accept_with_warning / reject / fail_soft
     quality_score: float = 0.0              # 0–1 (avg kept overall_score / 100)
     warning_count: int = 0
     has_critical_warning: bool = False
     node_timings: list = field(default_factory=list)   # [(node, ms), …]
+    # Step 3.5 fields (additive)
+    severity: str = ""                      # ok / warning / critical (final)
+    rejected: list = field(default_factory=list)
+    # ``rejected``: [{"title":…, "reasons":[短いラベル,…]}, …] — critical
+    # candidates dropped by the gate (never persisted; main.py counts them
+    # as quality exclusions).
+    regenerated_titles: list = field(default_factory=list)
+    # final candidates that were produced by a regeneration attempt (main.py
+    # marks their warning_flags so the CSV can tell regenerated factors apart)
 
 
 def run_generation_workflow(
@@ -433,6 +656,7 @@ def run_generation_workflow(
     analysis_title: str = "",
     top_event: str = "",
     target_level: int = 0,
+    parent_id: Optional[int] = None,
     quality_gate: Optional[bool] = None,
     quality_threshold: Optional[float] = None,
 ) -> WorkflowResult:
@@ -453,9 +677,9 @@ def run_generation_workflow(
 
     logger.info(
         "langgraph run start | quality_gate=%s threshold=%.2f max_retries=%d "
-        "level=%d parent=%r",
+        "level=%d parent_id=%s parent=%r",
         quality_gate, quality_threshold, max_retries,
-        target_level, parent_factor or "(top event)",
+        target_level, parent_id, parent_factor or "(top event)",
     )
     t_run = time.perf_counter()
 
@@ -464,6 +688,7 @@ def run_generation_workflow(
         "analysis_title": analysis_title,
         "top_event": top_event,
         "target_level": target_level,
+        "parent_id": parent_id,
         "parent_factor": parent_factor,
         "parent_description": parent_description,
         "factor_count": factor_count,
@@ -494,6 +719,14 @@ def run_generation_workflow(
         "decision": "",
         "attempts": [],
         "node_timings": [],
+        "severity": "",
+        "critical_count": 0,
+        "critical_items": [],
+        "regen_keep": [],
+        "regen_added_titles": [],
+        "decision_basis": "",
+        "rejected": [],
+        "regenerated_titles": [],
         "_generate_fn": generate_fn,
     }
     final = graph.invoke(initial)
@@ -501,13 +734,18 @@ def run_generation_workflow(
     elapsed_ms = int((time.perf_counter() - t_run) * 1000)
     node_timings = list(final.get("node_timings") or [])
     logger.info(
-        "langgraph run summary | decision=%s outcome=%s quality_gate=%s "
-        "quality_score=%.2f warnings=%d critical=%s regenerated=%s "
-        "retry_count=%d elapsed_ms=%d node_ms=%s",
-        final.get("decision", ""), final.get("outcome", ""), quality_gate,
-        final.get("quality_score", 0.0), final.get("warning_count", 0),
+        "langgraph run summary | parent_id=%s level=%d decision=%s severity=%s "
+        "outcome=%s quality_gate=%s quality_score=%.2f warnings=%d critical=%s "
+        "regenerated=%s retry_count=%d rejected=%d regen_titles=%r "
+        "elapsed_ms=%d node_ms=%s",
+        parent_id, target_level, final.get("decision", ""),
+        final.get("severity", "") or "-", final.get("outcome", ""),
+        quality_gate, final.get("quality_score", 0.0),
+        final.get("warning_count", 0),
         final.get("has_critical_warning", False),
         bool(final.get("regenerated", False)), int(final.get("retry_count", 0)),
+        len(final.get("rejected") or []),
+        "; ".join(final.get("regenerated_titles") or []),
         elapsed_ms, ",".join(f"{n}:{ms}" for n, ms in node_timings),
     )
     return WorkflowResult(
@@ -521,4 +759,7 @@ def run_generation_workflow(
         warning_count=int(final.get("warning_count", 0)),
         has_critical_warning=bool(final.get("has_critical_warning", False)),
         node_timings=node_timings,
+        severity=final.get("severity", ""),
+        rejected=list(final.get("rejected") or []),
+        regenerated_titles=list(final.get("regenerated_titles") or []),
     )

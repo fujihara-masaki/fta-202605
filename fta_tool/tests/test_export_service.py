@@ -148,7 +148,8 @@ def test_export_markdown_no_context_section_when_absent(db, sample_analysis):
 
 
 def test_export_csv_unaffected_by_analysis_context(db):
-    """既存のCSV列構成（親ID・要確認フラグ・警告理由含む）は変わらない。"""
+    """既存のCSV列位置（親ID・要確認フラグ・警告理由含む）は変わらない。
+    品質ステータス列は後方互換のため末尾にのみ追加される。"""
     ctx = {"system_context": "X", "incident_context": "Y", "demo_points": "Z"}
     analysis = Analysis(
         title="サンプル分析", top_event="サンプルの頂上事象",
@@ -162,8 +163,44 @@ def test_export_csv_unaffected_by_analysis_context(db):
     header = result.strip().split("\n")[0]
     assert header == (
         "ID,レベル,タイトル,説明,親ID,親要因,AI生成,ユーザ評価,直接要因ステータス,"
-        "直接要因コメント,根拠,再発防止策,メモ,要確認フラグ,警告理由"
+        "直接要因コメント,根拠,再発防止策,メモ,要確認フラグ,警告理由,品質ステータス"
     )
+
+
+def test_export_csv_quality_status_column(db):
+    """品質ステータス列: 警告のみ / 再生成 / 再生成（警告あり）を区別できる。"""
+    from app.services.factor_quality import REGENERATED_FLAG_LABEL
+
+    analysis = Analysis(title="品質ステータス確認", top_event="頂上事象")
+    db.add(analysis)
+    db.commit()
+    db.refresh(analysis)
+
+    rows = [
+        ("警告なし要因", ""),
+        ("警告のみ要因", "既存要因「X」に類似"),
+        ("再生成要因", REGENERATED_FLAG_LABEL),
+        ("再生成警告要因", f"汎用的すぎる要因名; {REGENERATED_FLAG_LABEL}"),
+    ]
+    for i, (title, flags) in enumerate(rows):
+        db.add(Node(
+            analysis_id=analysis.id, parent_id=None, level=1,
+            title=title, description="説明", ai_generated=True,
+            user_judgement="unknown", direct_cause_status="unknown",
+            display_order=i, warning_flags=flags,
+        ))
+    db.commit()
+
+    lines = export_csv(db, analysis.id).strip().split("\n")
+    status_by_title = {}
+    import csv as _csv
+    import io as _io
+    for row in list(_csv.reader(_io.StringIO("\n".join(lines))))[1:]:
+        status_by_title[row[2]] = row[-1]
+    assert status_by_title["警告なし要因"] == ""
+    assert status_by_title["警告のみ要因"] == "警告のみ"
+    assert status_by_title["再生成要因"] == "再生成"
+    assert status_by_title["再生成警告要因"] == "再生成（警告あり）"
 
 
 def test_no_duplicate_nodes(db, sample_analysis):

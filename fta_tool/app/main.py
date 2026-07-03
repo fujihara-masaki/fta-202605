@@ -20,6 +20,7 @@ from .services.ai_provider import GeneratedFactor, get_ai_provider
 from .services.export_service import export_csv, export_json, export_markdown
 from .services.factor_quality import (
     DEDUP_REASON_LABEL,
+    REGENERATED_FLAG_LABEL,
     classify_outcome,
     evaluate_candidate,
 )
@@ -318,7 +319,9 @@ async def generate_factors(
     quality_gate_enabled = (
         langgraph_enabled and generation_config.langgraph_quality_gate_enabled()
     )
-    workflow_decisions: list[str] = []     # per-parent accept / fail_soft
+    workflow_decisions: list[str] = []     # per-parent accept / accept_with_warning / reject / fail_soft
+    total_rejected_gate = 0                # dropped by the quality gate (critical, budget spent)
+    total_regenerated_saved = 0            # saved factors produced by a gate regeneration
     t_start = time.time()
 
     # Titles across the whole analysis (any parent/level) for similarity warnings.
@@ -394,6 +397,7 @@ async def generate_factors(
         wf_meta: dict = {
             "workflow": "legacy", "regenerated": False,
             "retry_count": 0, "workflow_error": None, "decision": None,
+            "rejected": [], "regen_titles": set(),
         }
         factors: Optional[list[GeneratedFactor]] = None
         elapsed_node_ms = 0
@@ -406,6 +410,7 @@ async def generate_factors(
                     analysis_title=analysis.title,
                     top_event=analysis.top_event,
                     target_level=level,
+                    parent_id=parent_id_val,
                     parent_factor=parent_factor,
                     parent_description=parent_description_val,
                     existing_titles=existing_titles,
@@ -434,15 +439,19 @@ async def generate_factors(
                     "retry_count": wf.retry_count,
                     "workflow_error": None,
                     "decision": wf.decision,
+                    "rejected": list(wf.rejected or []),
+                    "regen_titles": set(wf.regenerated_titles or []),
                 }
                 logger.info(
-                    "langgraph workflow | level=%d parent=%r decision=%s outcome=%s "
-                    "quality_gate=%s quality_score=%.2f warnings=%d critical=%s "
-                    "regenerated=%s retry=%d returned=%d elapsed=%dms",
-                    level, parent_factor or "(top event)", wf.decision, wf.outcome,
+                    "langgraph workflow | parent_id=%s level=%d parent=%r decision=%s "
+                    "severity=%s outcome=%s quality_gate=%s quality_score=%.2f "
+                    "warnings=%d critical=%s regenerated=%s retry=%d returned=%d "
+                    "rejected=%d elapsed=%dms",
+                    parent_id_val, level, parent_factor or "(top event)",
+                    wf.decision, wf.severity or "-", wf.outcome,
                     quality_gate_enabled, wf.quality_score, wf.warning_count,
                     wf.has_critical_warning, wf.regenerated, wf.retry_count,
-                    len(factors), elapsed_node_ms,
+                    len(factors), len(wf.rejected or []), elapsed_node_ms,
                 )
             except Exception as wf_err:
                 logger.warning(
@@ -453,6 +462,7 @@ async def generate_factors(
                     "workflow": "legacy_fallback", "regenerated": False,
                     "retry_count": 0, "workflow_error": str(wf_err),
                     "decision": None,
+                    "rejected": [], "regen_titles": set(),
                 }
                 factors = None  # fall through to the legacy path below
 
@@ -538,6 +548,17 @@ async def generate_factors(
         dedup_skipped_this = 0
         quality_excluded_this = 0
         parent_reasons: list[str] = []
+
+        # Quality-gate rejections (critical candidates dropped after the retry
+        # budget was spent) count as quality exclusions; the per-candidate
+        # detail is already logged by the workflow (langgraph reject candidate).
+        wf_rejected = wf_meta.get("rejected") or []
+        wf_regen_titles = wf_meta.get("regen_titles") or set()
+        quality_excluded_this += len(wf_rejected)
+        total_rejected_gate += len(wf_rejected)
+        for item in wf_rejected:
+            parent_reasons.extend(item.get("reasons") or ["品質チェックにより除外"])
+
         for i, factor in enumerate(factors):
             if crud.node_title_exists(db, analysis_id, parent_id_val, level, factor.title):
                 logger.info(
@@ -584,6 +605,13 @@ async def generate_factors(
                 judgment_counts.get(score.judgment, 0) + 1
             )
 
+            # Mark factors produced by a quality-gate regeneration so the CSV
+            # export can tell "warning only" / "regenerated" /
+            # "regenerated but still warned" apart (additive flag entry).
+            warning_entries = list(ec.warnings)
+            if factor.title in wf_regen_titles:
+                warning_entries.append(REGENERATED_FLAG_LABEL)
+                total_regenerated_saved += 1
             node_data = {
                 "parent_id": parent_id_val,
                 "level": level,
@@ -593,14 +621,16 @@ async def generate_factors(
                 "user_judgement": "unknown",
                 "direct_cause_status": "unknown",
                 "display_order": existing_max_order + i + 1,
-                "warning_flags": ec.warning_flags,
+                "warning_flags": "; ".join(warning_entries),
             }
             crud.create_node(db, analysis_id, node_data)
             all_analysis_titles.append(factor.title)
             created_this += 1
 
         skipped_this = dedup_skipped_this + quality_excluded_this
-        ai_returned_this = len(factors)
+        # gate-rejected candidates were returned by the AI too — count them so
+        # a fully-rejected parent classifies as all_excluded, not no_candidates.
+        ai_returned_this = len(factors) + len(wf_rejected)
         total_created += created_this
         total_skipped += skipped_this
         total_ai_returned += ai_returned_this
@@ -672,6 +702,9 @@ async def generate_factors(
         # Step 3 fields (additive)
         "quality_gate": quality_gate_enabled,
         "decisions": workflow_decisions,
+        # Step 3.5 fields (additive)
+        "rejected_by_gate": total_rejected_gate,
+        "regenerated_created": total_regenerated_saved,
     }
 
     # Step 3: one grep-friendly line per request for LangGraph ON/OFF and
@@ -679,10 +712,12 @@ async def generate_factors(
     logger.info(
         "generate_factors workflow | analysis=%d level=%d langgraph=%s "
         "quality_gate=%s mode=%s decisions=%s regenerated=%s retries=%d "
+        "rejected_by_gate=%d regenerated_created=%d "
         "outcome=%s created=%d elapsed_ms=%d",
         analysis_id, level, langgraph_enabled, quality_gate_enabled,
         workflow_mode, ",".join(workflow_decisions) or "-",
         workflow_any_regenerated, workflow_total_retries,
+        total_rejected_gate, total_regenerated_saved,
         outcome, total_created, elapsed_ms,
     )
 
