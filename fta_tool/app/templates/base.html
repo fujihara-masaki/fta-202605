@@ -19,6 +19,8 @@
   <main class="site-main">
     {% block content %}{% endblock %}
   </main>
+  <!-- Toast notification (shared across pages) -->
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   <script src="/static/app.js"></script>
   {% block extra_scripts %}{% endblock %}
 </body>

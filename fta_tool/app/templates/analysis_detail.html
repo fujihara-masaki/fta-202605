@@ -5,7 +5,7 @@
 {% macro node_row(n) -%}
 <span class="node-level-badge level-{{ n.level }}">{{ ['', '一次', '二次', '三次'][n.level] }}</span>
 <span class="tree-node-title">{{ n.title }}</span>
-<span class="tree-judgement tree-judgement-{{ n.user_judgement }}">{{ {'yes': 'Yes', 'no': 'No', 'unknown': '-'}.get(n.user_judgement, n.user_judgement) }}</span>
+<span class="tree-judgement tree-judgement-{{ n.user_judgement }}">{{ {'yes': 'Yes', 'no': 'No', 'unknown': '未評価'}.get(n.user_judgement, n.user_judgement) }}</span>
 {%- if n.direct_cause_status not in ['unknown', ''] %}
 <span class="direct-cause-badge status-{{ n.direct_cause_status }}">{{ {'likely': '直接要因の可能性高', 'unlikely': '可能性低', 'direct': '直接要因', 'not_direct': '直接要因でない'}.get(n.direct_cause_status, '') }}</span>
 {%- endif %}
@@ -33,8 +33,21 @@
     </div>
   </div>
 
-  <!-- Toast notification -->
-  <div id="toast" class="toast hidden"></div>
+  <!-- Filter bar -->
+  <div class="filter-bar">
+    <label for="nodeFilterText" class="filter-label">絞り込み</label>
+    <input type="search" id="nodeFilterText" class="filter-input"
+           placeholder="要因名・説明で検索" oninput="applyNodeFilter()">
+    <select id="nodeFilterJudgement" class="filter-select" aria-label="評価で絞り込み" onchange="applyNodeFilter()">
+      <option value="">すべての評価</option>
+      <option value="yes">Yesのみ</option>
+      <option value="no">Noのみ</option>
+      <option value="unknown">未評価のみ</option>
+      <option value="warning">要確認のみ</option>
+    </select>
+    <button type="button" class="btn btn-sm btn-outline" onclick="clearNodeFilter()">クリア</button>
+    <span id="nodeFilterCount" class="filter-count" aria-live="polite"></span>
+  </div>
 
   <!-- FTA Tree Area -->
   <div class="fta-tree-scroll">
@@ -49,7 +62,8 @@
               <div class="node-title-row">
                 <span class="node-level-badge level-0">頂上事象</span>
               </div>
-              <textarea id="topEventInput" class="top-event-textarea" rows="4" placeholder="頂上事象を入力してください">{{ analysis.top_event }}</textarea>
+              <label for="topEventInput" class="visually-hidden">頂上事象</label>
+              <textarea id="topEventInput" class="top-event-textarea" rows="4" placeholder="頂上事象を入力してください" data-saved="{{ analysis.top_event }}">{{ analysis.top_event }}</textarea>
               <div class="node-card-actions">
                 <button class="btn btn-sm btn-primary" onclick="saveTopEvent({{ analysis.id }})">保存</button>
               </div>
@@ -60,10 +74,12 @@
             <button class="btn btn-generate" onclick="generateFactors({{ analysis.id }}, 1)">
               一次要因を生成
             </button>
-            {# TODO: 追加生成（一次要因）
-               既存の一次要因タイトル一覧をLLMに渡し、重複・言い換えを避けながら2〜3件を追加生成する。
-               API: POST /analyses/{id}/generate/level/1 に { additional: true } を渡す想定。
-               実装時はここに <button onclick="generateAdditional(...)">追加生成</button> を追加する。 #}
+            {% if level1_nodes %}
+            <button class="btn btn-sm btn-outline btn-add-gen" onclick="generateAdditional({{ analysis.id }}, null, 1)"
+                    title="既存の一次要因と重複しないよう、一次要因を追加生成します">
+              一次要因を追加生成
+            </button>
+            {% endif %}
             <button class="btn btn-sm btn-outline" onclick="showAddNodeModal({{ analysis.id }}, null, 1)">
               手動追加
             </button>
@@ -81,15 +97,15 @@
               <div class="node-card-header">
                 <span class="node-level-badge level-1">一次</span>
                 {% if node.ai_generated %}<span class="ai-tag">AI</span>{% endif %}
-                {% if node.warning_flags %}<span class="warning-badge" title="{{ node.warning_flags }}">要確認</span>{% endif %}
+                {% if node.warning_flags %}<button type="button" class="warning-badge" title="{{ node.warning_flags }}" onclick="showWarningDetail(this.title)" aria-label="要確認の理由を表示">要確認</button>{% endif %}
                 <div class="node-judgement-buttons">
-                  <button class="judgement-btn yes {{ 'active' if node.user_judgement == 'yes' }}" onclick="setJudgement({{ node.id }}, 'yes')">Yes</button>
-                  <button class="judgement-btn no {{ 'active' if node.user_judgement == 'no' }}" onclick="setJudgement({{ node.id }}, 'no')">No</button>
-                  <button class="judgement-btn unknown {{ 'active' if node.user_judgement == 'unknown' }}" onclick="setJudgement({{ node.id }}, 'unknown')">-</button>
+                  <button class="judgement-btn yes {{ 'active' if node.user_judgement == 'yes' }}" aria-pressed="{{ 'true' if node.user_judgement == 'yes' else 'false' }}" title="この要因はあり得る（Yes評価）" onclick="setJudgement({{ node.id }}, 'yes')">Yes</button>
+                  <button class="judgement-btn no {{ 'active' if node.user_judgement == 'no' }}" aria-pressed="{{ 'true' if node.user_judgement == 'no' else 'false' }}" title="この要因は該当しない（No評価）" onclick="setJudgement({{ node.id }}, 'no')">No</button>
+                  <button class="judgement-btn unknown {{ 'active' if node.user_judgement == 'unknown' }}" aria-pressed="{{ 'true' if node.user_judgement == 'unknown' else 'false' }}" title="未評価に戻す" onclick="setJudgement({{ node.id }}, 'unknown')">未</button>
                 </div>
               </div>
               <div class="node-card-body">
-                <div class="node-title" contenteditable="true" onblur="saveNodeTitle({{ node.id }}, this.textContent)">{{ node.title }}</div>
+                <div class="node-title" contenteditable="true" role="textbox" aria-label="要因タイトル" title="クリックで編集、Enterで確定" onblur="saveNodeTitle({{ node.id }}, this.textContent)">{{ node.title }}</div>
                 <div class="node-desc">{{ node.description }}</div>
                 {% if node.direct_cause_status not in ['unknown', ''] %}
                 <div class="direct-cause-badge status-{{ node.direct_cause_status }}">
@@ -99,10 +115,8 @@
               </div>
               <div class="node-card-footer">
                 <button class="btn btn-xs btn-outline" onclick="openNodeDetail({{ node.id }})">詳細編集</button>
-                {# TODO: 追加生成（一次要因の子 = 二次要因）
-                   この一次要因を親として、既存の子ノード一覧をLLMに渡し重複を避けながら追加生成する。
-                   API: POST /analyses/{id}/generate/level/2 に { parent_id: nodeId, additional: true } を渡す想定。
-                   実装時はここに <button onclick="generateAdditional(analysisId, nodeId, 2)">追加生成</button> を追加する。 #}
+                <button class="btn btn-xs btn-outline btn-add-gen" onclick="generateAdditional({{ analysis.id }}, {{ node.id }}, 2)"
+                        title="この要因の下に二次要因をAIで追加生成します">子を追加生成</button>
                 <button class="btn btn-xs btn-outline" onclick="showAddNodeModal({{ analysis.id }}, {{ node.id }}, 2)">子追加</button>
                 <button class="btn btn-xs btn-danger" onclick="deleteNode({{ node.id }}, {{ analysis.id }})">削除</button>
               </div>
@@ -132,18 +146,18 @@
               <div class="node-card-header">
                 <span class="node-level-badge level-2">二次</span>
                 {% if node.ai_generated %}<span class="ai-tag">AI</span>{% endif %}
-                {% if node.warning_flags %}<span class="warning-badge" title="{{ node.warning_flags }}">要確認</span>{% endif %}
+                {% if node.warning_flags %}<button type="button" class="warning-badge" title="{{ node.warning_flags }}" onclick="showWarningDetail(this.title)" aria-label="要確認の理由を表示">要確認</button>{% endif %}
                 <div class="node-judgement-buttons">
-                  <button class="judgement-btn yes {{ 'active' if node.user_judgement == 'yes' }}" onclick="setJudgement({{ node.id }}, 'yes')">Yes</button>
-                  <button class="judgement-btn no {{ 'active' if node.user_judgement == 'no' }}" onclick="setJudgement({{ node.id }}, 'no')">No</button>
-                  <button class="judgement-btn unknown {{ 'active' if node.user_judgement == 'unknown' }}" onclick="setJudgement({{ node.id }}, 'unknown')">-</button>
+                  <button class="judgement-btn yes {{ 'active' if node.user_judgement == 'yes' }}" aria-pressed="{{ 'true' if node.user_judgement == 'yes' else 'false' }}" title="この要因はあり得る（Yes評価）" onclick="setJudgement({{ node.id }}, 'yes')">Yes</button>
+                  <button class="judgement-btn no {{ 'active' if node.user_judgement == 'no' }}" aria-pressed="{{ 'true' if node.user_judgement == 'no' else 'false' }}" title="この要因は該当しない（No評価）" onclick="setJudgement({{ node.id }}, 'no')">No</button>
+                  <button class="judgement-btn unknown {{ 'active' if node.user_judgement == 'unknown' }}" aria-pressed="{{ 'true' if node.user_judgement == 'unknown' else 'false' }}" title="未評価に戻す" onclick="setJudgement({{ node.id }}, 'unknown')">未</button>
                 </div>
               </div>
               {% if parent %}
               <div class="parent-label">← {{ parent.title }}</div>
               {% endif %}
               <div class="node-card-body">
-                <div class="node-title" contenteditable="true" onblur="saveNodeTitle({{ node.id }}, this.textContent)">{{ node.title }}</div>
+                <div class="node-title" contenteditable="true" role="textbox" aria-label="要因タイトル" title="クリックで編集、Enterで確定" onblur="saveNodeTitle({{ node.id }}, this.textContent)">{{ node.title }}</div>
                 <div class="node-desc">{{ node.description }}</div>
                 {% if node.direct_cause_status not in ['unknown', ''] %}
                 <div class="direct-cause-badge status-{{ node.direct_cause_status }}">
@@ -153,10 +167,8 @@
               </div>
               <div class="node-card-footer">
                 <button class="btn btn-xs btn-outline" onclick="openNodeDetail({{ node.id }})">詳細編集</button>
-                {# TODO: 追加生成（二次要因の子 = 三次要因）
-                   この二次要因を親として、既存の子ノード一覧をLLMに渡し重複を避けながら追加生成する。
-                   API: POST /analyses/{id}/generate/level/3 に { parent_id: nodeId, additional: true } を渡す想定。
-                   実装時はここに <button onclick="generateAdditional(analysisId, nodeId, 3)">追加生成</button> を追加する。 #}
+                <button class="btn btn-xs btn-outline btn-add-gen" onclick="generateAdditional({{ analysis.id }}, {{ node.id }}, 3)"
+                        title="この要因の下に三次要因をAIで追加生成します">子を追加生成</button>
                 <button class="btn btn-xs btn-outline" onclick="showAddNodeModal({{ analysis.id }}, {{ node.id }}, 3)">子追加</button>
                 <button class="btn btn-xs btn-danger" onclick="deleteNode({{ node.id }}, {{ analysis.id }})">削除</button>
               </div>
@@ -186,18 +198,18 @@
               <div class="node-card-header">
                 <span class="node-level-badge level-3">三次</span>
                 {% if node.ai_generated %}<span class="ai-tag">AI</span>{% endif %}
-                {% if node.warning_flags %}<span class="warning-badge" title="{{ node.warning_flags }}">要確認</span>{% endif %}
+                {% if node.warning_flags %}<button type="button" class="warning-badge" title="{{ node.warning_flags }}" onclick="showWarningDetail(this.title)" aria-label="要確認の理由を表示">要確認</button>{% endif %}
                 <div class="node-judgement-buttons">
-                  <button class="judgement-btn yes {{ 'active' if node.user_judgement == 'yes' }}" onclick="setJudgement({{ node.id }}, 'yes')">Yes</button>
-                  <button class="judgement-btn no {{ 'active' if node.user_judgement == 'no' }}" onclick="setJudgement({{ node.id }}, 'no')">No</button>
-                  <button class="judgement-btn unknown {{ 'active' if node.user_judgement == 'unknown' }}" onclick="setJudgement({{ node.id }}, 'unknown')">-</button>
+                  <button class="judgement-btn yes {{ 'active' if node.user_judgement == 'yes' }}" aria-pressed="{{ 'true' if node.user_judgement == 'yes' else 'false' }}" title="この要因はあり得る（Yes評価）" onclick="setJudgement({{ node.id }}, 'yes')">Yes</button>
+                  <button class="judgement-btn no {{ 'active' if node.user_judgement == 'no' }}" aria-pressed="{{ 'true' if node.user_judgement == 'no' else 'false' }}" title="この要因は該当しない（No評価）" onclick="setJudgement({{ node.id }}, 'no')">No</button>
+                  <button class="judgement-btn unknown {{ 'active' if node.user_judgement == 'unknown' }}" aria-pressed="{{ 'true' if node.user_judgement == 'unknown' else 'false' }}" title="未評価に戻す" onclick="setJudgement({{ node.id }}, 'unknown')">未</button>
                 </div>
               </div>
               {% if parent %}
               <div class="parent-label">← {{ parent.title }}</div>
               {% endif %}
               <div class="node-card-body">
-                <div class="node-title" contenteditable="true" onblur="saveNodeTitle({{ node.id }}, this.textContent)">{{ node.title }}</div>
+                <div class="node-title" contenteditable="true" role="textbox" aria-label="要因タイトル" title="クリックで編集、Enterで確定" onblur="saveNodeTitle({{ node.id }}, this.textContent)">{{ node.title }}</div>
                 <div class="node-desc">{{ node.description }}</div>
                 {% if node.direct_cause_status not in ['unknown', ''] %}
                 <div class="direct-cause-badge status-{{ node.direct_cause_status }}">
@@ -266,35 +278,75 @@
       </ul>
     </div>
     </details>
+
+    <details id="ftaTableDetails" class="fta-tree-details">
+      <summary class="fta-tree-summary">一覧表表示</summary>
+      <div class="fta-table-wrap">
+        {% if nodes %}
+        <table class="node-table">
+          <thead>
+            <tr>
+              <th scope="col">階層</th>
+              <th scope="col">要因</th>
+              <th scope="col">親要因</th>
+              <th scope="col">評価</th>
+              <th scope="col">直接要因評価</th>
+              <th scope="col">要確認</th>
+              <th scope="col">説明</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for n in nodes %}
+            <tr>
+              <td><span class="node-level-badge level-{{ n.level }}">{{ ['', '一次', '二次', '三次'][n.level] }}</span></td>
+              <td class="node-table-title">{{ n.title }}{% if n.ai_generated %} <span class="ai-tag">AI</span>{% endif %}</td>
+              <td class="node-table-parent">{{ node_map.get(n.parent_id).title if n.parent_id and node_map.get(n.parent_id) else '（頂上事象）' }}</td>
+              <td><span class="tree-judgement tree-judgement-{{ n.user_judgement }}">{{ {'yes': 'Yes', 'no': 'No', 'unknown': '未評価'}.get(n.user_judgement, n.user_judgement) }}</span></td>
+              <td>{{ {'likely': '可能性高', 'unlikely': '可能性低', 'direct': '直接要因', 'not_direct': '直接要因でない'}.get(n.direct_cause_status, '-') }}</td>
+              <td class="node-table-warning">{{ n.warning_flags or '-' }}</td>
+              <td class="node-table-desc">{{ n.description }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <p class="tree-empty-msg">要因がまだありません。</p>
+        {% endif %}
+      </div>
+    </details>
   </div><!-- end fta-tree-view-section -->
 </div>
 
 <!-- Node Detail Modal -->
-<div id="nodeDetailModal" class="modal hidden">
+<div id="nodeDetailModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="nodeDetailModalTitle">
   <div class="modal-backdrop" onclick="closeNodeDetail()"></div>
   <div class="modal-content">
     <div class="modal-header">
-      <h2>ノード詳細編集</h2>
-      <button class="modal-close" onclick="closeNodeDetail()">×</button>
+      <h2 id="nodeDetailModalTitle">ノード詳細編集</h2>
+      <button class="modal-close" onclick="closeNodeDetail()" aria-label="閉じる">×</button>
     </div>
     <div class="modal-body">
       <input type="hidden" id="modalNodeId">
+      <div id="modalWarningRow" class="modal-warning-row" hidden>
+        <span class="warning-badge">要確認</span>
+        <span id="modalWarningText"></span>
+      </div>
       <div class="form-group">
-        <label>要因タイトル</label>
+        <label for="modalTitle">要因タイトル <span class="required">*</span></label>
         <input type="text" id="modalTitle" class="form-input">
       </div>
       <div class="form-group">
-        <label>説明</label>
+        <label for="modalDescription">説明</label>
         <textarea id="modalDescription" rows="3" class="form-input"></textarea>
       </div>
       <div class="form-group">
-        <label>メモ</label>
+        <label for="modalMemo">メモ</label>
         <textarea id="modalMemo" rows="2" class="form-input"></textarea>
       </div>
       <hr>
       <h3>直接要因評価</h3>
       <div class="form-group">
-        <label>ステータス</label>
+        <label for="modalDirectStatus">ステータス</label>
         <select id="modalDirectStatus" class="form-input">
           <option value="unknown">未評価</option>
           <option value="likely">直接要因の可能性が高い</option>
@@ -304,43 +356,43 @@
         </select>
       </div>
       <div class="form-group">
-        <label>評価コメント</label>
+        <label for="modalDirectComment">評価コメント</label>
         <textarea id="modalDirectComment" rows="2" class="form-input"></textarea>
       </div>
       <div class="form-group">
-        <label>根拠</label>
+        <label for="modalEvidence">根拠</label>
         <textarea id="modalEvidence" rows="2" class="form-input"></textarea>
       </div>
       <div class="form-group">
-        <label>再発防止策の候補</label>
+        <label for="modalPrevention">再発防止策の候補</label>
         <textarea id="modalPrevention" rows="2" class="form-input"></textarea>
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeNodeDetail()">キャンセル</button>
-      <button class="btn btn-primary" onclick="saveNodeDetail()">保存</button>
+      <button class="btn btn-primary" id="modalSaveBtn" onclick="saveNodeDetail()">保存</button>
     </div>
   </div>
 </div>
 
 <!-- Add Node Modal -->
-<div id="addNodeModal" class="modal hidden">
+<div id="addNodeModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="addNodeModalTitle">
   <div class="modal-backdrop" onclick="closeAddNodeModal()"></div>
   <div class="modal-content modal-sm">
     <div class="modal-header">
-      <h2>要因を手動追加</h2>
-      <button class="modal-close" onclick="closeAddNodeModal()">×</button>
+      <h2 id="addNodeModalTitle">要因を手動追加</h2>
+      <button class="modal-close" onclick="closeAddNodeModal()" aria-label="閉じる">×</button>
     </div>
     <div class="modal-body">
       <input type="hidden" id="addNodeAnalysisId">
       <input type="hidden" id="addNodeParentId">
       <input type="hidden" id="addNodeLevel">
       <div class="form-group">
-        <label>要因タイトル <span class="required">*</span></label>
+        <label for="addNodeTitle">要因タイトル <span class="required">*</span></label>
         <input type="text" id="addNodeTitle" class="form-input" placeholder="要因のタイトルを入力">
       </div>
       <div class="form-group">
-        <label>説明</label>
+        <label for="addNodeDescription">説明</label>
         <textarea id="addNodeDescription" rows="2" class="form-input" placeholder="説明（任意）"></textarea>
       </div>
     </div>
@@ -363,17 +415,22 @@
 <script>
 const ANALYSIS_ID = {{ analysis.id }};
 
-// FTA tree details: restore/persist open state via localStorage
+// Tree / table details: restore/persist open state via localStorage
 (function() {
-  const details = document.getElementById('ftaTreeDetails');
-  if (!details) return;
-  const key = 'ftaTreeOpen_' + ANALYSIS_ID;
-  if (localStorage.getItem(key) === 'true') {
-    details.open = true;
+  const sections = [
+    ['ftaTreeDetails', 'ftaTreeOpen_' + ANALYSIS_ID],
+    ['ftaTableDetails', 'ftaTableOpen_' + ANALYSIS_ID],
+  ];
+  for (const [id, key] of sections) {
+    const details = document.getElementById(id);
+    if (!details) continue;
+    if (localStorage.getItem(key) === 'true') {
+      details.open = true;
+    }
+    details.addEventListener('toggle', () => {
+      localStorage.setItem(key, details.open ? 'true' : 'false');
+    });
   }
-  details.addEventListener('toggle', () => {
-    localStorage.setItem(key, details.open ? 'true' : 'false');
-  });
 })();
 </script>
 {% endblock %}

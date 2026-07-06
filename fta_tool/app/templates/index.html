@@ -33,6 +33,7 @@
           <a href="/analyses/{{ a.id }}/export/json" class="btn btn-sm btn-outline">JSON</a>
           <a href="/analyses/{{ a.id }}/export/csv" class="btn btn-sm btn-outline">CSV</a>
           <a href="/analyses/{{ a.id }}/export/markdown" class="btn btn-sm btn-outline">MD</a>
+          <button type="button" class="btn btn-sm btn-danger" onclick="deleteAnalysis({{ a.id }}, {{ a.title | tojson }})">削除</button>
         </td>
       </tr>
       {% endfor %}
@@ -40,7 +41,8 @@
   </table>
   {% else %}
   <div class="empty-state">
-    <p>分析がまだありません。「新規分析を作成」から始めてください。</p>
+    <p>分析がまだありません。最初のFTA分析を作成しましょう。</p>
+    <a href="/analyses/new" class="btn btn-primary">＋ 新規分析を作成</a>
   </div>
   {% endif %}
 </div>

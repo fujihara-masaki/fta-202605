@@ -4,9 +4,12 @@ FTA（フォルトツリー解析）を支援するWebアプリケーション�
 
 ## 機能
 
-- **FTA分析の作成・管理**: 分析タイトルと頂上事象を設定して分析を作成
+- **FTA分析の作成・管理**: 分析タイトルと頂上事象を設定して分析を作成・削除
 - **AIによる要因生成**: 一次・二次・三次要因をAIが自動提案
+- **追加生成**: 既存要因と重複しないよう、一次要因・各要因の子要因をAIで追加生成
 - **インタラクティブなツリー編集**: 横並びカラムでFTAツリーを直感的に編集
+- **検索・フィルタ**: 要因名・説明のテキスト検索、評価（Yes/No/未評価/要確認）での絞り込み
+- **ツリー表示・一覧表表示**: カード編集ビューに加えて、階層ツリーと表形式の一覧を併設
 - **Yes/No評価**: 各要因に対してユーザが妥当性を評価
 - **直接要因評価**: 要因ごとに根拠・防止策・コメントを記録
 - **エクスポート**: JSON / CSV / Markdown形式で出力
@@ -339,9 +342,11 @@ SQLite (`fta_tool.db`) をローカルに自動生成します。テーブルは
 | GET | `/analyses/new` | 新規作成フォーム |
 | POST | `/analyses` | 分析作成 |
 | GET | `/analyses/{id}` | 分析詳細・編集 |
+| POST | `/analyses/{id}/delete` | 分析削除（配下の要因も削除） |
 | POST | `/analyses/{id}/top-event` | 頂上事象更新 |
-| POST | `/analyses/{id}/generate/level/{level}` | AI要因生成 |
+| POST | `/analyses/{id}/generate/level/{level}` | AI要因生成（`{"additional": true}` で追加生成） |
 | POST | `/analyses/{id}/nodes/add-level1` | 一次要因手動追加 |
+| GET | `/nodes/{id}` | ノード詳細取得（詳細編集モーダル用） |
 | POST | `/nodes/{id}/update` | ノード更新 |
 | POST | `/nodes/{id}/delete` | ノード削除 |
 | POST | `/nodes/{id}/children` | 子ノード追加 |
