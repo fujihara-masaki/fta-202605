@@ -433,6 +433,16 @@ async function setJudgement(nodeId, judgement) {
           btn.setAttribute('aria-pressed', active ? 'true' : 'false');
         });
       }
+      // Keep the table view row in sync (judgement chip + filter data).
+      const row = document.querySelector(`.node-table-row[data-node-id="${nodeId}"]`);
+      if (row) {
+        row.dataset.judgement = judgement;
+        const chip = row.querySelector('.tree-judgement');
+        if (chip) {
+          chip.className = `tree-judgement tree-judgement-${judgement}`;
+          chip.textContent = ({ yes: 'Yes', no: 'No', unknown: '未評価' })[judgement] || judgement;
+        }
+      }
       applyNodeFilter();
       showToast('評価を更新しました');
     } else {
@@ -646,6 +656,8 @@ async function submitAddNode() {
 }
 
 // ===== Node filter (search / judgement) =====
+// Applies to both representations of the same node set: the card columns and
+// the table view rows, so the two never show a different subset.
 function applyNodeFilter() {
   const textInput = document.getElementById('nodeFilterText');
   const judgeSelect = document.getElementById('nodeFilterJudgement');
@@ -656,23 +668,33 @@ function applyNodeFilter() {
   const cards = document.querySelectorAll('.node-card[data-node-id]');
   let visible = 0;
 
+  const matchesFilter = (haystack, judgement, hasWarning) => {
+    if (text && !haystack.includes(text)) return false;
+    if (!judge) return true;
+    if (judge === 'warning') return hasWarning;
+    return judgement === judge;
+  };
+
   cards.forEach((card) => {
     const titleEl = card.querySelector('.node-title');
     const descEl = card.querySelector('.node-desc');
     const haystack = (
       (titleEl ? titleEl.textContent : '') + ' ' + (descEl ? descEl.textContent : '')
     ).toLowerCase();
-
-    let matches = !text || haystack.includes(text);
-    if (matches && judge) {
-      if (judge === 'warning') {
-        matches = !!card.querySelector('.warning-badge');
-      } else {
-        matches = card.classList.contains(judge);
-      }
-    }
+    const judgement = ['yes', 'no', 'unknown'].find((j) => card.classList.contains(j)) || '';
+    const matches = matchesFilter(haystack, judgement, !!card.querySelector('.warning-badge'));
     card.classList.toggle('filter-hidden', !matches);
     if (matches) visible++;
+  });
+
+  document.querySelectorAll('.node-table-row').forEach((row) => {
+    const titleEl = row.querySelector('.node-table-title-text');
+    const descEl = row.querySelector('.node-table-desc');
+    const haystack = (
+      (titleEl ? titleEl.textContent : '') + ' ' + (descEl ? descEl.textContent : '')
+    ).toLowerCase();
+    const matches = matchesFilter(haystack, row.dataset.judgement || '', row.dataset.warning === '1');
+    row.classList.toggle('filter-hidden', !matches);
   });
 
   const countEl = document.getElementById('nodeFilterCount');

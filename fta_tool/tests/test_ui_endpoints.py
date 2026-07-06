@@ -122,6 +122,64 @@ def test_detail_roundtrip_preserves_saved_fields(client):
     assert after["evidence"] == "根拠A"
 
 
+# --- POST /nodes/{id}/delete (subtree cascade) ------------------------------
+
+def _remaining_node_ids(client):
+    db = client.SessionLocal()
+    try:
+        return {n.id for n in crud.get_nodes_by_analysis(db, client.analysis_id)}
+    finally:
+        db.close()
+
+
+def test_delete_level1_node_cascades_to_level2_and_level3(client):
+    """UIの「子要因もすべて削除されます」どおり、子孫が再帰削除されること。"""
+    l1 = _add_node(client, "一次要因A")
+    l2 = _add_node(client, "二次要因A1", level=2, parent_id=l1)
+    l3 = _add_node(client, "三次要因A1a", level=3, parent_id=l2)
+    sibling = _add_node(client, "一次要因B")  # unrelated branch must survive
+
+    res = client.post(f"/nodes/{l1}/delete")
+    assert res.status_code == 200
+    assert res.json() == {"success": True}
+
+    remaining = _remaining_node_ids(client)
+    assert {l1, l2, l3} & remaining == set()
+    assert sibling in remaining
+
+
+def test_delete_level2_node_cascades_to_level3(client):
+    l1 = _add_node(client, "一次要因A")
+    l2 = _add_node(client, "二次要因A1", level=2, parent_id=l1)
+    l3a = _add_node(client, "三次要因A1a", level=3, parent_id=l2)
+    l3b = _add_node(client, "三次要因A1b", level=3, parent_id=l2)
+
+    res = client.post(f"/nodes/{l2}/delete")
+    assert res.status_code == 200
+
+    remaining = _remaining_node_ids(client)
+    assert {l2, l3a, l3b} & remaining == set()
+    assert l1 in remaining  # the parent itself is untouched
+
+
+def test_delete_node_leaves_no_orphans(client):
+    """削除後に parent_id が失われた孤児ノードが残らないこと。"""
+    l1 = _add_node(client, "一次要因A")
+    l2 = _add_node(client, "二次要因A1", level=2, parent_id=l1)
+    _add_node(client, "三次要因A1a", level=3, parent_id=l2)
+
+    client.post(f"/nodes/{l1}/delete")
+
+    db = client.SessionLocal()
+    try:
+        nodes = crud.get_nodes_by_analysis(db, client.analysis_id)
+        orphans = [n for n in nodes if n.level > 1 and n.parent_id is None]
+        assert orphans == []
+        assert nodes == []
+    finally:
+        db.close()
+
+
 # --- POST /analyses/{id}/delete --------------------------------------------
 
 def test_delete_analysis_removes_analysis_and_nodes(client):

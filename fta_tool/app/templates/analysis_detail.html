@@ -10,7 +10,7 @@
 <span class="direct-cause-badge status-{{ n.direct_cause_status }}">{{ {'likely': '直接要因の可能性高', 'unlikely': '可能性低', 'direct': '直接要因', 'not_direct': '直接要因でない'}.get(n.direct_cause_status, '') }}</span>
 {%- endif %}
 {%- if n.ai_generated %}<span class="ai-tag">AI</span>{% endif %}
-{%- if n.warning_flags %}<span class="warning-badge" title="{{ n.warning_flags }}">要確認</span>{% endif %}
+{%- if n.warning_flags %}<button type="button" class="warning-badge" title="{{ n.warning_flags }}" onclick="showWarningDetail(this.title)" aria-label="要確認の理由を表示">要確認</button>{% endif %}
 {%- endmacro %}
 
 {% block content %}
@@ -35,7 +35,7 @@
 
   <!-- Filter bar -->
   <div class="filter-bar">
-    <label for="nodeFilterText" class="filter-label">絞り込み</label>
+    <label for="nodeFilterText" class="filter-label">絞り込み（カード・一覧表）</label>
     <input type="search" id="nodeFilterText" class="filter-input"
            placeholder="要因名・説明で検索" oninput="applyNodeFilter()">
     <select id="nodeFilterJudgement" class="filter-select" aria-label="評価で絞り込み" onchange="applyNodeFilter()">
@@ -297,9 +297,9 @@
           </thead>
           <tbody>
             {% for n in nodes %}
-            <tr>
+            <tr class="node-table-row" data-node-id="{{ n.id }}" data-judgement="{{ n.user_judgement }}" data-warning="{{ '1' if n.warning_flags else '' }}">
               <td><span class="node-level-badge level-{{ n.level }}">{{ ['', '一次', '二次', '三次'][n.level] }}</span></td>
-              <td class="node-table-title">{{ n.title }}{% if n.ai_generated %} <span class="ai-tag">AI</span>{% endif %}</td>
+              <td class="node-table-title"><span class="node-table-title-text">{{ n.title }}</span>{% if n.ai_generated %} <span class="ai-tag">AI</span>{% endif %}</td>
               <td class="node-table-parent">{{ node_map.get(n.parent_id).title if n.parent_id and node_map.get(n.parent_id) else '（頂上事象）' }}</td>
               <td><span class="tree-judgement tree-judgement-{{ n.user_judgement }}">{{ {'yes': 'Yes', 'no': 'No', 'unknown': '未評価'}.get(n.user_judgement, n.user_judgement) }}</span></td>
               <td>{{ {'likely': '可能性高', 'unlikely': '可能性低', 'direct': '直接要因', 'not_direct': '直接要因でない'}.get(n.direct_cause_status, '-') }}</td>

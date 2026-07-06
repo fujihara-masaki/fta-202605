@@ -44,8 +44,12 @@ class Node(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     analysis = relationship("Analysis", back_populates="nodes")
+    # cascade: deleting a node must delete its whole subtree (the UI promises
+    # 「子要因もすべて削除されます」). Without it SQLAlchemy nulls the
+    # children's parent_id and leaves them orphaned.
     children = relationship(
         "Node",
         backref=backref("parent", remote_side=[id]),
         foreign_keys=[parent_id],
+        cascade="all, delete-orphan",
     )
