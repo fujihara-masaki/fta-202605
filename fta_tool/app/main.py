@@ -757,7 +757,38 @@ async def generate_factors(
     })
 
 
+@app.post("/analyses/{analysis_id}/delete")
+def delete_analysis(analysis_id: int, db: Session = Depends(get_db)):
+    analysis = crud.delete_analysis(db, analysis_id)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="分析が見つかりません")
+    return {"success": True}
+
+
 # --- Node endpoints ---
+
+@app.get("/nodes/{node_id}")
+def get_node_detail(node_id: int, db: Session = Depends(get_db)):
+    node = crud.get_node(db, node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="ノードが見つかりません")
+    return {
+        "id": node.id,
+        "analysis_id": node.analysis_id,
+        "parent_id": node.parent_id,
+        "level": node.level,
+        "title": node.title,
+        "description": node.description or "",
+        "memo": node.memo or "",
+        "user_judgement": node.user_judgement,
+        "direct_cause_status": node.direct_cause_status,
+        "direct_cause_comment": node.direct_cause_comment or "",
+        "evidence": node.evidence or "",
+        "prevention_idea": node.prevention_idea or "",
+        "warning_flags": node.warning_flags or "",
+        "ai_generated": node.ai_generated,
+    }
+
 
 @app.post("/nodes/{node_id}/update")
 async def update_node(node_id: int, request: Request, db: Session = Depends(get_db)):

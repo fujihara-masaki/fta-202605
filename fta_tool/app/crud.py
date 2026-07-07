@@ -44,6 +44,14 @@ def update_top_event(db: Session, analysis_id: int, top_event: str):
     return db_analysis
 
 
+def delete_analysis(db: Session, analysis_id: int):
+    db_analysis = get_analysis(db, analysis_id)
+    if db_analysis:
+        db.delete(db_analysis)
+        db.commit()
+    return db_analysis
+
+
 def get_nodes_by_analysis(db: Session, analysis_id: int):
     return (
         db.query(models.Node)
