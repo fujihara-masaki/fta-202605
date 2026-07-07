@@ -4,6 +4,9 @@
 function showToast(message, type = 'success') {
   const toast = document.getElementById('toast');
   if (!toast) return;
+  // Any ordinary toast replaces a warning-detail one, so the badge-toggle
+  // state must not survive it (see showWarningDetail).
+  delete toast.dataset.warningDetail;
   toast.textContent = message;
   toast.className = `toast ${type}`;
   // Warnings (e.g. all candidates excluded) carry a longer reason note, so
@@ -11,6 +14,14 @@ function showToast(message, type = 'success') {
   const duration = type === 'warning' ? 6000 : 3000;
   clearTimeout(toast._hideTimer);
   toast._hideTimer = setTimeout(() => { toast.className = 'toast hidden'; }, duration);
+}
+
+function hideToast() {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  clearTimeout(toast._hideTimer);
+  delete toast.dataset.warningDetail;
+  toast.className = 'toast hidden';
 }
 
 // ===== Reload with scroll restore =====
@@ -490,10 +501,23 @@ async function deleteNode(nodeId, analysisId) {
 
 // ===== Warning flags =====
 // The badge tooltip is hover-only; clicking (or Enter on) the badge shows the
-// full reason so touch/keyboard users can read it too.
+// full reason so touch/keyboard users can read it too. Clicking the badge
+// again while its reason is on screen hides it (toggle); clicking a badge
+// with a different reason switches the toast to that reason. Ordinary
+// success/error/warning toasts are unaffected: showToast clears the
+// warning-detail marker, so they always behave as before.
 function showWarningDetail(flags) {
   if (!flags) return;
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  const isVisible = !toast.classList.contains('hidden');
+  if (isVisible && toast.dataset.warningDetail === flags) {
+    hideToast();
+    return;
+  }
   showToast(`要確認の理由: ${flags}`, 'warning');
+  // Set after showToast (which clears it) to mark this as a badge toast.
+  toast.dataset.warningDetail = flags;
 }
 
 // ===== Node Detail Modal =====
