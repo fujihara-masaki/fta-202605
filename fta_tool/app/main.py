@@ -572,7 +572,7 @@ async def generate_factors(
             # Rule-based quality check (provider-agnostic, pure):
             # parent paraphrase / No-rated similar → exclude;
             # analysis-wide similar / generic / long → save with warning_flags.
-            # Shared with the planned LangGraph workflow (Step 2-A extraction).
+            # Shared with the LangGraph workflow (extracted in Step 2-0).
             ec = evaluate_candidate(
                 factor,
                 parent_factor=parent_factor,

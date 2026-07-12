@@ -1,0 +1,8 @@
+INFO:app.main:dotenv loaded: C:\work\fta space dir\fta_tool\.env
+INFO:     Application startup complete.
+INFO:app.services.generation_workflow:langgraph run start | quality_gate=False threshold=0.70 max_retries=1 level=1 parent_id=None parent='(top event)'
+INFO:app.services.generation_workflow:langgraph decide | decision=accept basis=- severity=- outcome=created quality_gate=False quality_score=0.00 threshold=0.70 warnings=0 critical_count=0 critical=False retry_count=0 max_retries=1
+INFO:app.main:generate_factors summary | analysis=1 level=1 parent='(top event)' limit=4 ai_returned=4 created=4 excluded_quality=0 skipped_dedup=0 elapsed=30000ms
+INFO:app.main:generate_factors workflow | analysis=1 level=1 langgraph=True quality_gate=False mode=langgraph decisions=accept regenerated=False retries=0 outcome=created created=4 elapsed_ms=30000
+This is a stray non key=value line that an old log might contain
+INFO:app.main:generate_factors workflow | analysis=1 level=2 langgraph=True quality_gate=False mode=langgraph decisions=accept,accept regenerated=False retries=0 outcome=created created=6 elapsed_ms=35000

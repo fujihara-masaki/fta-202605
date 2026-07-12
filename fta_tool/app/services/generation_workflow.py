@@ -37,11 +37,13 @@ Quality judgement is NOT reimplemented here — it reuses the pure functions
 extracted in Step 2-0 (``evaluate_candidates`` / ``classify_outcome``), and
 structure validation reuses the Pydantic contract in ``llm_models``.
 
-Regeneration currently replaces the WHOLE candidate list (the provider is
-asked to avoid the previous attempt's titles).  The per-attempt records in
-``state["attempts"]`` keep each attempt's kept/excluded split, so a future
-step can regenerate only the low-quality part without changing the graph
-shape (see ``regenerate_candidates``).
+Regeneration (Step 3.5): with the quality gate ON, only the problematic part
+is regenerated — usable candidates (``regen_keep``) are carried over and the
+shortfall is filled from the provider's answer.  With the gate OFF the whole
+candidate list is regenerated (Step 2-1 behaviour, unchanged).  The
+per-attempt records in ``state["attempts"]`` keep each attempt's
+kept/excluded split so finalize can adopt the usable part of the best
+attempt (see ``regenerate_candidates`` / ``finalize_result``).
 
 ``langgraph`` is imported at module import time, but this module is itself
 imported lazily by main.py only when ENABLE_LANGGRAPH_GENERATION_WORKFLOW is on,

@@ -1,0 +1,29 @@
+{
+  "success": true,
+  "message": "4件の要因を生成しました",
+  "created": 4,
+  "skipped": 0,
+  "elapsed_ms": 39500,
+  "parent_id": null,
+  "quality_summary": {
+    "scored_count": 4,
+    "average_overall_score": 85,
+    "judgment_counts": {"pass": 3, "warning": 1, "retry_recommended": 0, "fail": 0},
+    "ai_returned": 4,
+    "created": 4,
+    "excluded": 0,
+    "excluded_by_quality": 0,
+    "excluded_by_dedup": 0,
+    "all_candidates_excluded": false,
+    "outcome": "created",
+    "reason_summary": [],
+    "workflow": "langgraph",
+    "regenerated": true,
+    "retry_count": 1,
+    "workflow_error": null,
+    "quality_gate": true,
+    "decisions": ["accept_with_warning"],
+    "rejected_by_gate": 0,
+    "regenerated_created": 1
+  }
+}

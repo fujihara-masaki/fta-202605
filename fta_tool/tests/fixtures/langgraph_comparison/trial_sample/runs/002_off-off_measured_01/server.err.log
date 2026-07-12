@@ -1,0 +1,22 @@
+INFO:app.main:dotenv loaded: C:\work\fta space dir\fta_tool\.env
+INFO:app.main:=== FTA Tool startup configuration ===
+INFO:app.main:  AI_PROVIDER                = ollama
+INFO:app.main:  ENABLE_LANGGRAPH_GENERATION_WORKFLOW = false
+INFO:app.main:  ENABLE_LANGGRAPH_QUALITY_GATE = false
+INFO:app.main:=======================================
+INFO:     Application startup complete.
+INFO:app.services.ai_provider:Ollama request | url=http://localhost:11434/api/chat payload_model=gemma3:4b timeout=180s keep_alive=10m level=1 parent=(top event)
+INFO:app.services.ai_provider:generation_start | model=gemma3:4b level=1 parent='(top event)' attempt=0/1
+INFO:app.services.ai_provider:generation_metrics | {"model_name": "gemma3:4b", "level": 1, "parent": null, "start_time": "2026-07-12T01:01:15+00:00", "end_time": "2026-07-12T01:01:35+00:00", "elapsed_ms": 20000, "success": true, "retries": 0, "error": null, "total_duration": 19800000000, "load_duration": 500000000, "prompt_eval_count": 900, "prompt_eval_duration": 4000000000, "eval_count": 350, "eval_duration": 15000000000}
+INFO:app.services.ai_provider:generation_success | model=gemma3:4b level=1 parent='(top event)' raw=4 attempt=0 elapsed_ms=20000
+INFO:app.services.ai_provider:Ollama generation | model=gemma3:4b level=1 parent='(top event)' limit=4 raw=4 filtered_out=0 kept=4
+INFO:app.main:quality exclude | level=1 parent='(top event)' title='公開Webシステムにアクセスできない' reason=親要因「公開Webシステムにアクセスできない」の言い換え score=40 judgment=fail
+INFO:app.main:quality warning | level=1 parent='(top event)' title='DNSの名前解決失敗' warnings=既存要因「外部DNSの障害」に類似 score=75 judgment=warning
+INFO:app.main:generate_factors summary | analysis=1 level=1 parent='(top event)' limit=4 ai_returned=4 created=3 excluded_quality=1 skipped_dedup=0 elapsed=21000ms
+INFO:app.main:generate_factors workflow | analysis=1 level=1 langgraph=False quality_gate=False mode=legacy decisions=- regenerated=False retries=0 rejected_by_gate=0 regenerated_created=0 outcome=partial created=3 elapsed_ms=21000
+INFO:app.services.ai_provider:generation_metrics | {"model_name": "gemma3:4b", "level": 2, "parent": "DNSの名前解決失敗", "start_time": "2026-07-12T01:01:40+00:00", "end_time": "2026-07-12T01:01:55+00:00", "elapsed_ms": 15000, "success": true, "retries": 0, "error": null, "total_duration": 14800000000, "load_duration": 100000000, "prompt_eval_count": 1100, "prompt_eval_duration": 3500000000, "eval_count": 280, "eval_duration": 11000000000}
+INFO:app.main:generate_factors summary | analysis=1 level=2 parent='DNSの名前解決失敗' limit=3 ai_returned=3 created=3 excluded_quality=0 skipped_dedup=0 elapsed=16000ms
+INFO:app.services.ai_provider:generation_metrics | {"model_name": "gemma3:4b", "level": 2, "parent": "ファイアウォール設定変更の影響", "start_time": "2026-07-12T01:02:00+00:00", "end_time": "2026-07-12T01:02:16+00:00", "elapsed_ms": 16000, "success": true, "retries": 0, "error": null, "total_duration": 15900000000, "load_duration": 100000000, "prompt_eval_count": 1150, "prompt_eval_duration": 3600000000, "eval_count": 300, "eval_duration": 12000000000}
+INFO:app.main:dedup skip | level=2 parent='ファイアウォール設定変更の影響' title='通信許可ルールの誤削除' (already in DB)
+INFO:app.main:generate_factors summary | analysis=1 level=2 parent='ファイアウォール設定変更の影響' limit=3 ai_returned=3 created=2 excluded_quality=0 skipped_dedup=1 elapsed=17000ms
+INFO:app.main:generate_factors workflow | analysis=1 level=2 langgraph=False quality_gate=False mode=legacy decisions=- regenerated=False retries=0 rejected_by_gate=0 regenerated_created=0 outcome=partial created=5 elapsed_ms=34000

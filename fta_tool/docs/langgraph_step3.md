@@ -53,10 +53,12 @@ START
   （保存件数 → 品質スコア → 新しい試行の順で比較）の候補を採用します。
 - 各ノードはロギング＋計測＋例外ガードでラップされており、ノード内の想定外例外は
   `error` 状態に変換され fail_soft で終端します（リクエスト全体は落ちません）。
-- 再生成は現状「全体再生成」ですが、試行ごとの記録（`state["attempts"]`）に
-  `kept_titles` / `excluded_titles` / `reasons`（除外理由ラベル）/ `warning_count` を
-  保持しているため、低品質部分のみの部分再生成へグラフ形状を変えずに拡張できます
-  （`regenerate_candidates` の docstring 参照）。
+- 再生成は、ゲートOFF時は「全体再生成」（Step 2-1 と同一）、ゲートON時は
+  Step 3.5 で実装された **部分再生成**（問題候補のみ差し替え、採用可能な候補は維持）
+  になります。試行ごとの記録（`state["attempts"]`）に `kept_titles` /
+  `excluded_titles` / `reasons`（除外理由ラベル）/ `warning_count` を保持しており、
+  finalize が最良試行の採用可能部分だけを採用します（詳細は
+  [langgraph_quality_gate_rules.md](langgraph_quality_gate_rules.md) 参照）。
 
 ### エラーと legacy fallback の関係
 
@@ -156,10 +158,11 @@ Select-String -Path fta.log -Pattern "langgraph run summary|generate_factors wor
 | `tests/test_quality_gate_workflow.py` | Step 3 ユニットテスト（ゲートON/OFF・fail_soft・構造検証・例外） |
 | `tests/test_generate_endpoint.py` | Step 3 エンドポイントテスト（追記） |
 
-## 今後の Step 4 候補
+## 今後の拡張候補
 
-- **部分再生成**: 低品質と判定された候補のみを再生成し、高スコアの kept 候補を維持する
-  （`state["attempts"]` に必要な情報は記録済み。`regenerate_candidates` の拡張のみで対応可能）
+> **部分再生成は Step 3.5 で実装済みです**（ゲートON時、問題候補のみを差し替え。
+> [langgraph_quality_gate_rules.md](langgraph_quality_gate_rules.md) 参照）。
+
 - **再生成プロンプトの品質フィードバック**: 除外理由・警告内容（親の言い換え、祖先戻り等）を
   再生成時のプロンプトへ具体的に注入し、同じ失敗の再発を抑える
 - **閾値・重みのチューニング**: 実ログの quality_score 分布を集計し、

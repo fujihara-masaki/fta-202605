@@ -1,0 +1,23 @@
+{
+  "trial_id": "trial_sample",
+  "run_id": "002_off-off_measured_01",
+  "config": "off-off",
+  "config_label": "1: LangGraph OFF / Quality Gate OFF (legacy)",
+  "langgraph": "false",
+  "quality_gate": "false",
+  "phase": "measured",
+  "iteration": 1,
+  "order_index": 2,
+  "scenario_id": "internet_web_access_failure",
+  "top_event": "社外利用者がインターネット経由で公開Web申請システムにアクセスできない",
+  "max_level": 2,
+  "start_time": "2026-07-12T10:01:10",
+  "end_time": "2026-07-12T10:02:05",
+  "total_http_elapsed_ms": 55000,
+  "levels": [
+    {"level": 1, "http_elapsed_ms": 21100, "api_elapsed_ms": 21000, "created": 3, "success": true},
+    {"level": 2, "http_elapsed_ms": 34200, "api_elapsed_ms": 34000, "created": 5, "success": true}
+  ],
+  "status": "ok",
+  "error": ""
+}

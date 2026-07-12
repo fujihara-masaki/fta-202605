@@ -1,0 +1,4 @@
+INFO:app.main:dotenv loaded: C:\work\fta space dir\fta_tool\.env
+INFO:     Application startup complete.
+INFO:app.main:generate_factors summary | analysis=1 level=1 parent='(top event)' limit=4 ai_returned=4 created=4 excluded_quality=0 skipped_dedup=0 elapsed=60000ms
+INFO:app.main:generate_factors workflow | analysis=1 level=1 langgraph=False quality_gate=False mode=legacy decisions=- regenerated=False retries=0 rejected_by_gate=0 regenerated_created=0 outcome=created created=4 elapsed_ms=60000

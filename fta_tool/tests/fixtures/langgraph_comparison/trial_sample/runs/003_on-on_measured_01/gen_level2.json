@@ -1,0 +1,29 @@
+{
+  "success": true,
+  "message": "5件の要因を生成しました（1件重複スキップ）",
+  "created": 5,
+  "skipped": 1,
+  "elapsed_ms": 47000,
+  "parent_id": null,
+  "quality_summary": {
+    "scored_count": 5,
+    "average_overall_score": 88,
+    "judgment_counts": {"pass": 5, "warning": 0, "retry_recommended": 0, "fail": 0},
+    "ai_returned": 6,
+    "created": 5,
+    "excluded": 1,
+    "excluded_by_quality": 1,
+    "excluded_by_dedup": 0,
+    "all_candidates_excluded": false,
+    "outcome": "partial",
+    "reason_summary": ["No評価済み要因と類似"],
+    "workflow": "langgraph",
+    "regenerated": true,
+    "retry_count": 1,
+    "workflow_error": null,
+    "quality_gate": true,
+    "decisions": ["accept", "accept_with_warning"],
+    "rejected_by_gate": 1,
+    "regenerated_created": 0
+  }
+}

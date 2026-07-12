@@ -224,7 +224,7 @@ def test_regen_failure_without_usable_attempt_keeps_error():
     assert res.decision == "fail_soft"
 
 
-# --- attempts record (Step 4 partial-regeneration groundwork) -----------------
+# --- attempts record (fields the Step 3.5 partial regeneration relies on) -----
 
 def test_attempt_record_keeps_partial_regen_info():
     from app.services.generation_workflow import evaluate_quality
