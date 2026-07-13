@@ -173,6 +173,65 @@ def test_factor_quality_has_human_evaluation_columns(analyzed):
         assert all(r[column] == "" for r in rows)  # 人手記入用に空欄
 
 
+def _saved_by_parent(rows, run_id, title):
+    """(parent, source) → saved の辞書を返す補助。"""
+    return {
+        (r["parent"], r["source"]): r["saved"]
+        for r in rows
+        if r["run_id"] == run_id and r["title"] == title
+    }
+
+
+def test_saved_matching_same_title_under_different_parents(analyzed):
+    """同名要因が別親に保存されていても、reject された候補を saved と誤判定しない。
+
+    fixture の run 003 では「変更後の疎通確認不足」が
+      - 親『DNSの名前解決失敗』(parent_id=1) 配下では保存され、
+      - 親『ファイアウォール設定変更の影響』(parent_id=2) 配下では
+        Quality Gate により reject されている。
+    """
+    rows = _read_csv(analyzed / "factor_quality.csv")
+    saved = _saved_by_parent(rows, "003_on-on_measured_01", "変更後の疎通確認不足")
+    # 親B（DNS）配下の候補は保存済み
+    assert saved[("DNSの名前解決失敗", "langgraph_candidate")] == "True"
+    # 親A（FW）配下の同名候補は reject → saved=False（旧実装はここが True になっていた）
+    assert saved[("ファイアウォール設定変更の影響", "langgraph_candidate")] == "False"
+    assert saved[("ファイアウォール設定変更の影響", "gate_reject")] == "False"
+
+
+def test_saved_matching_falls_back_to_export_csv(trial_dir):
+    """export.json が無い場合は (タイトル, 階層, 親要因名) で export.csv と照合する。"""
+    (trial_dir / "runs" / "003_on-on_measured_01" / "export.json").unlink()
+    assert analyzer.analyze_trial(trial_dir) == 0
+    rows = _read_csv(trial_dir / "analysis" / "factor_quality.csv")
+    saved = _saved_by_parent(rows, "003_on-on_measured_01", "変更後の疎通確認不足")
+    assert saved[("DNSの名前解決失敗", "langgraph_candidate")] == "True"
+    assert saved[("ファイアウォール設定変更の影響", "langgraph_candidate")] == "False"
+    assert saved[("ファイアウォール設定変更の影響", "gate_reject")] == "False"
+
+
+def test_saved_unknown_without_any_export(tmp_path):
+    """エクスポートが一切無い実行では、採用候補の saved は空欄（判定不能）になり、
+    除外済み候補だけが False になる。"""
+    trial = tmp_path / "no export trial"
+    run_dir = trial / "runs" / "001_on-on_measured_01"
+    run_dir.mkdir(parents=True)
+    (run_dir / "server.err.log").write_text(
+        "INFO:x:langgraph candidate | parent_id=1 level=2 parent='親X' attempt=0 "
+        "title='採用された候補' score=90 severity=ok excluded=False warnings='' "
+        "critical_reasons=''\n"
+        "INFO:x:langgraph candidate | parent_id=1 level=2 parent='親X' attempt=0 "
+        "title='除外された候補' score=40 severity=critical excluded=True warnings='' "
+        "critical_reasons='親要因の言い換え'\n",
+        encoding="utf-8",
+    )
+    assert analyzer.analyze_trial(trial) == 0
+    rows = _read_csv(trial / "analysis" / "factor_quality.csv")
+    by_title = {r["title"]: r for r in rows}
+    assert by_title["採用された候補"]["saved"] == ""       # 判定材料なし
+    assert by_title["除外された候補"]["saved"] == "False"  # 除外済みは常に False
+
+
 def test_factor_quality_includes_legacy_exclusions(analyzed):
     rows = _read_csv(analyzed / "factor_quality.csv")
     legacy = [r for r in rows if r["run_id"] == "002_off-off_measured_01"]

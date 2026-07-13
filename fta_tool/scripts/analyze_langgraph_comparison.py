@@ -418,6 +418,9 @@ def _parse_log_line(line: str, run: RunData) -> None:
             "source": "langgraph_candidate",
             "level": to_int(kv.get("level")),
             "parent": kv.get("parent", ""),
+            # 親ノードのDB id（文字列のまま保持。"None" = 頂上事象直下。
+            # キー自体が無い legacy 行と区別するため raw で持つ）
+            "parent_id_raw": kv.get("parent_id"),
             "attempt": to_int(kv.get("attempt")),
             "title": kv.get("title", ""),
             "score": to_int(kv.get("score")),
@@ -609,13 +612,86 @@ def load_run(run_dir: pathlib.Path, index_row: Optional[dict] = None) -> RunData
         except Exception as e:
             run.notes.append(f"export.csv の解析に失敗: {e}")
 
-    # ログ上の候補行と保存済みタイトルを突き合わせ、saved を確定
-    saved_titles = {f["title"] for f in run.exported_factors}
-    for candidate in run.candidates:
-        if candidate["saved"] is None:
-            candidate["saved"] = candidate["title"] in saved_titles
+    # ログ上の候補行と保存済みノードを突き合わせ、saved を確定
+    _resolve_candidate_saved(run, run_dir)
 
     return run
+
+
+def _resolve_candidate_saved(run: RunData, run_dir: pathlib.Path) -> None:
+    """候補が最終的にノードとして保存されたかを判定して ``saved`` を埋める。
+
+    同名の要因が別の親・別階層に保存され得る（アプリの重複チェックは
+    同一親・同一階層スコープ）ため、タイトルだけでは照合しない。
+    照合キーは確実な順に:
+
+      1. (タイトル, 階層, 親ノードID)  — export.json のノードID と、
+         langgraph candidate ログ行の parent_id を突き合わせ
+      2. (タイトル, 階層, 親要因名)    — export.json / export.csv の親要因名と
+         ログ行の parent を突き合わせ（parent_id の無い古いログ向け）
+      3. タイトルのみ                  — 階層・親情報が欠けた古いログの
+         最終フォールバック（注記を残す）
+
+    エクスポート（export.json / export.csv）が両方無い場合は判定不能として
+    ``saved`` を None（CSV では空欄）のまま残す。ただし除外済み候補は
+    エクスポートに出ないことが確定しているため常に False。
+    """
+    saved_by_id: set = set()      # (title, level, parent_node_id or None)
+    saved_by_parent: set = set()  # (title, level, parent_title)
+    saved_titles: set = set()
+
+    data = load_json_tolerant(run_dir / "export.json")
+    nodes = data.get("nodes") if isinstance(data, dict) else None
+    if isinstance(nodes, list):
+        node_list = [n for n in nodes if isinstance(n, dict)]
+        node_map = {n.get("id"): n for n in node_list}
+        for node in node_list:
+            title = str(node.get("title") or "")
+            level = to_int(node.get("level"))
+            parent_id = to_int(node.get("parent_id"))
+            parent_node = node_map.get(parent_id) if parent_id is not None else None
+            parent_title = str(parent_node.get("title") or "") if parent_node else ""
+            saved_by_id.add((title, level, parent_id))
+            saved_by_parent.add((title, level, parent_title))
+            saved_titles.add(title)
+    elif (run_dir / "export.json").exists():
+        run.notes.append("export.json を解析できないため保存判定は export.csv で代替")
+
+    if not saved_by_parent:
+        # export.json が無い場合は export.csv の (タイトル, 階層, 親要因名)
+        for factor in run.exported_factors:
+            title = str(factor.get("title") or "")
+            saved_by_parent.add((title, factor.get("level"), str(factor.get("parent") or "")))
+            saved_titles.add(title)
+
+    have_export = bool(saved_by_parent or saved_titles)
+    title_only_used = False
+    for candidate in run.candidates:
+        if candidate["saved"] is not None:
+            continue
+        if candidate.get("excluded"):
+            candidate["saved"] = False
+            continue
+        if not have_export:
+            continue  # 判定材料なし → 空欄（不明）のまま
+        title = candidate.get("title") or ""
+        level = candidate.get("level")
+        parent = candidate.get("parent") or ""
+        if parent == "(top event)":
+            parent = ""  # エクスポート側は頂上事象直下の親要因名が空
+        parent_id_raw = candidate.get("parent_id_raw")
+        if saved_by_id and parent_id_raw is not None:
+            # to_int("None") は None → 頂上事象直下（parent_id null）に一致
+            candidate["saved"] = (title, level, to_int(parent_id_raw)) in saved_by_id
+        elif level is not None:
+            candidate["saved"] = (title, level, parent) in saved_by_parent
+        else:
+            candidate["saved"] = title in saved_titles
+            title_only_used = True
+    if title_only_used:
+        run.notes.append(
+            "階層・親情報の無い候補行があるため一部の保存判定はタイトルのみで照合"
+        )
 
 
 # ---------------------------------------------------------------------------
