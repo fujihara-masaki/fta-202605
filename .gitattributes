@@ -1,0 +1,4 @@
+# PowerShell スクリプトは Windows PowerShell 5.1 互換のため
+# UTF-8 BOM 付きで管理する（BOM はファイル内容の一部として git が保持する）。
+# Windows チェックアウト時は慣例に合わせ CRLF にする。
+*.ps1 text eol=crlf

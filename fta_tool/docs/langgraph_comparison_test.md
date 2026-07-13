@@ -32,6 +32,11 @@ Quality Gate は **LangGraph ON のときだけ作用** します（main.py が
 ## 前提条件
 
 - Windows 上の PowerShell（5.1 以降。PowerShell 7 でも動作）
+  - `run_langgraph_comparison.ps1` は日本語コメントを含むため
+    **UTF-8 BOM 付き** で管理しています（`.gitattributes` で `eol=crlf` 指定）。
+    編集する場合は BOM を保持してください。BOM が無いと Windows PowerShell 5.1
+    がスクリプト解析段階で ParserError になります
+    （`tests/test_run_langgraph_comparison_script.py` が BOM と構文を検査）。
 - Python（`pip install -r requirements.txt` 済み）
 - Ollama が起動済みで、`.env` の `AI_PROVIDER=ollama` / `OLLAMA_MODEL` が
   設定済みであること（モデルは事前に `ollama pull` しておく）

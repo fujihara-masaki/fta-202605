@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     LangGraph / Quality Gate 比較試験の実行スクリプト（Windows PowerShell 用）。
@@ -62,6 +62,10 @@
     - 実 Ollama（.env の AI_PROVIDER=ollama）が起動済みであることが前提です。
     - スクリプトは fta_tool ディレクトリ配下のどこから実行しても動作します。
     - パスに空白が含まれていても動作します。
+    - このファイルは必ず UTF-8 BOM 付きで保存してください。BOM が無いと
+      Windows PowerShell 5.1 が日本語コメントを ANSI として誤解釈し、
+      ParserError になります（tests/test_run_langgraph_comparison_script.py が
+      BOM と構文を検査します）。
 #>
 [CmdletBinding()]
 param(
