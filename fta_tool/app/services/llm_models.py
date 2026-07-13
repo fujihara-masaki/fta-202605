@@ -3,8 +3,8 @@ Pydantic models for structured LLM output and generation metrics (Step 1).
 
 These models make the raw Ollama response a *validated* structure instead of
 something handled purely by ad-hoc string/dict processing.  They are the
-foundation for the planned LangGraph "inspect-then-generate" workflow, but no
-LangGraph / agent code is introduced here.
+foundation of the LangGraph "inspect-then-generate" workflow
+(``generation_workflow.py``), but no LangGraph / agent code lives here.
 
   - ``LLMFactor`` / ``LLMFactorList`` validate the factor payload returned by
     the model (Ollama structured output: ``{"factors": [...]}``).

@@ -317,7 +317,25 @@ LANGGRAPH_GENERATION_MAX_RETRIES=1
 LANGGRAPH_QUALITY_THRESHOLD=0.7
 ```
 
-ノード構成・分岐仕様・ログの見方・Step 4 候補は [docs/langgraph_step3.md](docs/langgraph_step3.md) を参照してください。
+ノード構成・分岐仕様・ログの見方・今後の拡張候補は [docs/langgraph_step3.md](docs/langgraph_step3.md) を、
+品質ゲートの段階判定（accept / accept_with_warning / retry / reject）と部分再生成（Step 3.5で実装済み）は
+[docs/langgraph_quality_gate_rules.md](docs/langgraph_quality_gate_rules.md) を参照してください。
+
+### LangGraph / Quality Gate 比較試験支援キット
+
+LangGraph・品質ゲートの ON/OFF 4設定（実効3モード）を同一条件で複数回実行し、
+処理時間と生成品質を比較するためのスクリプトを用意しています。
+
+```powershell
+# 実行（Windows PowerShell。ログ・エクスポートを試験ID配下へ保存）
+powershell -ExecutionPolicy Bypass -File scripts\run_langgraph_comparison.ps1 -TrialId trial_001
+
+# 解析（runs.csv / factor_quality.csv / summary.md を生成）
+python scripts\analyze_langgraph_comparison.py ..\comparison_results\trial_001
+```
+
+手順・推奨反復回数・出力の見方・人手評価項目は
+[docs/langgraph_comparison_test.md](docs/langgraph_comparison_test.md) を参照してください。
 
 ## テストの実行
 

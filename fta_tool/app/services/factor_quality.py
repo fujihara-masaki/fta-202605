@@ -536,7 +536,8 @@ def summarize_exclusion_reason(reason: str) -> str:
 # These are PURE functions (no DB / no logging / no side effects).  They lift
 # the per-candidate quality handling and the outcome classification that were
 # previously inlined in main.py's generate endpoint, so the live endpoint and
-# the planned LangGraph workflow can share a single source of truth.
+# the LangGraph workflow (generation_workflow.py) share a single source of
+# truth.
 #
 # DB-dependent duplicate detection (crud.node_title_exists) is intentionally
 # NOT handled here — it stays in main.py.
