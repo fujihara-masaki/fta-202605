@@ -14,6 +14,16 @@
       <label for="top_event">頂上事象（後から編集可）</label>
       <textarea id="top_event" name="top_event" rows="3" placeholder="例：〇〇システムでログイン障害が発生した"></textarea>
     </div>
+    <div class="form-group">
+      <label for="systemContextInput">システム構成・対象範囲（任意）</label>
+      <p class="field-hint" id="systemContextHint">頂上事象（発生した事象そのもの）とは別に、分析対象システムの構成や範囲を書きます。AIの要因生成時に参考情報として使われます。</p>
+      <textarea id="systemContextInput" name="system_context" rows="3" aria-describedby="systemContextHint" placeholder="例：Webサーバ2台＋DBサーバ1台の冗長構成。対象は社内認証システムのみ。"></textarea>
+    </div>
+    <div class="form-group">
+      <label for="incidentContextInput">障害発生時の状況・観測事実（任意）</label>
+      <p class="field-hint" id="incidentContextHint">障害が起きたときの状況や観測された事実（発生時刻、エラー内容、影響範囲など）を書きます。こちらもAIの要因生成時に参考情報として使われます。</p>
+      <textarea id="incidentContextInput" name="incident_context" rows="3" aria-describedby="incidentContextHint" placeholder="例：4/1 9:00頃から全ユーザーがログイン不可。画面には500エラーが表示。前日夜に設定変更作業あり。"></textarea>
+    </div>
 
     {% if sample_scenarios %}
     <!-- Sample scenario section: optional aid, collapsed by default -->
@@ -49,9 +59,8 @@
       </div>
     </div>
 
-    <!-- Hidden fields: populated only when a sample is applied -->
-    <input type="hidden" id="systemContextInput" name="system_context" value="">
-    <input type="hidden" id="incidentContextInput" name="incident_context" value="">
+    <!-- Hidden field: demo points are demo-only info, populated when a sample
+         is applied (system/incident context use the visible textareas above) -->
     <input type="hidden" id="demoPointsInput" name="demo_points" value="">
     {% endif %}
 

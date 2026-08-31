@@ -209,6 +209,57 @@ async function saveTopEvent(analysisId, { quiet = false } = {}) {
   }
 }
 
+// ===== Analysis Context (system / incident) =====
+async function saveAnalysisContext(analysisId, { quiet = false } = {}) {
+  const sysEl = document.getElementById('systemContextInput');
+  const incEl = document.getElementById('incidentContextInput');
+  if (!sysEl && !incEl) return true;
+  const payload = {};
+  if (sysEl) payload.system_context = sysEl.value.trim();
+  if (incEl) payload.incident_context = incEl.value.trim();
+  try {
+    const res = await fetch(`/analyses/${analysisId}/context`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.success) {
+      if (sysEl) sysEl.dataset.saved = data.system_context || '';
+      if (incEl) incEl.dataset.saved = data.incident_context || '';
+      const status = document.getElementById('analysisContextStatus');
+      if (status) {
+        const filled = !!(data.system_context || data.incident_context);
+        status.textContent = filled ? '入力済み' : '未入力・追加できます';
+        status.classList.toggle('filled', filled);
+        status.classList.toggle('empty', !filled);
+      }
+      if (!quiet) showToast('分析コンテキストを保存しました');
+      return true;
+    }
+    showToast(data.detail || '分析コンテキストの保存に失敗しました', 'error');
+    return false;
+  } catch (e) {
+    showToast('通信エラーが発生しました', 'error');
+    return false;
+  }
+}
+
+// Like ensureTopEventReady: an edited-but-unsaved context is silently saved
+// before generation so the LLM sees what the user sees. Context is optional,
+// so (unlike the top event) empty input never blocks generation.
+async function ensureAnalysisContextReady(analysisId) {
+  const sysEl = document.getElementById('systemContextInput');
+  const incEl = document.getElementById('incidentContextInput');
+  const dirty = [sysEl, incEl].some(
+    (el) => el && el.dataset.saved !== undefined && el.dataset.saved !== el.value.trim(),
+  );
+  if (!dirty) return true;
+  const ok = await saveAnalysisContext(analysisId, { quiet: true });
+  if (ok) showToast('編集中の分析コンテキストを保存してから生成します');
+  return ok;
+}
+
 // ===== Generation Status Badge =====
 function setNodeGenStatus(nodeId, status, count) {
   const card = document.getElementById(`node-${nodeId}`);
@@ -258,6 +309,7 @@ async function ensureTopEventReady(analysisId) {
 // ===== Generate Factors =====
 async function generateFactors(analysisId, level) {
   if (level === 1 && !(await ensureTopEventReady(analysisId))) return;
+  if (!(await ensureAnalysisContextReady(analysisId))) return;
 
   if (level >= 2) {
     await generateFactorsSequential(analysisId, level);
@@ -379,6 +431,7 @@ async function generateFactorsSequential(analysisId, level) {
 //   of one specific parent (level-1 card → level 2, level-2 card → level 3)
 async function generateAdditional(analysisId, parentNodeId, childLevel) {
   if (childLevel === 1 && !(await ensureTopEventReady(analysisId))) return;
+  if (!(await ensureAnalysisContextReady(analysisId))) return;
 
   const overlay = (childLevel === 1) ? document.getElementById('loadingOverlay') : null;
   if (overlay) overlay.classList.remove('hidden');
