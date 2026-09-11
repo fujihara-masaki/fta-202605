@@ -401,8 +401,42 @@ def test_exports_reflect_updated_context(client):
 
     res_md = client.get(f"/analyses/{analysis_id}/export/markdown")
     assert res_md.status_code == 200
+    headings = [line for line in res_md.text.splitlines() if line.startswith("## ")]
+    assert "## 分析コンテキスト" in headings
+    assert "## 分析コンテキスト（サンプルシナリオ）" not in headings
     assert "更新後の構成" in res_md.text
     assert "更新後の状況" in res_md.text
+
+
+def test_export_markdown_hand_entered_context_uses_neutral_heading(client):
+    analysis_id = _create_analysis(client, analysis_context=json.dumps({
+        "system_context": "手入力した構成（サンプルシナリオとの比較用）",
+        "incident_context": "手入力した障害状況",
+        "demo_points": "",
+    }, ensure_ascii=False))
+
+    res_md = client.get(f"/analyses/{analysis_id}/export/markdown")
+    assert res_md.status_code == 200
+    headings = [line for line in res_md.text.splitlines() if line.startswith("## ")]
+    assert "## 分析コンテキスト" in headings
+    assert "## 分析コンテキスト（サンプルシナリオ）" not in headings
+    assert "手入力した構成（サンプルシナリオとの比較用）" in res_md.text
+
+
+def test_export_markdown_context_with_demo_points_keeps_demo_output(client):
+    analysis_id = _create_analysis(client, analysis_context=json.dumps({
+        "system_context": "デモ用構成",
+        "incident_context": "デモ用障害状況",
+        "demo_points": "確認すべきデモ観点",
+    }, ensure_ascii=False))
+
+    res_md = client.get(f"/analyses/{analysis_id}/export/markdown")
+    assert res_md.status_code == 200
+    headings = [line for line in res_md.text.splitlines() if line.startswith("## ")]
+    assert "## 分析コンテキスト" in headings
+    assert "## 分析コンテキスト（サンプルシナリオ）" not in headings
+    assert "### デモ観点" in res_md.text.splitlines()
+    assert "確認すべきデモ観点" in res_md.text
 
 
 def test_exports_unchanged_without_context(client):
@@ -412,3 +446,6 @@ def test_exports_unchanged_without_context(client):
     assert json.loads(res_json.text)["analysis_context"] is None
     res_md = client.get(f"/analyses/{analysis_id}/export/markdown")
     assert res_md.status_code == 200
+    headings = [line for line in res_md.text.splitlines() if line.startswith("## ")]
+    assert "## 分析コンテキスト" not in headings
+    assert "## 分析コンテキスト（サンプルシナリオ）" not in headings
