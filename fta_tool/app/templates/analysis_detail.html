@@ -69,6 +69,28 @@
               </div>
             </div>
           </div>
+          <!-- Analysis context (collapsible): system / incident info fed to
+               the AI generation as reference, separate from the top event -->
+          <details id="analysisContextDetails" class="analysis-context-details">
+            <summary class="analysis-context-summary">
+              分析コンテキスト（任意）
+              <span id="analysisContextStatus" class="context-status {{ 'filled' if system_context or incident_context else 'empty' }}">{{ '入力済み' if system_context or incident_context else '未入力・追加できます' }}</span>
+            </summary>
+            <div class="analysis-context-body">
+              <p class="field-hint">頂上事象（発生した事象そのもの）とは別の参考情報で、AIの要因生成時に使われます。</p>
+              <div class="form-group">
+                <label for="systemContextInput">システム構成・対象範囲</label>
+                <textarea id="systemContextInput" class="form-input" rows="3" placeholder="例：Webサーバ2台＋DBサーバ1台の冗長構成。対象は社内認証システムのみ。" data-saved="{{ system_context }}">{{ system_context }}</textarea>
+              </div>
+              <div class="form-group">
+                <label for="incidentContextInput">障害発生時の状況・観測事実</label>
+                <textarea id="incidentContextInput" class="form-input" rows="3" placeholder="例：4/1 9:00頃から全ユーザーがログイン不可。画面には500エラーが表示。" data-saved="{{ incident_context }}">{{ incident_context }}</textarea>
+              </div>
+              <div class="node-card-actions">
+                <button class="btn btn-sm btn-primary" onclick="saveAnalysisContext({{ analysis.id }})">コンテキストを保存</button>
+              </div>
+            </div>
+          </details>
           <!-- Generate level 1 button -->
           <div class="generate-section">
             <button class="btn btn-generate" onclick="generateFactors({{ analysis.id }}, 1)">
@@ -420,6 +442,7 @@ const ANALYSIS_ID = {{ analysis.id }};
   const sections = [
     ['ftaTreeDetails', 'ftaTreeOpen_' + ANALYSIS_ID],
     ['ftaTableDetails', 'ftaTableOpen_' + ANALYSIS_ID],
+    ['analysisContextDetails', 'analysisContextOpen_' + ANALYSIS_ID],
   ];
   for (const [id, key] of sections) {
     const details = document.getElementById(id);

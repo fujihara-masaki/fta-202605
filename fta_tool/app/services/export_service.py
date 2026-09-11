@@ -164,7 +164,7 @@ def export_markdown(db: Session, analysis_id: int) -> str:
         except (ValueError, TypeError):
             ctx = None
         if ctx:
-            lines.append("## 分析コンテキスト（サンプルシナリオ）")
+            lines.append("## 分析コンテキスト")
             if ctx.get("system_context"):
                 lines.append("### システム構成")
                 lines.append(ctx["system_context"].strip())
