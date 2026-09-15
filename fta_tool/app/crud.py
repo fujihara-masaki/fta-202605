@@ -44,6 +44,16 @@ def update_top_event(db: Session, analysis_id: int, top_event: str):
     return db_analysis
 
 
+def update_analysis_context(db: Session, analysis_id: int, analysis_context: str):
+    db_analysis = get_analysis(db, analysis_id)
+    if db_analysis:
+        db_analysis.analysis_context = analysis_context
+        db_analysis.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(db_analysis)
+    return db_analysis
+
+
 def delete_analysis(db: Session, analysis_id: int):
     db_analysis = get_analysis(db, analysis_id)
     if db_analysis:

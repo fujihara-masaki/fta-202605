@@ -114,6 +114,28 @@ def _migrate_add_warning_flags() -> None:
             logger.info("DB migration: added nodes.warning_flags column")
 
 
+def _parse_analysis_context(raw: Optional[str], analysis_id: Optional[int] = None) -> dict:
+    """Parse the stored analysis_context JSON into a dict.
+
+    Tolerates every stored shape: empty string / None (normal hand-entered
+    analyses), broken JSON and legacy non-dict JSON all come back as {} so
+    callers never crash on old data.
+    """
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        logger.warning("analysis_context のJSON解析に失敗しました | analysis_id=%s", analysis_id)
+        return {}
+    if not isinstance(parsed, dict):
+        logger.warning(
+            "analysis_context が想定外の形式のため無視します | analysis_id=%s", analysis_id
+        )
+        return {}
+    return parsed
+
+
 def _migrate_add_analysis_context() -> None:
     """Add analyses.analysis_context for databases created before the column existed."""
     from sqlalchemy import text
@@ -209,11 +231,19 @@ def analysis_detail(request: Request, analysis_id: int, db: Session = Depends(ge
 
     ai_provider_name = os.environ.get("AI_PROVIDER", "mock")
 
+    # Analysis context (system/incident) for the collapsible editor near the
+    # top event. demo_points and unknown keys are kept server-side only.
+    context_data = _parse_analysis_context(analysis.analysis_context, analysis_id)
+    system_context = context_data.get("system_context")
+    incident_context = context_data.get("incident_context")
+
     return templates.TemplateResponse(
         "analysis_detail.html",
         {
             "request": request,
             "analysis": analysis,
+            "system_context": system_context if isinstance(system_context, str) else "",
+            "incident_context": incident_context if isinstance(incident_context, str) else "",
             "nodes": nodes,
             "level1_nodes": level1_nodes,
             "level2_nodes": level2_nodes,
@@ -247,6 +277,41 @@ async def update_top_event(analysis_id: int, request: Request, db: Session = Dep
     if not analysis:
         raise HTTPException(status_code=404, detail="分析が見つかりません")
     return {"success": True, "top_event": analysis.top_event}
+
+
+@app.post("/analyses/{analysis_id}/context")
+async def update_analysis_context(analysis_id: int, request: Request, db: Session = Depends(get_db)):
+    """Update the analysis context (system_context / incident_context).
+
+    Merges into the stored JSON: demo_points and any unknown keys survive,
+    a broken or legacy non-dict value is replaced instead of crashing, and
+    an all-empty result is stored as "" (same as an analysis created without
+    context).
+    """
+    analysis = crud.get_analysis(db, analysis_id)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="分析が見つかりません")
+
+    data = await request.json()
+    merged = _parse_analysis_context(analysis.analysis_context, analysis_id)
+    for key in ("system_context", "incident_context"):
+        if key in data:
+            value = data.get(key)
+            merged[key] = value.strip() if isinstance(value, str) else ""
+
+    if any(v not in ("", None) for v in merged.values()):
+        stored = json.dumps(merged, ensure_ascii=False)
+    else:
+        stored = ""
+    crud.update_analysis_context(db, analysis_id, stored)
+
+    system_context = merged.get("system_context")
+    incident_context = merged.get("incident_context")
+    return {
+        "success": True,
+        "system_context": system_context if isinstance(system_context, str) else "",
+        "incident_context": incident_context if isinstance(incident_context, str) else "",
+    }
 
 
 @app.post("/analyses/{analysis_id}/generate/level/{level}")
@@ -329,15 +394,10 @@ async def generate_factors(
     # also catches duplicates created moments earlier.
     all_analysis_titles = [n.title for n in nodes]
 
-    # Optional sample-scenario context (system/incident/demo info). Empty for
-    # normal hand-entered analyses — providers treat a missing/empty dict the
-    # same as no context.
-    analysis_context: dict = {}
-    if analysis.analysis_context:
-        try:
-            analysis_context = json.loads(analysis.analysis_context)
-        except (ValueError, TypeError):
-            logger.warning("analysis_context のJSON解析に失敗しました | analysis_id=%s", analysis_id)
+    # Optional analysis context (system/incident/demo info), entered by hand
+    # or applied from a sample scenario — providers treat a missing/empty dict
+    # the same as no context.
+    analysis_context: dict = _parse_analysis_context(analysis.analysis_context, analysis_id)
 
     for parent_node in parent_nodes:
         # Build parent path
