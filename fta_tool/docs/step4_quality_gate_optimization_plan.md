@@ -13,16 +13,17 @@
 |調査基準 SHA|`7595aaae57073fbb72d02f88a0859d578c5ef474`|
 |基準確認日時|2026-09-15T01:49:44Z (UTC)|
 |前回参考 SHA|`7595aaae57073fbb72d02f88a0859d578c5ef474`（基準 SHA と同一）|
-|PR #12 確認指定 HEAD|`e15f97434d051b6baa624aede2f8434be19f65ea`|
-|レビュー反映時のローカル HEAD|`edd43090ec0e4e53610a84cdc97dccb614cd1495`|
-|レビュー反映確認日時|2026-09-15 (UTC)|
+|PR #12 初回レビュー時の指定 HEAD|`e15f97434d051b6baa624aede2f8434be19f65ea`|
+|PR #12 再レビュー時の指定 HEAD|`54133234ad8731ad49c0cbdadc6169ecae99854b`|
+|再レビュー反映時のローカル HEAD|`140e6bd8e8a7dccf42be81b4ce72a13f888fedef`|
+|再レビュー反映確認日時|2026-09-15T05:42:33Z (UTC)|
 
-コンテナには remote / 採用ブランチ ref がなく、`git branch -a` で確認できるのは `work` のみだった。このためネットワークから更新したという意味での「採用ブランチ最新」は確認できず、提供済み作業ツリーの HEAD を調査基準とした。レビュー反映時も `e15f974...` はローカル object に存在せず、GitHub は認証/ネットワーク制約で参照できなかったため、依頼文に転載された R1～R3 をレビューコメントの正本として扱った。巻き戻し、未コミット変更の破棄、採用ブランチへの切替・直接変更はしていない。参照不能な過去会話、添付、ログを確認済みとして扱わない。
+コンテナには remote / 採用ブランチ ref がなく、`git branch -a` で確認できるのは `work` のみだった。このためネットワークから更新したという意味での「採用ブランチ最新」は確認できず、提供済み作業ツリーの HEAD を調査基準とした。再レビュー時も指定 PR HEAD はローカル object に存在せず、GitHub は認証/ネットワーク制約で参照できなかったため、依頼文に転載されたコメント ID `4012232549`（“Capture the pre-A baseline within Step4-A”）を正本として扱った。巻き戻し、未コミット変更の破棄、採用ブランチへの切替・直接変更はしていない。参照不能な過去会話、添付、ログを確認済みとして扱わない。
 
 ### 実施 / 未実施
 
-* 実施: 指定ソース、設定、文書、比較キット、関連テストの静的調査、既存の非 LLM テスト実行、計画書作成、PR #12 レビュー R1～R3 の計画への反映。
-* 未実施: 実 LLM、通常利用 DB、実画面、性能測定、閾値調整、新規モデル取得、外部 LLM、コード・プロンプト・設定の変更。
+* 実施: 指定ソース、設定、文書、比較キット、関連テストの静的調査、既存の非 LLM テスト実行、計画書作成、PR #12 の R1～R3 および追加レビュー `4012232549` の計画への反映。
+* 未実施: A0 baselineの採取、A1安全修正、実 LLM、通常利用 DB、実画面、性能測定、閾値調整、新規モデル取得、外部 LLM、コード・プロンプト・設定の変更。
 
 ## 1. 目的、範囲、非対象
 
@@ -167,7 +168,40 @@ Ollama の `filter_generated_factors` は構文正規化後の軽量 provider �
 
 ### 6.1 最初に行う critical 復帰防止（Step4-A）
 
-characterization test と必要最小限の現状ログを先に固定し、**最初の振る舞い変更**として Gate ON の全終端に共通 final sanitizer を適用する。現行 E/W判定、閾値、prompt、要求件数、総時間予算は変えない。
+Step4-A は同一の実装用PR内で **A0→A1** の順に進める（A0/A1はGitHub PR番号ではない）。A0で修正前baselineを確定してから、**最初の振る舞い変更**であるA1へ進む。Step4-Bの本格的な計測・ログ整備、実LLM長時間測定、理由prompt、件数最適化、総時間予算をA0へ前倒ししない。
+
+#### A0 — 修正前の再現・最小計測・基準データ取得
+
+固定候補、決定論的stub、ダミー入力、実行ごとの専用テストDBを使い、Gate ONのcritical復帰とGate OFFの現状をcharacterization testで固定する。既存ログと、テストstub/spyがメモリ内に記録する呼出しを優先する。不足する場合に加える観測処理はテスト専用hookまたは内容非依存の最小イベントに限り、生成要求、判定、候補選択、保存条件、再試行条件を変えない。A0の結果artifactを保存・レビューしてからA1コミットを作る。
+
+**baseline識別子とSHA:**
+
+* `pre_a_code_sha`: A0開始時の修正前コードSHA。計画作成時点ではPR HEADとして指定された `54133234ad8731ad49c0cbdadc6169ecae99854b` を候補とするが、実施時にPR最新HEADを取得して確定し、manifestへフルSHAを記録する。
+* `a0_observation_sha`: テスト/最小観測処理を追加したA0コミットSHA。コード変更なしで既存ログ・テストspyだけで足りる項目は `pre_a_code_sha` と同一でもよい。異なる場合は、観測処理が振る舞いを変えないことをcharacterizationで証明する。
+* `a1_fix_sha`: final sanitizerを修正したA1コミットSHA。将来の実施時に記録し、未作成の現時点では `not_created` とする。0や推測SHAで埋めない。
+* `fixture_version`: 例 `step4-a-critical-reentry-v1`。固定候補、stub応答列/例外列、flag/env、API request、期待する親・祖先・既存/No集合をmanifestに列挙し、A0/A1で同一版を使う。
+
+**A0最小共通指標:**
+
+|対象|取得項目|計測箇所・方法|単位・集計対象|
+|---|---|---|---|
+|候補集合|attemptごとの入力title識別子、kept/critical/excluded、final candidates|workflow resultとstub/fixtureの対応表。内容はダミー、artifactでは安定ID化|候補件数。1親・1workflow run単位|
+|判定|attempt severity、decision、reason rule、outcome|既存`langgraph candidate/decide/run summary`またはテストobject|判定別件数。最終と途中を分離|
+|保存結果|created、saved candidate ID、excluded quality/dedup、all-excluded|API response、専用test DB query|ノード件数。親・階層・request単位|
+|エラー情報|provider/workflow/fallbackの発生箇所、error kind、API success/message分類|例外stub、既存ログ、API response|イベント件数。raw秘密文字列は保存しない|
+|呼出し数|workflow initial、Gate regeneration、legacy fallback、各stub invocation|stub/spyのcall listを正本とし既存retryログで照合|論理呼出し回数。provider内部物理通信は取得できた時だけ別欄|
+
+A0では実elapsed/token、`requested/processed/call_kind`など現行から確実に取れない項目を無理に追加しない。取得不能値はmanifestで `not_collected` とし、0・空文字・推測値にしない。stub所要時間は環境参考値または非収集とし、実LLM性能値に使わない。既存ログ由来、stub由来、DB/API由来、実測値を各列の`source`で区別する。
+
+**保存と再実行:** `fta_tool/test_results/step4_a/<fixture_version>/<pre_a_code_sha>/` 相当のGit管理外ディレクトリに、秘密を含まない`manifest.json`、JUnit、構造化した期待/実結果、sanitized logを保存する。CI artifactを使う場合も保持期限とアクセス制御を設定し、GitHubリポジトリへ結果をcommitしない。再実行コマンド、Python/依存版、env flag、fixture hash、DBパスをmanifestへ記録する。A0/A1で一時ディレクトリと新規SQLite DBを毎回作り、通常利用DBへ接続しない。
+
+修正前コミットを後日再実行する場合は、採用ブランチをreset/revertせず、`git worktree add <temp> <pre_a_code_sha>`等で別作業ディレクトリを作り、その配下の専用DBと仮想環境/固定依存を使う。観測処理が必要なら同じ`a0_observation_sha`のpatchを一時worktreeへ適用した比較用SHAをmanifestに記録する。未コミットpatchの結果を正本にしない。
+
+#### A1 — critical復帰防止
+
+A0と同じ`fixture_version`、stub列、専用DB、コマンド、集計方法でA1を再実行し、候補集合、判定、保存結果、エラー、論理呼出し数をdiffする。期待差分は正常候補保持とcritical非保存、およびAPI/エラー意味の安全な整理だけである。呼出し回数、Gate OFF、生成要求、再試行条件に意図しない差がないことを確認する。A0観測コミットとA1安全修正は同じStep4-A用PRの別コミットとし、レビューで差分を独立確認できるようにする。
+
+次表はA1後の仕様である。現行 E/W判定、閾値、prompt、要求件数、総時間予算は変えない。
 
 |事象|Gate ONの最小修正後|API上の意味|
 |---|---|---|
@@ -226,7 +260,7 @@ Step4-Bで全ログsiteと例外経路をinventoryしredaction testを固定す�
 
 ### 8.1 現状固定（characterization）
 
-既存期待値を書き換える前に、現 SHA で以下を別 suite に記録する: 部分保持するが provider 要求は元件数、0短絡なし、OFF/ON=legacy、Gate OFF 全除外 retry、legacy不足 retry、provider retry、workflow fallback、保存前再評価、三次全除外 response。fail_soft critical 復帰は専用 regression で「現状の危険な結果」を実証し、改善後 suite と混同しない。
+A0として、既存期待値を書き換える前に、§6.1の`pre_a_code_sha` / `a0_observation_sha`と`fixture_version`を固定し、次を別suiteに記録する: 部分保持するが provider 要求は元件数、0短絡なし、OFF/ON=legacy、Gate OFF 全除外 retry、legacy不足 retry、provider retry、workflow fallback、保存前再評価、三次全除外 response。fail_soft critical 復帰は専用 regression で「修正前の危険な結果」を実証し、A1後の期待動作suiteと混同しない。A0/A1の比較は候補集合・判定・保存・エラー・stub呼出し数を必須とし、実LLM時間/tokenを必須にしない。
 
 ### 8.2 固定候補の純粋判定試験
 
@@ -269,14 +303,16 @@ Step4-Bで全ログsiteと例外経路をinventoryしredaction testを固定す�
 
 実在しない番号は付けない。
 
-1. **Step4-A — critical復帰防止**: 先にfail_soft/fallback characterizationと最小ログを追加し、次のコミットでGate ON全終端のfinal sanitizerだけを修正。W1/W4、E1/E2/E3、正常keep、4種の異常を分離。非対象=理由prompt、件数最適化、時間budget、判定変更。完了=Gate ONでcritical非保存、正常keep保持、生成error/0件/全除外が区別され、Gate OFF回帰が合格。
-2. **Step4-B — 計測・ログ整備**: 修正前baselineを保存し、requested/processed/returned/accepted、call-kind、時間/tokenを追加。全文prompt・入力由来文字列・raw errorを削除/ID化/redactし、analyzerをformat version対応。非対象=生成・判定変更。完了=機密ダミーテストと旧/新analyzer互換、欠測定義、before基準。
+1. **Step4-A — A0修正前baseline → A1 critical復帰防止**: 同じPRの第一コミットA0で固定fixture/stub/専用DB、既存ログ・test spy中心の最小共通指標を取得し、artifactとSHAを固定する。第二コミットA1でGate ON全終端のfinal sanitizerだけを修正して同条件比較する。W1/W4、E1/E2/E3、正常keep、4種の異常を分離。非対象=本格計測、実LLM性能測定、理由prompt、件数最適化、時間budget、判定変更。完了=A0結果をA1前にレビュー済み、Gate ONでcritical非保存、正常keep保持、生成error/0件/全除外が区別され、呼出し数とGate OFFに意図しない差がない。
+2. **Step4-B — 本格的な計測・ログ整備**: A1後を高速化比較用baselineとして、requested/processed/returned/accepted、call-kind、時間/tokenを追加。全文prompt・入力由来文字列・raw errorを削除/ID化/redactし、analyzerをformat version対応。非対象=生成・判定変更。完了=機密ダミーテストと旧/新analyzer互換、欠測定義、**A1安全修正後**baseline。
 3. **Step4-C — 判定ルールを変えない生成コスト改善**: Gate ON部分再生成だけにrequest object/adapter、shortfall伝播、0短絡、processing_limit、品質後target選択を導入。非対象=OFF系契約、severity/閾値、理由prompt。完了=正常保持、先頭NG/後続OK、過少/過剰、全provider/stub、呼出/要求数テスト合格。
 4. **Step4-D — 判定改善**: protected semantics、scope別duplicate、親具体化/祖先/No分類、severity。非対象=理由prompt/総budget。完了=固定gold fixture、人手レビュー、旧新差分説明。Step4-A sanitizerを迂回しない。
 5. **Step4-E — 理由付き再生成・予算管理**: bounded feedback、統合call/time budget、停止条件、追跡metadata。非対象=モデル/DB schema/UI刷新。完了=同一NG停止、全異常終端、互換試験合格。
 6. **Step4-F — 実LLM比較**: 比較キット必要最小拡張、改修前/後ON-ON主比較、対照、固定親、E2E、人手評価。非対象=測定中の閾値後付け調整、モデル変更。完了=再現metadata、生値、欠測、品質/速度双方の採否提案。
 
-依存は **A→B→C→D→E→F** を基本とする。少なくともAより先にC/Dをmergeしない。BはA修正前の同一fixtureを先に採取し、A後にも再実行して安全差分を残す。各段階で直前commit対当該commitを同じ固定fixture/stubで比較し、Fでは元の改修前ON-ONも主比較基準として保持する。計画識別子はGitHub PR番号ではない。
+依存は **A0→A1→B→C→D→E→F** を基本とする。少なくともA1より先にB/C/Dをmergeしない。A0がA修正前baseline、A1再実行が安全修正の比較、B完了時点がC以降の高速化比較用baselineであり、3者を別manifest/SHAで識別する。各段階で直前commit対当該commitを同じ固定fixture/stubで比較し、Fでは元の改修前ON-ONも主比較基準として保持する。A0/A1等は計画識別子でありGitHub PR番号ではない。
+
+Bで初めて得られるrequested/processed/call-kindや詳細時間/tokenは、A0で取得済みとは扱わない。旧版との比較が必要なら、(a) `pre_a_code_sha`の別worktreeへBの観測だけを適用し振る舞い不変を確認した比較用SHAを作る、または(b)旧版を当該指標の比較対象外とする。どちらを採ったかmanifestに記録し、欠測を0で補完しない。
 
 ### 9.1 この文書作成時のテスト記録
 
@@ -288,11 +324,14 @@ Step4-Bで全ログsiteと例外経路をinventoryしredaction testを固定す�
 |前回|`cd fta_tool && pytest -q tests/test_factor_quality.py tests/test_factor_score.py tests/test_analyze_langgraph_comparison.py tests/test_run_langgraph_comparison_script.py`|69 passed, 3 failed, 1 skipped。3 failedはPyYAML不足|
 |今回|`cd fta_tool && pytest tests/ -q`|再実行: 11 collection errors。`httpx`, `fastapi`, `sqlalchemy`, `pydantic`不足。依存は変更せず、未収集テストを合格扱いしない|
 |今回|`cd fta_tool && pytest -q tests/test_factor_quality.py tests/test_factor_score.py tests/test_analyze_langgraph_comparison.py tests/test_run_langgraph_comparison_script.py`|再実行: 69 passed, 3 failed, 1 skipped。3 failedはPyYAML不足|
+|追加再レビュー反映時|`cd fta_tool && pytest tests/ -q`|再実行: 11 collection errors。上記と同じ4依存不足。未収集テストを合格扱いしない|
+|追加再レビュー反映時|`cd fta_tool && pytest -q tests/test_factor_quality.py tests/test_factor_score.py tests/test_analyze_langgraph_comparison.py tests/test_run_langgraph_comparison_script.py`|再実行: 69 passed, 3 failed, 1 skipped。3 failedはPyYAML不足|
 
 ## 10. 受入基準、ロールバック、未決事項
 
 ### 10.1 受入基準
 
+* Step4-AはA0/A1の別コミットで、A0 artifactの`pre_a_code_sha`、必要時の`a0_observation_sha`、A1の`a1_fix_sha`、fixture version/hash、専用DB、再実行コマンド、値のsource/欠測を記録する。A1着手前にA0結果を確定する。
 * **最優先**: Gate ONの初回失敗、再生成失敗、workflow例外、legacy fallbackの全てでW1/W4 criticalとE1/E2/E3が保存対象へ戻らず、正常keepは保持される。生成error、no_candidates、品質all_excludedをAPI/ログで区別する。Gate OFFの既存挙動は不変。
 * target N、keep K に対し要求が `max(0,N-K)`、0時通信なし、保存候補≤N。全 provider/旧stub互換。
 * requested_count、有限processing_limit、品質後target_countが独立し、不足1・先頭NG・後続OKを救済する。OFF系の契約はStep4-Cで変えない。
@@ -300,7 +339,7 @@ Step4-Bで全ログsiteと例外経路をinventoryしredaction testを固定す�
 * 固定 fixture で言い換えと具体化、逆戻りと語句共有具体化、scope別重複、No同一仮説と別仮説、protected状態差を区別する。境界は明示的 uncertain。
 * DB exact と最新集合に依存する保存前検査は維持し、不変評価だけを安全に再利用。
 * API/export/context/OFF系が回帰せず、総呼出数と停止理由が監査可能。全ログlevel/診断flag/error経路で機密ダミー原文が出ず、内容非依存の計測値はanalyzerで読める。
-* 実測で品質非劣化を人手確認し、速度効果は固定親・同一条件で報告。数値合格線は Step4-B の baseline と必要データから承認して確定する。
+* A修正前baselineは安全性比較、A1後かつB計測整備後のbaselineはC以降の高速化比較に使い分ける。実測で品質非劣化を人手確認し、速度効果は固定親・同一条件で報告。数値合格線は Step4-B の baseline と必要データから承認して確定する。
 
 ### 10.2 ロールバック
 
@@ -315,6 +354,7 @@ Step4-Bで全ログsiteと例外経路をinventoryしredaction testを固定す�
 * requested_countを尊重できない外部 HTTP provider の capability/バージョニング。
 * processing_limitの余裕幅、response byte/候補文字数上限、候補選択の安定順序。
 * DEBUG診断情報の保管先・権限・保持期限と、人手評価artifactの承認/匿名化手順。
+* A0 artifactのCI保存先・保持期限、fixtureの正確な版管理方式、物理provider retry回数を最小観測で取得できるか。
 * 総呼出/時間budgetと数値受入線。根拠データなしに現時点で確定しない。
 
 三次要因の全除外について、現リポジトリには正しい除外と誤棄却を判定できる実候補・人手正解がない。まず必要データを採取・匿名化し、全除外率だけでなく候補単位 confusion と undecidable を報告する。
@@ -337,4 +377,4 @@ Step4-Bで全ログsiteと例外経路をinventoryしredaction testを固定す�
 
 ---
 
-本計画の次工程は **Step4-Aのcharacterization後に行うcritical復帰防止の最小安全修正**である。Step4-B以降の最適化より先に実施する。本書のレビュー反映は将来のプログラム修正完了を意味せず、ここから続けて実装、閾値、prompt、mergeを行わない。
+本計画の次工程は **Step4-A0で修正前baselineを取得・確定し、その後A1でcritical復帰防止の最小安全修正を行うこと**である。A0/A1は同じ実装用PRの別コミットとし、Step4-B以降より先に実施する。今回baselineは採取しておらず、本書のレビュー反映はA0/A1や将来のプログラム修正完了を意味しない。ここから続けて実装、計測、閾値、prompt、mergeを行わない。
