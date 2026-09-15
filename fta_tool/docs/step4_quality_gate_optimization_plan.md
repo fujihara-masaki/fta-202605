@@ -15,14 +15,15 @@
 |前回参考 SHA|`7595aaae57073fbb72d02f88a0859d578c5ef474`（基準 SHA と同一）|
 |PR #12 初回レビュー時の指定 HEAD|`e15f97434d051b6baa624aede2f8434be19f65ea`|
 |PR #12 再レビュー時の指定 HEAD|`54133234ad8731ad49c0cbdadc6169ecae99854b`|
+|PR #12 追加レビュー時の指定 HEAD|`88d2ce1ee91fa5dde16efe7520463a22b20c7fc2`|
 |再レビュー反映時のローカル HEAD|`140e6bd8e8a7dccf42be81b4ce72a13f888fedef`|
 |再レビュー反映確認日時|2026-09-15T05:42:33Z (UTC)|
 
-コンテナには remote / 採用ブランチ ref がなく、`git branch -a` で確認できるのは `work` のみだった。このためネットワークから更新したという意味での「採用ブランチ最新」は確認できず、提供済み作業ツリーの HEAD を調査基準とした。再レビュー時も指定 PR HEAD はローカル object に存在せず、GitHub は認証/ネットワーク制約で参照できなかったため、依頼文に転載されたコメント ID `4012232549`（“Capture the pre-A baseline within Step4-A”）を正本として扱った。巻き戻し、未コミット変更の破棄、採用ブランチへの切替・直接変更はしていない。参照不能な過去会話、添付、ログを確認済みとして扱わない。
+コンテナには remote / 採用ブランチ ref がなく、`git branch -a` で確認できるのは `work` のみだった。このためネットワークから更新したという意味での「採用ブランチ最新」は確認できず、提供済み作業ツリーの HEAD を調査基準とした。追加レビュー時も指定 PR HEAD はローカル object に存在せず、GitHub は認証/ネットワーク制約で参照できなかったため、依頼文に転載されたコメント ID `4013287979`（“Separate the A0 and A1 artifact destinations”）を正本として扱った。巻き戻し、未コミット変更の破棄、採用ブランチへの切替・直接変更はしていない。参照不能な過去会話、添付、ログを確認済みとして扱わない。
 
 ### 実施 / 未実施
 
-* 実施: 指定ソース、設定、文書、比較キット、関連テストの静的調査、既存の非 LLM テスト実行、計画書作成、PR #12 の R1～R3 および追加レビュー `4012232549` の計画への反映。
+* 実施: 指定ソース、設定、文書、比較キット、関連テストの静的調査、既存の非 LLM テスト実行、計画書作成、PR #12 の R1～R3、レビュー `4012232549`、追加レビュー `4013287979` の計画への反映。
 * 未実施: A0 baselineの採取、A1安全修正、実 LLM、通常利用 DB、実画面、性能測定、閾値調整、新規モデル取得、外部 LLM、コード・プロンプト・設定の変更。
 
 ## 1. 目的、範囲、非対象
@@ -193,7 +194,19 @@ Step4-A は同一の実装用PR内で **A0→A1** の順に進める（A0/A1はG
 
 A0では実elapsed/token、`requested/processed/call_kind`など現行から確実に取れない項目を無理に追加しない。取得不能値はmanifestで `not_collected` とし、0・空文字・推測値にしない。stub所要時間は環境参考値または非収集とし、実LLM性能値に使わない。既存ログ由来、stub由来、DB/API由来、実測値を各列の`source`で区別する。
 
-**保存と再実行:** `fta_tool/test_results/step4_a/<fixture_version>/<pre_a_code_sha>/` 相当のGit管理外ディレクトリに、秘密を含まない`manifest.json`、JUnit、構造化した期待/実結果、sanitized logを保存する。CI artifactを使う場合も保持期限とアクセス制御を設定し、GitHubリポジトリへ結果をcommitしない。再実行コマンド、Python/依存版、env flag、fixture hash、DBパスをmanifestへ記録する。A0/A1で一時ディレクトリと新規SQLite DBを毎回作り、通常利用DBへ接続しない。
+**保存と再実行:** Git管理外の`artifact_root`配下を、必ず次の不変な階層で分離する。
+
+```text
+<artifact_root>/step4_a/<fixture_version>/<phase>/<executed_sha>/<run_id>/
+```
+
+* `phase`は`A0`または`A1`、`executed_sha`は実際に実行したコードのフルSHA、`run_id`はUTC時刻＋衝突しないsuffix等の実行ごとの一意IDとする。A0で観測処理を追加した場合、`executed_sha`は`pre_a_code_sha`ではなく、その変更を含む`a0_observation_sha`である。同じSHAの再実行でも新しい`run_id`を発行する。
+* 各run directoryには秘密を含まない`manifest.json`、JUnit、構造化した期待/実結果、sanitized logを保存する。manifest内に比較基準の`pre_a_code_sha`、phase、executed SHA、run ID、再実行コマンド、Python/依存版、env flag、fixture hash、専用DBパス、値のsource/欠測を記録する。
+* 出力先が既に存在したら、ファイルを上書き・削除・追記・混在させず、実行開始前に明示的エラーで停止する。再実行は必ず新しいrun IDと別directoryを使う。確定済みA0 directoryはA1実行、A0/A1再実行、後続比較のいずれからもread-onlyの証跡として扱い、内容を変更しない。
+* A0 manifestの`a1_fix_sha`が`not_created`なら確定後もそのまま保持し、A1 SHA確定を理由にA0 manifestを書き換えない。A1 manifestまたは後述の比較manifestから、使用したA0のphase/executed SHA/run ID/manifest pathを参照する。
+* 比較結果はrun directoryへ混在させず、`<artifact_root>/step4_a/comparisons/<comparison_id>/`等の別directoryへ保存する。比較manifestは使用したA0/A1双方のphase、executed SHA、run ID、manifestの明示的な相対参照を列挙し、「最新」directoryの探索や暗黙選択を禁止する。比較先も既存なら停止し、新しいcomparison IDを使う。
+* CI artifactを使う場合もphase/executed SHA/run IDによる分離と非上書きを維持し、保持期限とアクセス制御を設定する。新しいCI基盤の導入は必須にしない。artifact rootや結果をGitHubリポジトリへcommitしない。
+* A0/A1で一時ディレクトリと新規SQLite DBを毎回作り、通常利用DBへ接続しない。匿名化ダミーデータだけを用い、秘密情報・実業務データを入力・保存しない。欠測は引き続き`not_collected`とし0で埋めない。
 
 修正前コミットを後日再実行する場合は、採用ブランチをreset/revertせず、`git worktree add <temp> <pre_a_code_sha>`等で別作業ディレクトリを作り、その配下の専用DBと仮想環境/固定依存を使う。観測処理が必要なら同じ`a0_observation_sha`のpatchを一時worktreeへ適用した比較用SHAをmanifestに記録する。未コミットpatchの結果を正本にしない。
 
@@ -262,6 +275,8 @@ Step4-Bで全ログsiteと例外経路をinventoryしredaction testを固定す�
 
 A0として、既存期待値を書き換える前に、§6.1の`pre_a_code_sha` / `a0_observation_sha`と`fixture_version`を固定し、次を別suiteに記録する: 部分保持するが provider 要求は元件数、0短絡なし、OFF/ON=legacy、Gate OFF 全除外 retry、legacy不足 retry、provider retry、workflow fallback、保存前再評価、三次全除外 response。fail_soft critical 復帰は専用 regression で「修正前の危険な結果」を実証し、A1後の期待動作suiteと混同しない。A0/A1の比較は候補集合・判定・保存・エラー・stub呼出し数を必須とし、実LLM時間/tokenを必須にしない。
 
+artifact保存契約についても後続実装試験を設ける。同一fixture・同一`pre_a_code_sha`でA0とA1を実行してもphase/executed SHA/run IDにより保存先が分かれること、同一コードの再実行で別run IDになること、既存出力先を指定すると過去ファイルを変更せず停止することを確認する。確定済みA0 directoryの全ファイルhashを取得し、A1実行、A0/A1再実行、比較生成の各前後で不変であることをassertする。比較manifestから使用したA0/A1のphase、executed SHA、run ID、manifestを一意に解決でき、「最新」directory選択に依存しないことも検証する。
+
 ### 8.2 固定候補の純粋判定試験
 
 * 対: 拒否すべき親の語尾言い換え / 採用すべき具体的機序、祖先 exact reversion / 祖先語を含む妥当な下位原因。
@@ -303,7 +318,7 @@ A0として、既存期待値を書き換える前に、§6.1の`pre_a_code_sha`
 
 実在しない番号は付けない。
 
-1. **Step4-A — A0修正前baseline → A1 critical復帰防止**: 同じPRの第一コミットA0で固定fixture/stub/専用DB、既存ログ・test spy中心の最小共通指標を取得し、artifactとSHAを固定する。第二コミットA1でGate ON全終端のfinal sanitizerだけを修正して同条件比較する。W1/W4、E1/E2/E3、正常keep、4種の異常を分離。非対象=本格計測、実LLM性能測定、理由prompt、件数最適化、時間budget、判定変更。完了=A0結果をA1前にレビュー済み、Gate ONでcritical非保存、正常keep保持、生成error/0件/全除外が区別され、呼出し数とGate OFFに意図しない差がない。
+1. **Step4-A — A0修正前baseline → A1 critical復帰防止**: 同じPRの第一コミットA0で固定fixture/stub/専用DB、既存ログ・test spy中心の最小共通指標を取得し、phase/executed SHA/run ID別の非上書きartifactとSHAを固定する。第二コミットA1でGate ON全終端のfinal sanitizerだけを修正して同条件比較し、比較結果はrun証跡と別directoryへ明示参照付きで保存する。W1/W4、E1/E2/E3、正常keep、4種の異常を分離。非対象=本格計測、実LLM性能測定、理由prompt、件数最適化、時間budget、判定変更。完了=A0結果をA1前にレビュー済み、A0証跡不変、Gate ONでcritical非保存、正常keep保持、生成error/0件/全除外が区別され、呼出し数とGate OFFに意図しない差がない。
 2. **Step4-B — 本格的な計測・ログ整備**: A1後を高速化比較用baselineとして、requested/processed/returned/accepted、call-kind、時間/tokenを追加。全文prompt・入力由来文字列・raw errorを削除/ID化/redactし、analyzerをformat version対応。非対象=生成・判定変更。完了=機密ダミーテストと旧/新analyzer互換、欠測定義、**A1安全修正後**baseline。
 3. **Step4-C — 判定ルールを変えない生成コスト改善**: Gate ON部分再生成だけにrequest object/adapter、shortfall伝播、0短絡、processing_limit、品質後target選択を導入。非対象=OFF系契約、severity/閾値、理由prompt。完了=正常保持、先頭NG/後続OK、過少/過剰、全provider/stub、呼出/要求数テスト合格。
 4. **Step4-D — 判定改善**: protected semantics、scope別duplicate、親具体化/祖先/No分類、severity。非対象=理由prompt/総budget。完了=固定gold fixture、人手レビュー、旧新差分説明。Step4-A sanitizerを迂回しない。
@@ -331,7 +346,8 @@ Bで初めて得られるrequested/processed/call-kindや詳細時間/tokenは�
 
 ### 10.1 受入基準
 
-* Step4-AはA0/A1の別コミットで、A0 artifactの`pre_a_code_sha`、必要時の`a0_observation_sha`、A1の`a1_fix_sha`、fixture version/hash、専用DB、再実行コマンド、値のsource/欠測を記録する。A1着手前にA0結果を確定する。
+* Step4-AはA0/A1の別コミットで、A0 artifactの`pre_a_code_sha`、必要時の`a0_observation_sha`、A1の`a1_fix_sha`、fixture version/hash、phase、executed SHA、run ID、専用DB、再実行コマンド、値のsource/欠測を記録する。A1着手前にA0結果を確定する。
+* A0/A1は同一fixture・同一`pre_a_code_sha`でも別保存先、同一コード再実行も別run IDとなる。既存directory指定時は内容を変えず停止し、A1・再実行・比較生成の前後で確定済みA0ファイルhashが不変である。比較結果は別directoryに置き、比較manifestから双方のphase/executed SHA/run ID/manifestを一意に特定できる。
 * **最優先**: Gate ONの初回失敗、再生成失敗、workflow例外、legacy fallbackの全てでW1/W4 criticalとE1/E2/E3が保存対象へ戻らず、正常keepは保持される。生成error、no_candidates、品質all_excludedをAPI/ログで区別する。Gate OFFの既存挙動は不変。
 * target N、keep K に対し要求が `max(0,N-K)`、0時通信なし、保存候補≤N。全 provider/旧stub互換。
 * requested_count、有限processing_limit、品質後target_countが独立し、不足1・先頭NG・後続OKを救済する。OFF系の契約はStep4-Cで変えない。
