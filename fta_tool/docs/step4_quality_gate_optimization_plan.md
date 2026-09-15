@@ -13,12 +13,15 @@
 |調査基準 SHA|`7595aaae57073fbb72d02f88a0859d578c5ef474`|
 |基準確認日時|2026-09-15T01:49:44Z (UTC)|
 |前回参考 SHA|`7595aaae57073fbb72d02f88a0859d578c5ef474`（基準 SHA と同一）|
+|PR #12 確認指定 HEAD|`e15f97434d051b6baa624aede2f8434be19f65ea`|
+|レビュー反映時のローカル HEAD|`edd43090ec0e4e53610a84cdc97dccb614cd1495`|
+|レビュー反映確認日時|2026-09-15 (UTC)|
 
-コンテナには remote / 採用ブランチ ref がなく、`git branch -a` で確認できるのは `work` のみだった。このためネットワークから更新したという意味での「採用ブランチ最新」は確認できず、提供済み作業ツリーの HEAD を調査基準とした。巻き戻し、未コミット変更の破棄、採用ブランチへの切替・直接変更はしていない。同名文書およびその履歴は存在しなかった。参照不能な過去会話、添付、実運用ログは確認済みとして扱わない。
+コンテナには remote / 採用ブランチ ref がなく、`git branch -a` で確認できるのは `work` のみだった。このためネットワークから更新したという意味での「採用ブランチ最新」は確認できず、提供済み作業ツリーの HEAD を調査基準とした。レビュー反映時も `e15f974...` はローカル object に存在せず、GitHub は認証/ネットワーク制約で参照できなかったため、依頼文に転載された R1～R3 をレビューコメントの正本として扱った。巻き戻し、未コミット変更の破棄、採用ブランチへの切替・直接変更はしていない。参照不能な過去会話、添付、ログを確認済みとして扱わない。
 
 ### 実施 / 未実施
 
-* 実施: 指定ソース、設定、文書、比較キット、関連テストの静的調査、既存の非 LLM テスト実行、計画書作成。
+* 実施: 指定ソース、設定、文書、比較キット、関連テストの静的調査、既存の非 LLM テスト実行、計画書作成、PR #12 レビュー R1～R3 の計画への反映。
 * 未実施: 実 LLM、通常利用 DB、実画面、性能測定、閾値調整、新規モデル取得、外部 LLM、コード・プロンプト・設定の変更。
 
 ## 1. 目的、範囲、非対象
@@ -117,7 +120,7 @@ Ollama は `_normalize_factors` / Pydantic 検証後に `filter_generated_factor
 
 |案|採否|根拠|副作用・見送り理由|
 |---|---|---|---|
-|要求件数を `requested_count=max(0,target-len(keep))` として provider/prompt まで伝播|**第一候補**|判定ルールを変えず最大の余剰生成源を直接削る|全 provider/stub の契約更新、過少返答時の扱いが必要|
+|Gate ON 部分再生成の要求件数を `requested_count=max(0,target-len(keep))` として provider/prompt まで伝播|**安全修正後の第一候補**|判定ルールを変えず余剰出力源を直接削る|まず Gate ON/Ollama 境界に限定し、OFF系を一括変更しない。過少・過剰返答の扱いが必要|
 |不足0で provider 呼出しを短絡|**採用**|不要通信を確実に0にする|既存候補が本当に保存可能か集合更新後検査は残す|
 |評価結果を候補 fingerprint＋比較集合 version で再利用|**採用候補**|不変比較の重複を削る|DB保存後に W1/DB 結果が変わるため無条件キャッシュ不可|
 |関係型の段階判定（exact identity / paraphrase / causal refinement / ancestor reversion / cross-branch similarity）|**採用候補**|表層類似を意味・因果の真偽にしない|初期は決定論的特徴＋境界を warning にし、人手データなしで閾値確定しない|
@@ -126,14 +129,26 @@ Ollama は `_normalize_factors` / Pydantic 検証後に `filter_generated_factor
 
 ### 5.1 要求件数 API 案
 
-`generate_fn` を曖昧な `Callable[[avoid_titles], ...]` から、後方互換な request object（`requested_count`, `avoid_titles`, bounded `rejection_feedback`, `attempt`）へ段階移行する。移行中は adapter で旧 stub を支える。`main._call_ai` は request の件数で `context.factor_count` を上書きし、Ollama の `{desired_count}/{min_count}` と切詰め、Mock、Azure prompt、HTTP context に伝える。初回は target、再生成は shortfall。
+`generate_fn` を曖昧な `Callable[[avoid_titles], ...]` から、後方互換な request object（`requested_count`, `processing_limit`, `target_count`, `avoid_titles`, `attempt`）へ段階移行する。理由 feedback は Step4-E まで入れない。移行中は adapter で旧 stub を支える。次の3値を混同しない。
 
-* shortfall = `max(0, target_count - len(valid_keep))`。
-* 0なら LLM を呼ばず keep を返す。target≤0も明示的に0。
-* provider が過少なら返った一意候補だけを併合し、予算内でのみ次試行。過剰なら構造/品質評価前に闇雲に切らず、上限を設けた上で評価し、合格候補から不足分だけ採る方針を比較する。
-* keep、fresh、最終集合を全て target 以下にする。fresh が avoid/keep/同一返答内と exact duplicate なら除外し、近似は関係型判定へ。
-* 正常候補の object と順序を保持し、再生成由来フラグは fresh の採用分だけ。
-* 全 provider が requested_count を尊重したか `requested/returned/accepted/truncated` を記録し、尊重不能な外部 provider は capability として明示する。
+1. **LLM要求件数 (`requested_count`)**: 初回は target、Gate ON 部分再生成は shortfall = `max(0, target_count-len(valid_keep))`。prompt の `{desired_count}` はこれを表す。これはモデルへの依頼であり、返却処理上限や採用保証ではない。
+2. **過剰返答の有限安全上限 (`processing_limit`)**: 応答サイズ/候補数にハード上限を設けるが、通常は `requested_count` より大きい小さな余裕枠を持たせ、品質評価**前**に requested_count へ切らない。値は計測・脅威評価後に確定する。HTTP body、JSON配列、候補文字数にも上限を検討し、無制限処理を許さない。
+3. **品質評価後の最終採用件数 (`target_count`)**: keep と合格 fresh から最大 target 件を決定する。fresh が avoid/keep/同一返答内と exact duplicate なら除外し、近似は品質判定へ渡す。
+
+不足1件の返答 `[先頭=critical, 後続=合格]` は、両方が processing_limit 内なら両方を構造・品質評価し、先頭を落として後続を1件採る。provider内部で requested_count=1 に早期切詰めしてはならない。正常候補の object と順序を保持し、再生成由来フラグは採用 fresh のみへ付ける。shortfall=0 / target≤0 は LLM を呼ばず keep を返す。過少なら合格した分だけ併合し、追加試行は既存予算内に限定する。
+
+#### 経路別の変更契約
+
+|経路|LLM要求|provider返却・処理|最終選択|Step4-Cで変更するか|
+|---|---|---|---|---|
+|初回生成（Gate ON）|従来どおり target|processing_limit 内を評価層へ渡す。Ollamaの現行 `factor_count` 早期切詰め責任を分離|品質後に target 以下|必要な共通境界だけ。生成意味は維持|
+|Gate ON 部分再生成|**targetからshortfallへ変更**|requested_countでは切らず有限余裕枠まで返す|keep＋合格freshをtarget以下|**主対象**|
+|LangGraph ON / Gate OFF|従来どおり target|現行の全体再生成と切詰めを維持|現行契約|対象外|
+|legacy（OFF/OFF・OFF/ON・fallbackのlegacy部）|従来どおり target、件数不足retryも現状維持|現行provider挙動|現行契約|対象外|
+
+Ollama の `filter_generated_factors` は構文正規化後の軽量 provider 品質filterを担うが、Gate severityを決めない。現行の末尾 `factor_count` 切詰めは、Gate ON 部分再生成に限って `processing_limit` へ置換/迂回し、workflowが候補を評価後に不足数を選ぶ。Mock/Azure/HTTPは、Step4-Cでは Gate ON request adapter の互換試験を行うが、OFF系の出力契約まで一括変更しない。尊重不能な外部providerは capability と requested/returned差を記録する。
+
+要求件数削減で期待するのは主に**出力token・単一推論時間の削減**である。一方、理由付き再生成や停止条件による**論理/物理通信回数の削減**は別仮説であり Step4-E の評価対象。短い要求でも余剰出力するモデルや再試行増加もあり得るため、いずれも実測前に効果を確定しない。
 
 ### 5.2 判定改善案
 
@@ -150,17 +165,35 @@ Ollama は `_normalize_factors` / Pydantic 検証後に `filter_generated_factor
 
 ## 6. 再生成、停止、fallback 設計
 
-### 6.1 理由付き再生成
+### 6.1 最初に行う critical 復帰防止（Step4-A）
+
+characterization test と必要最小限の現状ログを先に固定し、**最初の振る舞い変更**として Gate ON の全終端に共通 final sanitizer を適用する。現行 E/W判定、閾値、prompt、要求件数、総時間予算は変えない。
+
+|事象|Gate ONの最小修正後|API上の意味|
+|---|---|---|
+|初回provider失敗、usable attemptなし|生成エラーとして workflow errorを保持し、legacy fallbackを試す。fallbackも失敗ならerror|`success:false`。候補0と品質全除外にしない|
+|再生成provider失敗、正常keepあり|正常な非critical keepだけ保持。W1/W4 criticalとE1/E2/E3はrejectedに残す|成功だがpartial/警告。生成エラーを品質rejectに読み替えない|
+|再生成provider失敗、正常keepなし|criticalを復帰せずreject|provider error情報と品質全除外を別フィールド/ログで保持。0件（LLM無返却）と区別|
+|workflow node/graph例外|例外前の評価済み正常keepだけsanitizer経由で利用。安全に分類不能ならfallbackも同じGate policyで検査|workflow error/fallback reasonを残す|
+|legacy fallbackが候補を返す|Gate ON要求である限り現行Gateルールのfinal sanitizerを通す|criticalを保存せず、生成回復と品質結果を別表示|
+|品質評価で全件critical|provider errorではなく品質reject|`success:true`, created=0, `all_candidates_excluded:true` と理由|
+|LLMが0件返却|品質rejectではなくno_candidates|既存の0件メッセージを維持|
+
+sanitizer は評価済み `kept_noncritical` を入力にし、W1/W4 criticalを排除する。E1/E2/E3は従来どおり除外され、raw candidateやbest attemptを直接保存へ渡さない。正常候補はobject・順序・warningを保持する。初回失敗、再生成失敗、workflow例外、fallbackそれぞれを独立テストし、生成エラー情報と品質結果の両方を失わない。
+
+**Gate OFF条件**: `quality_gate=false` の `fail_soft`、全体再生成、best attempt選択、legacy fallback、E1/E2/E3保存前除外、W1/W4警告保存、APIメッセージを変更しない。共通関数化しても Gate ON branchだけで sanitizerを有効化し、OFF/OFF、OFF/ON、ON/OFFのcharacterizationを受入条件にする。
+
+### 6.2 理由付き再生成（Step4-E）
 
 各 NG について `candidate_title`, `rule_id`, `severity`, `reason_label`, `compared_scope`, `compared_title`（必要時だけ）、`attempt` を構造化する。prompt には今回置換する候補の短い理由、回避 title、維持 title、requested_count を上限付きで渡す。過去 NG は canonical fingerprint で重複排除し、直近 N 試行/文字数上限を設ける。説明全文・全分析履歴・秘密情報は無制限に入れない。
 
 追跡レコードには candidate id/fingerprint、origin attempt、requested/returned、判定履歴、最終保存有無と node id（保存時）、regen origin を持たせる。既存 API キーと CSV 列は削除・改名せず追加項目/末尾列に限定する。UI の「再生成由来」と「品質警告」を別フィールドにし、当面 `warning_flags` の既存表示との adapter を保つ。
 
-### 6.2 予算と停止条件
+### 6.3 予算と停止条件（Step4-E）
 
 親単位の `max_logical_generation_calls`、`max_provider_attempts`、wall-clock deadline、target_count を一つの budget object で管理する。既定値の変更は計測後。停止は、(a) target の保存可能候補確保、(b) shortfall=0、(c) retry/通信/時間予算到達、(d)同一 NG fingerprint の連続再出力、(e)非retryable error。回数は initial、Gate regen、provider retry、legacy fallback を別カウンタと総数の両方で記録する。
 
-### 6.3 fail-soft / fallback 安全性
+### 6.4 fail-soft / fallback の最終形
 
 * Gate ON はどの終端（provider error を含む）でも `final_candidates = noncritical usable subset` という一つの sanitizer を必ず通す。raw/best attempt を直接保存層へ返さない。
 * 再生成失敗時は正常 keep のみを warning 付きで返し、critical は `rejected` に残す。正常候補ゼロなら reject。fallback は「生成インフラ全体が初回から失敗し候補ゼロ」等に限定する。
@@ -171,7 +204,21 @@ Ollama は `_normalize_factors` / Pydantic 検証後に `filter_generated_factor
 
 保持するもの: API URL/既存 response key、`GeneratedFactor`、通常 DB schema、既存 CSV 列順、JSON/Markdown、warning表示、分離 context、追加生成、OFF/OFF と OFF/ON の legacy 実効性。
 
-追加候補: `generation_id`, 親/階層、attempt、call_kind、provider_attempt、requested_count、returned_count、kept/rejected/saved、shortfall、token 数、initial/regen/gate/total elapsed、stop_reason、fallback_reason、rule_id/severity/scope、final_saved。ログに prompt 本文、秘密、業務実データを残さない。時間単位は wall-clock `ms`、Ollama duration は元値 ns と変換後 ms を明記する。API/CSV に新情報を出す場合は追加のみとし、旧 consumer fixture を回帰試験する。
+追加候補: `generation_id`, 親/階層、attempt、call_kind、provider_attempt、requested_count、returned_count、kept/rejected/saved、shortfall、token 数、initial/regen/gate/total elapsed、stop_reason、fallback_reason、rule_id/severity/scope、final_saved。時間単位は wall-clock `ms`、Ollama duration は元値 ns と変換後 ms を明記する。API/CSV に新情報を出す場合は追加のみとし、旧 consumer fixture を回帰試験する。
+
+### 7.1 ログ情報保護（Step4-B、緊急性があればStep4-Aへ前倒し）
+
+現行実装は「入力内容を通常計測ログへ残さない」という目標と未整合である。`OllamaProvider.generate_factors` は完成promptを `logger.debug` へ出し、`FTA_DEBUG_PROMPT=true` ならINFOへ全文出力する。また provider/workflow/main の多数のログが `parent`, `title`, warningの比較相手・理由を `%r/%s` で出し、HTTPエラー本文や例外文字列にも外部レスポンス/入力が混入し得る。これは調査・後続修正対象であり、既に安全とみなさない。
+
+方針は次のとおり。
+
+* 全文promptログを既定/DEBUG/`FTA_DEBUG_PROMPT=true` の全てで削除するか、明示的なローカル診断sink（Git管理外、短期保存、強い警告）へ隔離する。INFOへの昇格機能は廃止候補。
+* parent/title/比較相手は `analysis_id`, `parent_id`, `candidate_index`, session内salt付きhash等へID化する。理由は自由文でなく `rule_id` / severity / scopeへ置換する。件数、decision、attempt、時間、token、stop/error kindは維持する。
+* 例外は許可リスト化した `error_kind`, HTTP status, retryableだけを通常ログへ出し、response body、URL query、header、exception raw textを出さない。秘密キーは従来どおりsnapshotでmaskし、ログにも同じredactionを共通適用する。
+* analyzerは新しい構造化keyを優先し、移行期間だけ旧ログを読めるようにする。content非依存の件数・時間・decision集計を欠落させず、format versionを記録する。
+* 人手品質評価に必要な候補内容は通常計測ログから分離し、明示同意された匿名化evaluation artifactへ最小限保存する。アクセス・保存期限・削除手順を定め、実業務データ、秘密、未匿名化内容をGit/GitHub/PR artifactへ登録しない。
+
+Step4-Bで全ログsiteと例外経路をinventoryしredaction testを固定する。ただし全文promptが実運用で有効な場合は、critical復帰防止と同じStep4-A内の独立コミットへ前倒しできる。いずれも生成ロジック変更とは分けて比較可能にする。
 
 現比較 analyzer はログと export から時間、decision、品質等を集約する基盤として再利用する。要求数、呼出種別/総数、token、全除外の分母、誤棄却/見逃し、人手ラベル列だけを後続 PR で拡張する。
 
@@ -196,11 +243,13 @@ Ollama は `_normalize_factors` / Pydantic 検証後に `filter_generated_factor
 全 provider adapter と旧 callable stub の契約を対象にする。
 
 * shortfall 0（呼出0）、正常2＋問題1（要求1、正常object維持）、過少0/要求未満、過剰、avoid候補再出力、同一 batch 重複、target上限。
+* 不足1に `[先頭critical, 後続合格]` を返し、有限processing_limit内の後続を評価・採用する。上限超過分は処理せず、requested=1、processed件数、採用=1を別々にassertする。
 * 全除外、全構造不正、再生成例外、初回例外、fallback、retry budget/deadline、同一NG停止。
 * fail_soft/fallback の全終端で critical 非復帰、usable 正常候補は保持。
 * OFF/OFF、OFF/ON、ON/OFF、ON/ON、一次～三次、追加生成、複数親。
 * context 更新 API 後の最新 `system_context` / `incident_context` が次生成に渡り、top_event と別フィールドのままであること。
 * API 既存 key、全除外 message、ログ、JSON/CSV/Markdown列、regen表示とwarning表示の互換。
+* ダミー機密文字列（擬似API key、顧客名、parent/title/context、悪意あるerror body）を入れ、通常INFO、DEBUG、`FTA_DEBUG_PROMPT=true`、timeout/HTTP/JSON/workflow例外の各ログに原文がないことをassertする。一方、event、ID、error kind、件数、時間、tokenが残りanalyzerで集計できることもassertする。
 
 ### 8.4 実 LLM 比較（別 PR、承認環境のみ）
 
@@ -220,28 +269,42 @@ Ollama は `_normalize_factors` / Pydantic 検証後に `filter_generated_factor
 
 実在しない番号は付けない。
 
-1. **計測・再現**: characterization、fail_soft安全性再現、requested/returned/call-kind/時間/token計測と analyzer 最小拡張。非対象=判定・prompt変更。完了=現状が再現でき欠測定義と before 基準が取れる。
-2. **判定ルールを変えない生成コスト改善**: request object/adapter、shortfall伝播、0短絡、上限・過少/過剰、全 provider/stub。非対象=severity/閾値変更。完了=既存判定結果同等、正常候補保持、呼出/要求数テスト合格。
-3. **判定改善**: protected semantics、scope別duplicate、親具体化/祖先/No分類、severity。非対象=理由prompt/fallback変更。完了=固定 gold fixture、人手レビュー、旧新判定差分説明。
-4. **理由付き再生成・異常系**: bounded feedback、停止budget、統一final sanitizer、fail_soft/fallback安全化、追跡ログ/API additive metadata。非対象=モデル/DB schema/UI刷新。完了=全異常終端でcritical非保存、互換試験合格。
-5. **実 LLM 比較**: 比較キット必要最小拡張、主比較・対照・固定親・E2E、人手評価報告。非対象=測定中の閾値後付け調整、モデル変更。完了=再現メタデータ、生値、欠測、品質/速度双方の判断と採否提案。
+1. **Step4-A — critical復帰防止**: 先にfail_soft/fallback characterizationと最小ログを追加し、次のコミットでGate ON全終端のfinal sanitizerだけを修正。W1/W4、E1/E2/E3、正常keep、4種の異常を分離。非対象=理由prompt、件数最適化、時間budget、判定変更。完了=Gate ONでcritical非保存、正常keep保持、生成error/0件/全除外が区別され、Gate OFF回帰が合格。
+2. **Step4-B — 計測・ログ整備**: 修正前baselineを保存し、requested/processed/returned/accepted、call-kind、時間/tokenを追加。全文prompt・入力由来文字列・raw errorを削除/ID化/redactし、analyzerをformat version対応。非対象=生成・判定変更。完了=機密ダミーテストと旧/新analyzer互換、欠測定義、before基準。
+3. **Step4-C — 判定ルールを変えない生成コスト改善**: Gate ON部分再生成だけにrequest object/adapter、shortfall伝播、0短絡、processing_limit、品質後target選択を導入。非対象=OFF系契約、severity/閾値、理由prompt。完了=正常保持、先頭NG/後続OK、過少/過剰、全provider/stub、呼出/要求数テスト合格。
+4. **Step4-D — 判定改善**: protected semantics、scope別duplicate、親具体化/祖先/No分類、severity。非対象=理由prompt/総budget。完了=固定gold fixture、人手レビュー、旧新差分説明。Step4-A sanitizerを迂回しない。
+5. **Step4-E — 理由付き再生成・予算管理**: bounded feedback、統合call/time budget、停止条件、追跡metadata。非対象=モデル/DB schema/UI刷新。完了=同一NG停止、全異常終端、互換試験合格。
+6. **Step4-F — 実LLM比較**: 比較キット必要最小拡張、改修前/後ON-ON主比較、対照、固定親、E2E、人手評価。非対象=測定中の閾値後付け調整、モデル変更。完了=再現metadata、生値、欠測、品質/速度双方の採否提案。
 
-依存は 1→2、1→3、2+3→4、全て→5。2と3は基準 fixture を固定後なら並行可能だが、同一 PR に混ぜず効果帰属を保つ。
+依存は **A→B→C→D→E→F** を基本とする。少なくともAより先にC/Dをmergeしない。BはA修正前の同一fixtureを先に採取し、A後にも再実行して安全差分を残す。各段階で直前commit対当該commitを同じ固定fixture/stubで比較し、Fでは元の改修前ON-ONも主比較基準として保持する。計画識別子はGitHub PR番号ではない。
+
+### 9.1 この文書作成時のテスト記録
+
+前回作成時（旧計画コミット）の結果と、レビュー反映時の結果を混同しない。
+
+|時点|コマンド|結果|
+|---|---|---|
+|前回|`cd fta_tool && pytest tests/ -q`|11 collection errors。`httpx`, `fastapi`, `sqlalchemy`, `pydantic`不足。未実行部分を合格扱いしない|
+|前回|`cd fta_tool && pytest -q tests/test_factor_quality.py tests/test_factor_score.py tests/test_analyze_langgraph_comparison.py tests/test_run_langgraph_comparison_script.py`|69 passed, 3 failed, 1 skipped。3 failedはPyYAML不足|
+|今回|`cd fta_tool && pytest tests/ -q`|再実行: 11 collection errors。`httpx`, `fastapi`, `sqlalchemy`, `pydantic`不足。依存は変更せず、未収集テストを合格扱いしない|
+|今回|`cd fta_tool && pytest -q tests/test_factor_quality.py tests/test_factor_score.py tests/test_analyze_langgraph_comparison.py tests/test_run_langgraph_comparison_script.py`|再実行: 69 passed, 3 failed, 1 skipped。3 failedはPyYAML不足|
 
 ## 10. 受入基準、ロールバック、未決事項
 
 ### 10.1 受入基準
 
+* **最優先**: Gate ONの初回失敗、再生成失敗、workflow例外、legacy fallbackの全てでW1/W4 criticalとE1/E2/E3が保存対象へ戻らず、正常keepは保持される。生成error、no_candidates、品質all_excludedをAPI/ログで区別する。Gate OFFの既存挙動は不変。
 * target N、keep K に対し要求が `max(0,N-K)`、0時通信なし、保存候補≤N。全 provider/旧stub互換。
+* requested_count、有限processing_limit、品質後target_countが独立し、不足1・先頭NG・後続OKを救済する。OFF系の契約はStep4-Cで変えない。
 * 正常候補を再生成せず、avoid再出力/過少/過剰/失敗でも重複・critical を保存しない。
 * 固定 fixture で言い換えと具体化、逆戻りと語句共有具体化、scope別重複、No同一仮説と別仮説、protected状態差を区別する。境界は明示的 uncertain。
 * DB exact と最新集合に依存する保存前検査は維持し、不変評価だけを安全に再利用。
-* API/export/context/OFF系が回帰せず、総呼出数と停止理由が監査可能。
-* 実測で品質非劣化を人手確認し、速度効果は固定親・同一条件で報告。数値合格線は PR1 の baseline と必要データから承認して確定する。
+* API/export/context/OFF系が回帰せず、総呼出数と停止理由が監査可能。全ログlevel/診断flag/error経路で機密ダミー原文が出ず、内容非依存の計測値はanalyzerで読める。
+* 実測で品質非劣化を人手確認し、速度効果は固定親・同一条件で報告。数値合格線は Step4-B の baseline と必要データから承認して確定する。
 
 ### 10.2 ロールバック
 
-PR ごとの feature flag / adapter で旧 requested-count、旧 rules、理由feedbackを独立に戻せるようにする。ただし critical 復帰防止 sanitizer は安全修正として、ロールバックより hotfix を優先する。DB migrationを初期案に含めず、API追加キーとログは旧 consumerが無視可能にする。rollback時も分離 context と保存前DB重複防止を外さない。
+段階ごとの feature flag / adapter で新ログ形式、requested-count、rules、理由feedbackを独立に戻せるようにする。ただし Step4-A critical復帰防止 sanitizer とログ秘密漏えい防止は安全修正として、旧挙動へのrollbackよりforward fixを優先する。Aを戻さずC/D/Eだけを戻せる境界にする。DB migrationを初期案に含めず、API追加キーとログは旧 consumerが無視可能にする。rollback時も分離 context、Gate ON sanitizer、保存前DB重複防止を外さない。
 
 ### 10.3 未決事項・必要データ
 
@@ -250,6 +313,8 @@ PR ごとの feature flag / adapter で旧 requested-count、旧 rules、理由f
 * false reject / miss の業務許容度と uncertain の保存/表示方針。
 * protected語彙、形態素処理の必要性、cross-branch類似の扱い、No評価の有効範囲。
 * requested_countを尊重できない外部 HTTP provider の capability/バージョニング。
+* processing_limitの余裕幅、response byte/候補文字数上限、候補選択の安定順序。
+* DEBUG診断情報の保管先・権限・保持期限と、人手評価artifactの承認/匿名化手順。
 * 総呼出/時間budgetと数値受入線。根拠データなしに現時点で確定しない。
 
 三次要因の全除外について、現リポジトリには正しい除外と誤棄却を判定できる実候補・人手正解がない。まず必要データを採取・匿名化し、全除外率だけでなく候補単位 confusion と undecidable を報告する。
@@ -272,4 +337,4 @@ PR ごとの feature flag / adapter で旧 requested-count、旧 rules、理由f
 
 ---
 
-本計画の次工程は PR 1 の計測・再現であり、本書作成に続けて実装、閾値、prompt、mergeを行わない。
+本計画の次工程は **Step4-Aのcharacterization後に行うcritical復帰防止の最小安全修正**である。Step4-B以降の最適化より先に実施する。本書のレビュー反映は将来のプログラム修正完了を意味せず、ここから続けて実装、閾値、prompt、mergeを行わない。
