@@ -34,7 +34,7 @@
 | UI-01 | 一覧 | 更新日時降順の分析を開く | title、頂上事象、作成/更新日時 | 0件は空状態と作成CTA | `app/main.py:index`, `app/crud.py:get_analyses`, `app/templates/index.html` | コード確認 |
 | UI-02 | 一覧 | titleをインライン改名 | 必須、255文字以内。Enter/保存、Esc/取消 | `Analysis.title`, `updated_at`。成功/失敗トースト | `app/static/app.js:startTitleRename/saveAnalysisTitle`, `app/main.py:update_title` | コード確認 |
 | UI-03 | 一覧 | 分析を削除 | 名前、全要因・評価・メモも消える旨をconfirm | Analysisと全Nodeをcascade削除。成功後reload | `app/static/app.js:deleteAnalysis`, `app/main.py:delete_analysis`, `app/models.py:Analysis.nodes` | コード確認 |
-| UI-04 | 一覧/編集 | JSON/CSV/MD出力 | 分析存在時。項目差は§6 | ダウンロード。不存在は404 | `app/main.py:export_analysis_json/export_analysis_csv/export_analysis_markdown`, `app/services/export_service.py` | コード確認 |
+| UI-04 | 一覧/編集 | JSON/CSV/MD出力 | 分析存在時。項目差は§6 | 正常時はファイル出力。対象分析が不存在でもHTTP 200で、JSONはエラーオブジェクト、CSVは空本文、Markdownはエラー文書を返す（詳細は§6） | `app/main.py:export_analysis_json/export_analysis_csv/export_analysis_markdown`, `app/services/export_service.py` | コード確認 |
 | UI-05 | 新規 | 分析を作成 | title必須。頂上事象、2種contextは任意 | Analysis作成。contextはJSON。成功後編集へ。サーバ側title長上限なし | `app/templates/analysis_form.html`, `app/main.py:create_analysis`, `app/models.py:Analysis` | コード確認 |
 | UI-06 | 新規 | デモsampleをpreviewし入力欄へ転記 | category、頂上事象、context、demo points | 適用時は未保存、form送信で保存 | `app/services/sample_scenarios.py:get_sample_scenarios`, `app/templates/analysis_form.html:onSampleSelect/applySample` | コード確認 |
 | UI-07 | 編集 | 分析title/頂上事象を更新 | title必須・255文字、頂上事象は空保存可 | titleはblur/Enter、頂上事象はボタン。**未保存の頂上事象を生成前に保存するのは一次の通常生成・一次の追加生成だけ** | `app/templates/analysis_detail.html`, `app/static/app.js:saveAnalysisTitle/saveTopEvent/ensureTopEventReady/generateFactors/generateAdditional` | コード確認 |
@@ -90,6 +90,18 @@
 - **JSON**: Analysisメタ情報、context、Nodeの全主要項目。
 - **CSV**: Nodeを1行ずつ、評価、詳細、warning、品質statusを出す。Analysis contextは含まない。
 - **Markdown**: 頂上事象、context、tree、利用者評価、直接要因status/comment/再発防止策。Node description、根拠、memo、warningは出さない。
+
+### 対象分析が存在しない場合
+
+現行のエクスポート用ルートは、分析の不存在に対して404を返さない。出力サービスの戻り値を既定のHTTP 200で返す。
+
+- JSON: `{"error": "Analysis not found"}`
+- CSV: 空の本文
+- Markdown: `# エラー` と `分析が見つかりません。` を含む文書
+
+これはコード確認による現行挙動であり、実機での再現確認は未実施。404化や画面上のエラー通知の改善は、別途判断する仕様変更とする。
+
+根拠は、`app/main.py` の `export_analysis_json()`、`export_analysis_csv()`、`export_analysis_markdown()` と、`app/services/export_service.py` の `export_json()`、`export_csv()`、`export_markdown()` である。
 
 ## 7. READMEとの照合
 
