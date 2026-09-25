@@ -369,6 +369,8 @@ SQLite (`fta_tool.db`) をローカルに自動生成します。テーブルは
 | GET | `/analyses/new` | 新規作成フォーム |
 | POST | `/analyses` | 分析作成 |
 | GET | `/analyses/{id}` | 分析詳細・編集 |
+| POST | `/analyses/{id}/title` | 分析タイトル更新 |
+| POST | `/analyses/{id}/context` | 分析コンテキスト更新 |
 | POST | `/analyses/{id}/delete` | 分析削除（配下の要因も削除） |
 | POST | `/analyses/{id}/top-event` | 頂上事象更新 |
 | POST | `/analyses/{id}/generate/level/{level}` | AI要因生成（`{"additional": true}` で追加生成） |
