@@ -13,6 +13,15 @@ FTA（フォルトツリー解析）を支援するWebアプリケーション�
 - **Yes/No評価**: 各要因に対してユーザが妥当性を評価
 - **直接要因評価**: 要因ごとに根拠・防止策・コメントを記録
 - **エクスポート**: JSON / CSV / Markdown形式で出力
+- **分析コンテキスト**: 頂上事象と分けてシステム構成・対象範囲、障害発生時の状況・観測事実を保存し、AI生成の参考情報に使用
+- **手動追加・品質警告**: AIを使わない要因追加と、生成候補の品質チェック結果（「要確認」）の表示
+
+## UI仕様・再設計資料
+
+- [現行画面・操作仕様](docs/ui-current-spec.md) — 実装を根拠にした画面、操作、状態、README照合結果
+- [UI再設計ブリーフ](docs/ui-redesign-brief.md) — Claude Designへ渡す制約、シナリオ、必要素材
+
+> 上記は調査時点の現行仕様です。生成品質の詳細は引き続き `docs/` 内の各専用文書を参照してください。
 
 ## ディレクトリ構成
 
@@ -360,6 +369,8 @@ SQLite (`fta_tool.db`) をローカルに自動生成します。テーブルは
 | GET | `/analyses/new` | 新規作成フォーム |
 | POST | `/analyses` | 分析作成 |
 | GET | `/analyses/{id}` | 分析詳細・編集 |
+| POST | `/analyses/{id}/title` | 分析タイトル更新 |
+| POST | `/analyses/{id}/context` | 分析コンテキスト更新 |
 | POST | `/analyses/{id}/delete` | 分析削除（配下の要因も削除） |
 | POST | `/analyses/{id}/top-event` | 頂上事象更新 |
 | POST | `/analyses/{id}/generate/level/{level}` | AI要因生成（`{"additional": true}` で追加生成） |
