@@ -2,7 +2,7 @@
 
 > この資料は、画面改修の検討のためにリポジトリへ取り込んだ**提案**です。**現行仕様ではありません**。
 > 現行の画面・操作仕様は [ui-current-spec.md](../ui-current-spec.md) を正とします。
-> 本番実装の計画と、未決定事項への推奨案は [ui-redesign-implementation-plan.md](../ui-redesign-implementation-plan.md) にあります。
+> 本番実装の計画と、未決定事項への推奨案・利用者の判断（2026-09-27）は [ui-redesign-implementation-plan.md](../ui-redesign-implementation-plan.md) の第6節に記録しています。この資料（原文）は判断後も変更していません。
 
 ## 取り込み記録（取り込み時に追加した部分）
 
