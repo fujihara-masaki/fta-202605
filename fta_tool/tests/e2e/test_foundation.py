@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -119,6 +120,34 @@ def test_notifications_success_closes_error_stays(page, page_watch, e2e_server):
     # Live regions are present with the expected roles.
     expect(page.locator("#ui-live-status")).to_have_attribute("role", "status")
     expect(page.locator("#ui-live-alert")).to_have_attribute("role", "alert")
+
+
+@pytest.mark.acceptance("PR1-BASE-NOTIFY")
+def test_notification_stack_stays_bounded(page, e2e_server):
+    """Persistent errors must not pile up and cover the page (PR #16 review)."""
+    page.goto("/")
+    page.evaluate(
+        """async () => {
+             const { notify } = await import('/static/js/common/notify.js');
+             for (let i = 0; i < 4; i += 1) notify('同じエラー', { type: 'error' });
+           }"""
+    )
+    errors = page.locator(".ui-toast--error")
+    expect(errors).to_have_count(1)  # the same error again updates the one shown
+    expect(errors).to_contain_text("同じエラー（4回）")
+
+    max_toasts = page.evaluate("async () => (await import('/static/js/common/notify.js')).MAX_TOASTS")
+    page.evaluate(
+        """async () => {
+             const { notify } = await import('/static/js/common/notify.js');
+             for (let i = 1; i <= 7; i += 1) notify(`別のエラー${i}`, { type: 'error' });
+             notify('最新の完了', { type: 'success' });
+           }"""
+    )
+    expect(page.locator(".ui-toast")).to_have_count(max_toasts)
+    expect(page.locator(".ui-toast--success")).to_contain_text("最新の完了")  # the newest is kept
+    expect(errors).to_have_text([re.compile(f"別のエラー{i}") for i in (4, 5, 6, 7)])
+    expect(page.locator(".ui-toast", has_text="同じエラー")).to_have_count(0)  # oldest closed first
 
 
 # ----- PR1-BASE-STORAGE -------------------------------------------------------

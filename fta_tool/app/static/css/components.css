@@ -328,6 +328,12 @@ a.ui-btn--primary:hover {
   margin: 0;
   overflow-wrap: anywhere;
 }
+.ui-toast__count {
+  margin-left: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+}
 .ui-toast__close {
   flex: none;
   min-height: 28px;
