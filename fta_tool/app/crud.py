@@ -1,11 +1,26 @@
 from datetime import datetime
 from typing import Optional
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from . import models, schemas
 
 
 def get_analyses(db: Session):
     return db.query(models.Analysis).order_by(models.Analysis.updated_at.desc()).all()
+
+
+def count_nodes_by_analysis(db: Session) -> dict[int, int]:
+    """Number of factors per analysis, in one grouped query.
+
+    Used by the list page's delete confirmation (the count is the value at
+    the time the list was rendered). Analyses without factors are absent.
+    """
+    rows = (
+        db.query(models.Node.analysis_id, func.count(models.Node.id))
+        .group_by(models.Node.analysis_id)
+        .all()
+    )
+    return {analysis_id: count for analysis_id, count in rows}
 
 
 def get_analysis(db: Session, analysis_id: int):

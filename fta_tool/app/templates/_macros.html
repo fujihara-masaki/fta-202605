@@ -1,0 +1,29 @@
+{#- Shared UI parts (import with: {% import "_macros.html" as ui %}) -#}
+
+{#- Export menu: the existing export URLs, with a short description of what
+    each format contains (plan section 4, UI-04 note; based on
+    services/export_service.py). The download attribute keeps the page in
+    place, so no leave confirmation is shown while an input is unsaved. -#}
+{% macro export_menu(analysis_id, analysis_title, button_class="ui-btn ui-btn--sm") -%}
+{%- set formats = [
+  ("json", "JSON（.json）", "分析タイトル・頂上事象・参考情報・作成／更新日時と、要因のすべての項目（階層・説明・AI／手動・評価・直接要因評価・根拠・再発防止策・メモ・品質警告）"),
+  ("csv", "CSV（.csv）", "要因の一覧（1行に1要因。階層・親要因・説明・AI／手動・評価・直接要因評価・根拠・再発防止策・メモ・品質警告）。分析タイトル・頂上事象・参考情報は含みません"),
+  ("markdown", "Markdown（.md）", "頂上事象・参考情報（デモ観点を含む）と、要因の階層・評価・直接要因評価・コメント・再発防止策。分析タイトル・説明・AI／手動・根拠・メモ・品質警告は含みません"),
+] -%}
+<div class="ui-menu" data-ui-menu>
+  <button type="button" class="{{ button_class }}" data-ui-menu-button aria-expanded="false" aria-controls="export-menu-{{ analysis_id }}">出力<span class="visually-hidden" data-bind-title>：{{ analysis_title }}</span><span class="ui-menu__caret" aria-hidden="true">▾</span></button>
+  <div class="ui-menu__panel" id="export-menu-{{ analysis_id }}" data-ui-menu-panel hidden>
+    <p class="ui-menu__heading">出力する形式を選んでください（ファイルを保存します）</p>
+    <ul class="ui-menu__list">
+      {%- for fmt, label, description in formats %}
+      <li>
+        <a class="ui-menu__item" href="/analyses/{{ analysis_id }}/export/{{ fmt }}" download data-export-format="{{ fmt }}">
+          <span class="ui-menu__label">{{ label }}</span>
+          <span class="ui-menu__desc">{{ description }}</span>
+        </a>
+      </li>
+      {%- endfor %}
+    </ul>
+  </div>
+</div>
+{%- endmacro %}
