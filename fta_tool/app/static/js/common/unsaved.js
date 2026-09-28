@@ -3,7 +3,8 @@
 // Screens register "save sources" (an input that can be saved). A source is
 // bound to its target when editing starts and describes itself:
 //   { id, order, label (string | () => string),
-//     isDirty(), isSaving()?, whenIdle()?, validate()?, save(), discard() }
+//     isDirty(), isSaving()?, whenIdle()?, validate()?, save()?, discard(),
+//     prompt? }
 // isDirty() must compare with the same normalisation used when saving
 // (text.js normalizeText), so typing and then restoring the original is not
 // "unsaved".
@@ -16,10 +17,15 @@
 // - Browser navigation (reload, back, closing the tab) gets the browser's own
 //   confirmation via beforeunload, registered only while something is unsaved
 //   or being saved, so back/forward caching is not blocked otherwise.
+// - A source that cannot be saved from the dialog leaves out save() (the
+//   new-analysis form: saved only by its own 作成して編集へ). While such a
+//   source has unsaved input the dialog offers only 続ける / 破棄して移動,
+//   worded by the source's optional `prompt`:
+//     { title, lead, note, continueLabel }
 //
-// Scope in PR-1: the list screen's inline rename is the only source. The
-// full save-coordination contract of plan 5.9.3 (edit-screen sources and the
-// generation state of J-01) is completed in PR-4.
+// Scope: the list screen's inline rename (PR-1) and the new-analysis form
+// (PR-2, discard-only). The full save-coordination contract of plan 5.9.3
+// (edit-screen sources and the generation state of J-01) is completed in PR-4.
 
 import { el } from './dom.js';
 import { openDialog } from './dialog.js';
@@ -183,9 +189,47 @@ async function saveAll(dialog) {
   }
 }
 
+function pendingList(pending) {
+  return el('ul', { class: 'ui-dialog__list' }, pending.map((source) => el('li', {}, labelOf(source))));
+}
+
+function discardAll() {
+  dirtySources().forEach((source) => attempt(() => source.discard(), null));
+}
+
+// Two choices only, for input that this dialog cannot save (J-12: the
+// new-analysis form is saved by its own button, so no 保存して移動).
+function askToDiscard(invoker, pending, prompt = {}) {
+  const dialog = openDialog({
+    title: prompt.title || '保存していない入力があります',
+    body: [
+      prompt.lead || '次の入力はまだ保存されていません。',
+      pendingList(pending),
+      prompt.note || '移動すると、入力した内容は失われます。',
+    ],
+    actions: [
+      { id: 'continue', label: prompt.continueLabel || '入力を続ける', autofocus: true },
+      { id: 'discard', label: '破棄して移動', variant: 'danger-outline' },
+    ],
+    invoker,
+    cancelAction: 'continue',
+    onAction: (actionId, controller) => {
+      if (actionId === 'discard') {
+        discardAll();
+        controller.close('discarded', { restoreFocus: false });
+      } else {
+        controller.close('continue');
+      }
+    },
+  });
+  return dialog.result;
+}
+
 function askAboutUnsaved(invoker) {
   const pending = dirtySources();
-  const list = el('ul', { class: 'ui-dialog__list' }, pending.map((source) => el('li', {}, labelOf(source))));
+  const unsavable = pending.find((source) => typeof source.save !== 'function');
+  if (unsavable) return askToDiscard(invoker, pending, unsavable.prompt);
+  const list = pendingList(pending);
   const dialog = openDialog({
     title: '保存していない変更があります',
     body: [
@@ -204,7 +248,7 @@ function askAboutUnsaved(invoker) {
       if (actionId === 'continue') {
         controller.close('continue');
       } else if (actionId === 'discard') {
-        dirtySources().forEach((source) => attempt(() => source.discard(), null));
+        discardAll();
         controller.close('discarded', { restoreFocus: false });
       } else if (actionId === 'save') {
         saveAll(controller);

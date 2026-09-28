@@ -15,28 +15,20 @@
 
 from __future__ import annotations
 
-import socket
-
 import pytest
 
 from tests.e2e import acceptance
-from tests.e2e.support import PageWatcher, start_server
+from tests.e2e.support import PageWatcher, free_port, start_server
 
 VIEWPORTS = [(1280, 800), (1440, 900)]
 
 WATCHER_KEY = pytest.StashKey[PageWatcher]()
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
 @pytest.fixture(scope="session")
 def e2e_server(tmp_path_factory):
     workdir = tmp_path_factory.mktemp("e2e-server")
-    server = start_server(workdir, _free_port())
+    server = start_server(workdir, free_port())
     try:
         yield server
     finally:

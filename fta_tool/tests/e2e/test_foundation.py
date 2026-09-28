@@ -53,8 +53,11 @@ def test_E_X01_no_request_leaves_the_app(page, page_watch, e2e_server):
 
     page.goto("/analyses/new")
     expect(page.locator("h1")).to_have_text("新規FTA分析を作成")
-    if page.locator("#showSampleBtn").count():
-        page.locator("#showSampleBtn").click()
+    page.locator("#sampleSelect").select_option(index=1)
+    page.get_by_role("button", name="この内容を入力欄へ転記").click()
+    page.locator("[data-cancel-link]").click()
+    page.get_by_role("dialog", name="作成していない入力があります").get_by_role("button", name="破棄して移動").click()
+    expect(page).to_have_url(f"{e2e_server.url}/")
 
     page.goto(f"/analyses/{analysis_id}")
     expect(page.locator("#analysisTitle")).to_have_text("外部通信の確認")
@@ -65,6 +68,7 @@ def test_E_X01_no_request_leaves_the_app(page, page_watch, e2e_server):
     paths = {url.removeprefix(e2e_server.url) for url in page_watch.requests}
     for expected in ("/", "/analyses/new", f"/analyses/{analysis_id}",
                      "/static/css/tokens.css", "/static/js/common/boot.js", "/static/js/pages/list.js",
+                     "/static/css/new.css", "/static/js/pages/new.js",
                      "/static/style.css", "/static/app.js"):
         assert expected in paths, f"{expected} was not requested: {sorted(paths)}"
     assert page_watch.foreign_requests == []
