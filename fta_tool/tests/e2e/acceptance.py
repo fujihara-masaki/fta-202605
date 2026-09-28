@@ -34,8 +34,10 @@ REQUIRED_ENV = "FTA_E2E_REQUIRED"
 ENV_LABEL_ENV = "FTA_E2E_ENV"
 
 # Acceptance IDs that the required run must cover. Later PRs append theirs.
-# E-xx / T-xx follow plan section 8.9; PR1-xx are checks added in PR-1 for
-# the shared foundation and for the screens that are not migrated yet.
+# E-xx / T-xx follow plan section 8.9; PR1-xx / PR2-xx are checks added in
+# PR-1 / PR-2 for the shared foundation, the screens that are not migrated
+# yet, and conditions of plan 8.2 that have no E-xx. PR1-COMPAT-NEW (the new
+# analysis form before its migration) was replaced by E-N01〜E-N06 in PR-2.
 REQUIRED_IDS: dict[str, str] = {
     "E-L01": "一覧から分析を開く（タイトル・「編集」）、並び順",
     "E-L02": "改名：Enter で保存、Esc・取消、変換中の Enter では保存しない",
@@ -46,12 +48,19 @@ REQUIRED_IDS: dict[str, str] = {
     "E-L07": "出力メニュー：キーボード操作、URL と download、改名中でも離脱確認が出ない",
     "E-L08": "空の一覧",
     "E-X01": "全画面で、外部へのリクエストがない",
+    "E-N01": "新規作成：2列の配置、4項目の保存（現行と同じ形）と編集画面への移動",
+    "E-N02": "新規作成：タイトルの検査（空白のみ・256文字）、エラーとフォーカス、送信しない",
+    "E-N03": "新規作成：サンプルのプレビュー・転記・未保存表示、demo_points の保存、タイトルは転記しない",
+    "E-N04": "新規作成：キャンセル・ヘッダーのリンク（入力あり・なし）、入力を続ける／破棄して移動",
+    "E-N05": "新規作成：二重送信で分析が2件できない、送信時に離脱確認が出ない",
+    "E-N06": "新規作成：入力があるときだけブラウザの離脱確認",
     "PR1-BASE-NOTIFY": "通知：成功・警告は自動で閉じ、エラーは閉じるまで残る（J-24）。読み上げ領域",
     "PR1-BASE-STORAGE": "保存領域が使えない環境でも一覧が動き、保存領域の処理が例外を出さない",
     "PR1-BASE-A11Y": "スキップリンク、ヘッダーの aria-current、ダイアログのフォーカスの戻り先",
     "PR1-STUB": "E2E 用スタブ：作成・候補0件・処理失敗、実LLMと外部通信の遮断",
-    "PR1-COMPAT-NEW": "未移行画面の互換：新規分析作成（入力・サンプル転記・作成・キャンセル）",
     "PR1-COMPAT-EDIT": "未移行画面の互換：分析・編集（保存・生成・評価・詳細・手動追加・削除・出力・一覧へ）",
+    "PR2-IME": "新規作成：タイトルの Enter は検査を経て送信、変換確定の Enter では送信しない（合成キー操作。実機は手動）",
+    "PR2-NO-SAMPLES": "新規作成：サンプルの設定ファイルがなくても、サンプル欄なしで作成できる",
 }
 
 OUTCOME_LABELS = {

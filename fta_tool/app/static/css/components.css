@@ -129,6 +129,92 @@ a.ui-btn--primary:hover {
   font-size: var(--font-size-xs);
   font-weight: 700;
 }
+textarea.ui-input {
+  min-height: 72px;
+  resize: vertical;
+}
+
+/* A labelled field: label (with a required / optional tag in text, not
+ * colour only), the .ui-input control, then help and error lines. */
+.ui-field {
+  display: grid;
+  align-content: start;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.ui-field__label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+.ui-field__tag {
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+}
+.ui-field__tag--required {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-weight: 700;
+}
+.ui-field__tag--optional {
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+
+/* ----- Panel: a titled block of related content ----- */
+.ui-panel {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-4) var(--space-5) var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  box-shadow: var(--shadow-sm);
+}
+.ui-panel__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+/* ----- Status chip: unsaved input and similar states (J-11) ----- */
+.ui-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px 10px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  line-height: 1.6;
+}
+.ui-status[hidden] {
+  display: none;
+}
+.ui-status--unsaved {
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+}
 
 /* ----- Dialog (native <dialog>, opened with showModal()) ----- */
 .ui-dialog {

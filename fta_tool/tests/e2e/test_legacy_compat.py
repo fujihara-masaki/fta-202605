@@ -1,11 +1,14 @@
-"""E2E: the screens that are not migrated yet keep working (PR-1).
+"""E2E: the screen that is not migrated yet keeps working.
 
-PR-1 changes the shared frame (base.html: header, notifications, shared
-CSS/JS). The new-analysis form (migrated in PR-2) and the analysis detail
-page (PR-3 to PR-6) still use app.js / style.css; these tests drive their
-main operations in the browser: create, sample, cancel, title / top event /
-context save, generation through the stub, judgement, detail modal, manual
-add, delete, export and back to the list.
+PR-1 changed the shared frame (base.html: header, notifications, shared
+CSS/JS). The analysis detail page (migrated in PR-3 to PR-6) still uses
+app.js / style.css; this test drives its main operations in the browser:
+title / top event / context save, generation through the stub, judgement,
+detail modal, manual add, delete, export and back to the list.
+
+The new-analysis form had the same check (PR1-COMPAT-NEW) until PR-2
+migrated it; it is now covered by tests/e2e/test_new_analysis_page.py
+(E-N01〜E-N06).
 """
 
 from __future__ import annotations
@@ -18,64 +21,6 @@ import pytest
 from tests.e2e.support import expect, record_dialogs
 
 pytestmark = pytest.mark.e2e
-
-
-def _unify(text: str) -> str:
-    return text.replace("\r\n", "\n").strip()
-
-
-@pytest.mark.acceptance("PR1-COMPAT-NEW")
-def test_new_analysis_form_create_sample_and_cancel(page, e2e_server):
-    page.goto("/analyses/new")
-    nav = page.get_by_role("navigation", name="メインメニュー")
-    expect(nav.get_by_role("link", name="新規作成")).to_have_attribute("aria-current", "page")
-
-    page.fill("#title", "互換確認（新規作成）")
-    page.fill("#top_event", "互換確認の頂上事象")
-    page.fill("#systemContextInput", "Webサーバ2台")
-    page.fill("#incidentContextInput", "9時から500エラー")
-    page.get_by_role("button", name="作成して編集へ").click()
-    expect(page).to_have_url(re.compile(r"/analyses/\d+$"))
-    analysis_id = int(page.url.rsplit("/", 1)[1])
-    expect(page.locator("#analysisTitle")).to_have_text("互換確認（新規作成）")
-    stored = e2e_server.analysis(analysis_id)
-    assert stored["top_event"] == "互換確認の頂上事象"
-    assert json.loads(stored["analysis_context"]) == {
-        "system_context": "Webサーバ2台",
-        "incident_context": "9時から500エラー",
-        "demo_points": "",
-    }
-
-    # Sample: preview, apply (title is not filled: J-21 / current behaviour).
-    page.goto("/analyses/new")
-    page.get_by_role("button", name="デモ用サンプルを利用する").click()
-    select = page.locator("#sampleSelect")
-    first_value = select.locator("option").nth(1).get_attribute("value")
-    select.select_option(first_value)
-    expect(page.locator("#samplePreview")).to_be_visible()
-    page.get_by_role("button", name="このサンプルを入力").click()
-    expect(page.locator("#title")).to_have_value("")
-    top_event = page.input_value("#top_event")
-    assert top_event and top_event == page.text_content("#samplePreviewTopEvent")
-    demo_points = page.input_value("#demoPointsInput")
-    assert demo_points
-    page.fill("#title", "サンプルから作成")
-    page.get_by_role("button", name="作成して編集へ").click()
-    expect(page).to_have_url(re.compile(r"/analyses/\d+$"))
-    sample_id = int(page.url.rsplit("/", 1)[1])
-    exported = json.loads(e2e_server.export(sample_id, "json"))
-    assert exported["top_event"] == top_event
-    # Form submission sends line breaks as CRLF and the server strips the
-    # value (unchanged behaviour), so compare with line endings unified.
-    assert _unify(exported["analysis_context"]["demo_points"]) == _unify(demo_points)
-
-    # Cancel goes back to the list without a confirmation (PR-2 adds one).
-    dialogs = record_dialogs(page)
-    page.goto("/analyses/new")
-    page.fill("#title", "キャンセルする入力")
-    page.get_by_role("link", name="キャンセル").click()
-    expect(page).to_have_url(f"{e2e_server.url}/")
-    assert dialogs == []
 
 
 @pytest.mark.acceptance("PR1-COMPAT-EDIT")

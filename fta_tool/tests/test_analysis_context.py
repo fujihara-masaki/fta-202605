@@ -4,7 +4,8 @@ Tests for the analysis-context input / edit UX:
 - Normal (hand-entered) creation saves system_context / incident_context.
 - Creation without context keeps the legacy behavior (analysis_context == "").
 - The new-analysis form shows the context fields as visible inputs (the
-  sample-scenario apply writes into them, not into hidden fields).
+  sample-scenario transfer writes into them, not into hidden fields); the
+  sample data is embedded as JSON for the screen's module.
 - The detail page renders the saved context and the dedicated update API
   (POST /analyses/{id}/context) trims, preserves demo_points and unknown
   keys, and safely handles empty / broken / legacy-shaped JSON.
@@ -14,6 +15,7 @@ Tests for the analysis-context input / edit UX:
 """
 
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -141,13 +143,29 @@ def test_new_analysis_form_shows_visible_context_fields(client):
     assert "障害発生時の状況・観測事実" in res.text
     assert '<input type="hidden" id="systemContextInput"' not in res.text
     assert '<input type="hidden" id="incidentContextInput"' not in res.text
-    # applySample writes into the visible fields by these ids.
-    assert 'id="systemContextInput"' in res.text
-    assert 'id="incidentContextInput"' in res.text
-    # demo_points stays a hidden field (only filled by the sample apply).
-    if "SAMPLE_SCENARIOS" in res.text:
-        assert '<input type="hidden" id="demoPointsInput" name="demo_points"' in res.text
-        assert "getElementById('systemContextInput').value = sample.system_context" in res.text
+    # The sample transfer writes into the visible fields by these ids.
+    assert '<textarea id="systemContextInput" name="system_context"' in res.text
+    assert '<textarea id="incidentContextInput" name="incident_context"' in res.text
+    # demo_points stays a hidden field (only filled by the sample transfer).
+    assert '<input type="hidden" id="demoPointsInput" name="demo_points" value="">' in res.text
+    # The transfer is done by the screen's module (static/js/pages/new.js),
+    # not by an inline script, from the sample data embedded as JSON (T-03);
+    # the transfer itself is checked in a real browser (E-N03).
+    assert "getElementById('systemContextInput').value" not in res.text
+    assert '<script type="module" src="/static/js/pages/new.js"></script>' in res.text
+    samples = main_module.get_sample_scenarios()
+    if samples:
+        match = re.search(
+            r'<script type="application/json" id="sample-scenarios-data">(.*?)</script>', res.text, re.S)
+        assert match
+        embedded = json.loads(match.group(1))
+        assert [s["id"] for s in embedded] == [s["id"] for s in samples]
+        for sample in embedded:
+            # what the transfer writes into the visible fields and demo_points
+            assert isinstance(sample["top_event"], str)
+            assert isinstance(sample["system_context"], str)
+            assert isinstance(sample["incident_context"], str)
+            assert isinstance(sample["demo_points"], str)
 
 
 # --- Detail page: display ----------------------------------------------------

@@ -5,6 +5,10 @@ T-01  No screen (list / new / detail) and no stylesheet or script refers to
       module imports), and no web font is declared (J-28).
 T-02  Analysis list: title and 編集 links, export URLs with the download
       attribute, the factor-count data attribute, the empty state.
+T-03  New analysis: the form posts the same field names (ids kept), the
+      sample data is embedded as JSON (not script) and cannot break out of
+      its block, demo_points is a hidden field, and without a readable
+      sample file the form has no sample panel and still creates.
 
 Also covered: the grouped factor count (crud.count_nodes_by_analysis), the
 shared frame (skip link, live regions, aria-current), which screens still
@@ -15,6 +19,7 @@ modules need.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import pathlib
 import re
 from html.parser import HTMLParser
@@ -24,9 +29,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+import app.main as main_module
 from app import crud, models, schemas
 from app.database import get_db
 from app.main import app
+from app.services import sample_scenarios
 
 STATIC_DIR = pathlib.Path(__file__).resolve().parents[1] / "app" / "static"
 EXTERNAL = re.compile(r"^\s*(?:https?:)?//", re.IGNORECASE)
@@ -75,6 +82,15 @@ class Element:
 
     def is_hidden(self) -> bool:
         return "hidden" in self.attrs
+
+    def text_without_scripts(self) -> str:
+        parts = []
+        for child in self.children:
+            if isinstance(child, str):
+                parts.append(child)
+            elif child.tag not in ("script", "style"):
+                parts.append(child.text_without_scripts())
+        return "".join(parts)
 
 
 class _TreeBuilder(HTMLParser):
@@ -299,6 +315,148 @@ def test_T02_export_menu_describes_the_contents_of_each_format(client):
     assert "分析タイトル・説明・AI／手動・根拠・メモ・品質警告は含みません" in descriptions["markdown"]
 
 
+# ----- T-03 -------------------------------------------------------------------
+
+# POST /analyses fields (unchanged contract) -> (tag, id). The ids are the
+# ones the old form used.
+NEW_FORM_FIELDS = {
+    "title": ("input", "title"),
+    "top_event": ("textarea", "top_event"),
+    "system_context": ("textarea", "systemContextInput"),
+    "incident_context": ("textarea", "incidentContextInput"),
+    "demo_points": ("input", "demoPointsInput"),
+}
+SAMPLE_KEYS = {"id", "category", "title", "top_event", "system_context", "incident_context", "demo_points"}
+
+
+def _new_form(client) -> tuple[Element, str]:
+    response = client.get("/analyses/new")
+    assert response.status_code == 200
+    return parse(response.text), response.text
+
+
+def test_T03_new_form_posts_the_same_fields(client):
+    root, _ = _new_form(client)
+    form = root.find("form", id="new-analysis-form")
+    assert form.attrs["method"] == "post" and form.attrs["action"] == "/analyses"
+    named = [e for e in form.iter() if e.tag in ("input", "textarea", "select", "button") and e.attrs.get("name")]
+    assert {e.attrs["name"]: (e.tag, e.attrs.get("id")) for e in named} == NEW_FORM_FIELDS
+
+    for name in ("title", "top_event", "system_context", "incident_context"):
+        field_id = NEW_FORM_FIELDS[name][1]
+        assert root.find("label", **{"for": field_id}), name  # visible, labelled
+    title = form.find("input", id="title")
+    assert title.attrs["type"] == "text" and "required" in title.attrs
+    # 255 is counted in code points by the screen (J-22); maxlength would
+    # count UTF-16 units and cut titles with characters such as 𠮷.
+    assert "maxlength" not in title.attrs
+    assert set(title.attrs["aria-describedby"].split()) == {"title-help", "title-error"}
+    assert root.find(id="title-error").is_hidden()
+    demo = form.find("input", id="demoPointsInput")
+    assert demo.attrs["type"] == "hidden" and demo.attrs["value"] == ""
+    assert "name" not in root.find("select", id="sampleSelect").attrs  # not sent
+
+    submit = form.find("button", type="submit")
+    assert submit.text() == "作成して編集へ"
+    cancel = form.find("a", **{"data-cancel-link": True})
+    assert cancel.attrs["href"] == "/" and cancel.text() == "キャンセル"
+
+
+def test_T03_new_form_layout_and_scripts(client):
+    root, _ = _new_form(client)
+    assert root.find("title").text() == "新規FTA分析作成"
+    assert root.find("h1").text() == "新規FTA分析を作成"
+    main_column = root.find(**{"class": "new-page__main"})
+    aside = root.find("aside", **{"class": "new-page__aside"})
+    assert [h.text() for h in main_column.find_all("h2")] == ["1 分析の名前と頂上事象", "2 AIへの参考情報 任意"]
+    assert [h.text() for h in aside.find_all("h2")] == ["入力の使われ方", "サンプルから入力 デモ用"]
+    usage = aside.find("dl", **{"class": "new-usage"})
+    assert [term.text() for term in usage.find_all("dt")] == ["頂上事象", "AIへの参考情報", "作成後"]
+    status = root.find(**{"data-sample-status": True})
+    assert status.is_hidden() and "サンプルを転記済み・未保存" in status.text()
+
+    # No inline script is left: modules from /static and the sample data.
+    scripts = root.find_all("script")
+    for script in scripts:
+        assert script.attrs.get("src", "").startswith("/static/") or script.attrs.get("type") == "application/json"
+    modules = [s.attrs["src"] for s in scripts if s.attrs.get("type") == "module"]
+    assert modules == ["/static/js/common/boot.js", "/static/js/pages/new.js"]
+    styles = [s.attrs["href"] for s in root.find_all("link", rel="stylesheet")]
+    assert styles == ["/static/css/tokens.css", "/static/css/base.css", "/static/css/components.css", "/static/css/new.css"]
+    assert not [e for e in root.iter() if any(name.startswith("on") for name in e.attrs)]  # no inline handlers
+
+
+def test_T03_sample_data_is_embedded_as_json(client):
+    samples = main_module.get_sample_scenarios()
+    assert samples, "config/sample_scenarios.yaml provides the demo samples"
+    root, _ = _new_form(client)
+    node = root.find("script", id="sample-scenarios-data")
+    assert node.attrs["type"] == "application/json"
+    data = json.loads(node.text())
+    assert data == samples
+    for sample in data:
+        assert SAMPLE_KEYS <= set(sample)
+        assert all(isinstance(sample[key], str) for key in SAMPLE_KEYS)
+
+    options = root.find("select", id="sampleSelect").find_all("option")
+    assert [(o.attrs["value"], o.text()) for o in options] == [("", "選択してください")] + [
+        (s["id"], f"[{s['category']}] {s['title']}") for s in samples
+    ]
+    preview = root.find(id="samplePreview")
+    assert preview.is_hidden()
+    assert preview.find("button", **{"data-apply-sample": True}).text() == "この内容を入力欄へ転記"
+    # demo_points are data only: never rendered as text.
+    shown = root.text_without_scripts()
+    for sample in samples:
+        assert sample["demo_points"].strip().splitlines()[0] not in shown
+
+
+def test_T03_sample_text_is_data_not_markup(client, monkeypatch):
+    evil = {
+        "id": "evil\"'<>",
+        "category": "<b>カテゴリ</b>",
+        "title": "</script><script>alert(1)</script>",
+        "top_event": "</script><!-- <script>",
+        "system_context": "<img src=x onerror=alert(2)>",
+        "incident_context": "& &amp;   '",
+        "demo_points": "</SCRIPT>",
+    }
+    monkeypatch.setattr(main_module, "get_sample_scenarios", lambda: [evil])
+    root, html = _new_form(client)
+    assert json.loads(root.find("script", id="sample-scenarios-data").text()) == [evil]
+    # The data can neither close its <script> element nor start markup.
+    assert html.lower().count("</script>") == len(root.find_all("script"))
+    assert "<script>alert(1)" not in html and "<img src=x" not in html
+    option = root.find("select", id="sampleSelect").find_all("option")[1]
+    assert option.attrs["value"] == evil["id"]
+    assert option.text() == f"[{evil['category']}] {evil['title']}"
+
+
+@pytest.mark.parametrize("problem", ["missing", "broken"])
+def test_T03_new_form_without_a_readable_sample_file(client, monkeypatch, tmp_path, problem):
+    path = tmp_path / "sample_scenarios.yaml"
+    if problem == "broken":
+        path.write_text("scenarios: [\n  - id: [unclosed\n", encoding="utf-8")
+    monkeypatch.setenv("FTA_SAMPLE_SCENARIOS_FILE", str(path))
+    monkeypatch.setattr(sample_scenarios, "_cache", None)  # read the file again
+
+    root, _ = _new_form(client)
+    assert not root.find_all(**{"data-sample-panel": True})
+    assert not root.find_all("select", id="sampleSelect")
+    assert not root.find_all("script", id="sample-scenarios-data")
+    assert root.find("h2", id="new-usage-title").text() == "入力の使われ方"
+    form = root.find("form", id="new-analysis-form")
+    named = [e for e in form.iter() if e.attrs.get("name")]
+    assert {e.attrs["name"]: (e.tag, e.attrs.get("id")) for e in named} == NEW_FORM_FIELDS
+
+    response = client.post("/analyses", data={
+        "title": "サンプルなしで作成", "top_event": "頂上事象",
+        "system_context": "構成", "incident_context": "", "demo_points": "",
+    }, follow_redirects=False)
+    assert response.status_code == 303
+    assert re.fullmatch(r"/analyses/\d+", response.headers["location"])
+
+
 # ----- supporting checks -------------------------------------------------------
 
 def test_count_nodes_by_analysis_uses_one_grouped_result(client):
@@ -317,7 +475,7 @@ def test_shared_frame_on_every_screen(client):
     analysis_id = _create(client, "共通の枠")
     expectations = {
         "/": ("分析一覧", False),
-        "/analyses/new": ("新規作成", True),
+        "/analyses/new": ("新規作成", False),  # migrated in PR-2
         f"/analyses/{analysis_id}": (None, True),
     }
     for path, (current, legacy) in expectations.items():
@@ -340,7 +498,7 @@ def test_shared_frame_on_every_screen(client):
 
 
 def test_javascript_is_served_with_a_javascript_mime_type(client):
-    for path in ("/static/js/common/boot.js", "/static/js/pages/list.js", "/static/app.js"):
+    for path in ("/static/js/common/boot.js", "/static/js/pages/list.js", "/static/js/pages/new.js", "/static/app.js"):
         response = client.get(path)
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/javascript"), path

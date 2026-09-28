@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -161,13 +162,22 @@ class _Closing:
         self.conn.close()
 
 
-def start_server(workdir: pathlib.Path, port: int) -> E2EServer:
+def free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str, str]] = None) -> E2EServer:
+    """Start the app for the tests; `extra_env` changes its settings (e.g.
+    FTA_SAMPLE_SCENARIOS_FILE for a server without sample scenarios)."""
     import os
 
     env = os.environ.copy()
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(FTA_TOOL_DIR), env.get("PYTHONPATH", "")]))
     env["FTA_E2E_WORKDIR"] = str(workdir)
     env["FTA_E2E_STUB_MODE"] = "create"
+    env.update(extra_env or {})
     log_path = workdir / "server.log"
     log = log_path.open("wb")
     process = subprocess.Popen(
