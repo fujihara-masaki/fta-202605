@@ -7,7 +7,9 @@
 //   after trimming, counted in code points. On an error nothing is sent, the
 //   reason is shown under the field and the field gets the focus. The title
 //   is sent trimmed, as the rename saves it. Once sent, the button is disabled
-//   and any further submit is ignored, so repeated clicks create one analysis.
+//   and any further submit is ignored, so repeated clicks create one analysis;
+//   in-page links wait too, since following one would cancel the pending
+//   navigation after the server may already have created the analysis.
 // - Enter in the title submits through the same check; the Enter that
 //   confirms an IME conversion does not (C-08, common/ime.js).
 // - Sample: choosing a scenario shows it in the preview; 「この内容を入力欄へ転記」
@@ -23,7 +25,7 @@
 //   (common/unsaved.js). Submitting releases the guard first, so the POST
 //   itself is never questioned.
 
-import { registerSource, refresh } from '../common/unsaved.js';
+import { registerSource, refresh, holdNavigation, releaseNavigation } from '../common/unsaved.js';
 import { announce } from '../common/notify.js';
 import {
   ANALYSIS_TITLE_MAX,
@@ -201,15 +203,18 @@ function setSubmitting(on) {
   submitButton.textContent = on ? '作成しています…' : SUBMIT_LABEL;
   for (const { element } of FIELDS) element.readOnly = on;
   if (applyButton) applyButton.disabled = on;
-  if (on) form.setAttribute('aria-busy', 'true');
-  else form.removeAttribute('aria-busy');
   submitStatus.textContent = on ? '分析を作成しています…' : '';
   if (on) {
+    form.setAttribute('aria-busy', 'true');
+    holdNavigation('分析を作成しています。画面が切り替わるまでお待ちください。');
     slowTimer = window.setTimeout(() => {
       const message = '作成に時間がかかっています。サーバーが別の処理（生成など）を実行中の可能性があります。画面が切り替わるまでお待ちください。';
       submitStatus.textContent = message;
       announce(message);
     }, SLOW_SUBMIT_MS);
+  } else {
+    form.removeAttribute('aria-busy');
+    releaseNavigation();
   }
   // While submitting no field counts as unsaved, so the browser does not ask
   // before the POST navigates away.

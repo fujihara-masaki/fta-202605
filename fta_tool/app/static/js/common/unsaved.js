@@ -22,6 +22,10 @@
 //   source has unsaved input the dialog offers only 続ける / 破棄して移動,
 //   worded by the source's optional `prompt`:
 //     { title, lead, note, continueLabel }
+// - holdNavigation(message): while the page's own navigation is under way
+//   (a form POST already sent), an in-page link would cancel it after the
+//   server may have acted on it, so links are held and `message` is shown.
+//   Browser navigation (back, reload) is not affected.
 //
 // Scope: the list screen's inline rename (PR-1) and the new-analysis form
 // (PR-2, discard-only). The full save-coordination contract of plan 5.9.3
@@ -29,6 +33,7 @@
 
 import { el } from './dom.js';
 import { openDialog } from './dialog.js';
+import { notify } from './notify.js';
 
 export const SOURCE_ORDER = {
   factor: 10,
@@ -41,6 +46,7 @@ const sources = new Map();
 let beforeUnloadRegistered = false;
 let guardActive = false;
 let linkGuardInstalled = false;
+let navigationHold = null;
 
 function attempt(fn, fallback) {
   try {
@@ -286,6 +292,14 @@ export function requestTransition({ invoker = null, proceed }) {
   return runGuarded({ invoker, proceed });
 }
 
+export function holdNavigation(message) {
+  navigationHold = message;
+}
+
+export function releaseNavigation() {
+  navigationHold = null;
+}
+
 export function installLinkGuard() {
   if (linkGuardInstalled) return;
   linkGuardInstalled = true;
@@ -306,6 +320,11 @@ export function installLinkGuard() {
     const here = window.location;
     const samePage = url.origin === here.origin && url.pathname === here.pathname && url.search === here.search;
     if (samePage && url.hash) return; // in-page anchor such as the skip link
+    if (navigationHold) {
+      event.preventDefault();
+      notify(navigationHold, { type: 'info' });
+      return;
+    }
     if (!hasUnsaved() && !isSaving()) return;
     event.preventDefault();
     requestLeave(url.href, { invoker: link });

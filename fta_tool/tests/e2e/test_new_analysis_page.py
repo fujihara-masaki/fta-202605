@@ -512,6 +512,17 @@ def test_E_N05_further_submits_are_ignored_once_sent(page, e2e_server):
     assert len(posts) == 1
     assert analysis_count(e2e_server) == 1
 
+    # In-page links wait as well: following one would cancel the pending
+    # navigation after the server may already have created the analysis.
+    cancel_link(page).click()
+    header_link(page, "分析一覧").click()
+    page.get_by_role("link", name="FTA分析支援ツール").click()
+    expect(page.locator(".ui-toast--info")).to_contain_text("分析を作成しています。画面が切り替わるまでお待ちください。")
+    expect(leave_dialog(page)).to_have_count(0)
+    page.wait_for_timeout(300)
+    expect(page).to_have_url(f"{e2e_server.url}{NEW_URL}")
+    assert dialogs == []
+
     # A slow answer (e.g. the server busy generating elsewhere) is explained.
     page.clock.run_for(10500)
     expect(page.locator("[data-submit-status]")).to_contain_text("サーバーが別の処理（生成など）を実行中の可能性があります")
@@ -535,10 +546,11 @@ def test_E_N05_restored_from_the_back_forward_cache_the_form_is_usable(page, e2e
     expect(field(page, "title")).not_to_have_attribute("readonly", "")
     expect(page.locator("#new-analysis-form")).not_to_have_attribute("aria-busy", "true")
     expect(page.locator("[data-submit-status]")).to_have_text("")
-    cancel_link(page).click()  # the input is protected again
+    cancel_link(page).click()  # links are no longer held; the input is protected again
     expect(leave_dialog(page)).to_be_visible()
     leave_dialog(page).get_by_role("button", name="入力を続ける").click()
     expect(field(page, "title")).to_have_value("戻ったときの確認")
+    expect(page.locator(".ui-toast--info")).to_have_count(0)
     assert len(posts) == 1
 
 
