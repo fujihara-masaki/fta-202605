@@ -106,83 +106,8 @@ async function saveAnalysisTitle(analysisId, newTitle) {
   }
 }
 
-function startTitleRename(analysisId) {
-  const link = document.getElementById(`title-link-${analysisId}`);
-  if (!link) return;
-  const currentTitle = link.textContent.trim();
-  const cell = link.closest('td');
-  const originalHTML = cell.innerHTML;
-
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.value = currentTitle;
-  input.className = 'rename-input';
-  input.maxLength = 255;
-  input.setAttribute('aria-label', '分析タイトル');
-
-  const saveBtn = document.createElement('button');
-  saveBtn.textContent = '保存';
-  saveBtn.className = 'btn btn-xs btn-primary';
-
-  const cancelBtn = document.createElement('button');
-  cancelBtn.textContent = 'キャンセル';
-  cancelBtn.className = 'btn btn-xs btn-outline';
-
-  const hintSpan = document.createElement('span');
-  hintSpan.className = 'rename-hint';
-  hintSpan.textContent = '255文字以内で入力してください';
-
-  const errSpan = document.createElement('span');
-  errSpan.className = 'rename-error';
-  errSpan.hidden = true;
-
-  cell.innerHTML = '';
-  cell.append(input, saveBtn, cancelBtn, hintSpan, errSpan);
-  input.focus();
-  input.select();
-
-  const showRenameErr = (msg) => { errSpan.textContent = msg; errSpan.hidden = false; input.focus(); };
-  const clearRenameErr = () => { errSpan.hidden = true; };
-
-  const doSave = async () => {
-    const newTitle = input.value.trim();
-    if (!newTitle) { showRenameErr('タイトルは必須です'); return; }
-    clearRenameErr();
-    const ok = await saveAnalysisTitle(analysisId, newTitle);
-    if (ok) {
-      cell.innerHTML = originalHTML;
-      const linkEl = document.getElementById(`title-link-${analysisId}`);
-      if (linkEl) linkEl.textContent = newTitle;
-    } else {
-      showRenameErr('保存に失敗しました');
-    }
-  };
-
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); doSave(); }
-    if (e.key === 'Escape') { cell.innerHTML = originalHTML; }
-  });
-  saveBtn.addEventListener('click', doSave);
-  cancelBtn.addEventListener('click', () => { cell.innerHTML = originalHTML; });
-}
-
-// ===== Delete Analysis =====
-async function deleteAnalysis(analysisId, title) {
-  const name = (title || '').trim() || `ID: ${analysisId}`;
-  if (!confirm(`分析「${name}」を削除しますか？\nこの分析のすべての要因・評価・メモも削除されます。この操作は取り消せません。`)) return;
-  try {
-    const res = await fetch(`/analyses/${analysisId}/delete`, { method: 'POST' });
-    const data = await res.json();
-    if (data.success) {
-      showToast('分析を削除しました');
-      setTimeout(() => location.reload(), 500);
-    } else {
-      showToast(data.detail || '削除に失敗しました', 'error');
-    }
-  } catch {
-    showToast('通信エラーが発生しました', 'error');
-  }
-}
+// The analysis list's inline rename and delete moved to js/pages/list.js
+// (PR-1). saveAnalysisTitle above is still used by the analysis detail page.
 
 // ===== Top Event =====
 async function saveTopEvent(analysisId, { quiet = false } = {}) {
