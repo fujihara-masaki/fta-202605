@@ -4,7 +4,9 @@ PR-3 builds the new edit screen but keeps app.js for the title and step ①
 saving, generation, the detail dialog, manual add and delete (plan 7.2;
 acceptance 10 of plan 8.3: UI-09〜UI-14 stay usable, and the normal
 generation of 二次・三次 still includes Yes parents hidden by the filter).
-PR3-LEGACY-OPS drives them from the new page.
+PR3-LEGACY-OPS drives them from the new page; their results are shown by a
+partial update, never by reloading the page (the page is marked and the mark
+must still be there).
 
 Until PR-3 the old screen had this check as PR1-COMPAT-EDIT; the
 new-analysis form had PR1-COMPAT-NEW until PR-2 (now E-N01〜E-N06).
@@ -34,10 +36,19 @@ from tests.e2e.support import expect, record_dialogs
 pytestmark = pytest.mark.e2e
 
 
+def mark_page(page) -> None:
+    page.evaluate("() => { window.__pr3NoReload = 'kept'; }")
+
+
+def same_page(page) -> bool:
+    return page.evaluate("() => window.__pr3NoReload === 'kept'")
+
+
 @pytest.mark.acceptance("PR3-LEGACY-OPS")
 def test_title_step1_and_generation_from_the_new_page(page, e2e_server):
     analysis_id = e2e_server.create_analysis("互換確認（編集）", top_event="最初の頂上事象")
     open_edit(page, analysis_id)
+    mark_page(page)
     expect(page.locator(".ai-badge")).to_have_text("AI: e2e-stub")  # stub server, not a real LLM
     expect(page.get_by_role("navigation", name="メインメニュー").locator("[aria-current]")).to_have_count(0)
 
@@ -88,6 +99,7 @@ def test_title_step1_and_generation_from_the_new_page(page, e2e_server):
     assert [call["target_level"] for call in calls] == [1, 2, 2]
     assert [call["parent_factor"] for call in calls[1:]] == titles[:2]
     assert e2e_server.node_count(analysis_id) == 10
+    assert same_page(page)
 
 
 @pytest.mark.acceptance("PR3-LEGACY-OPS")
@@ -98,12 +110,14 @@ def test_detail_dialog_manual_add_additional_generation_delete_and_export(page, 
     c = e2e_server.add_child(a, "二次要因C")
     e2e_server.update_node(b, user_judgement="no")
     open_edit(page, analysis_id)
+    mark_page(page)
     expect_selected(page, a, "一次要因A")
 
     # Detail dialog from the inspector: the memo is saved, the judgement untouched.
     inspector(page).get_by_role("button", name="詳細を編集").click()
     expect(page.locator("#nodeDetailModal")).to_be_visible()
     expect(page.locator("#modalTitle")).to_have_value("一次要因A")
+    expect(page.locator("#modalTitle")).to_be_focused()  # app.js focuses it 50 ms after opening
     page.fill("#modalMemo", "互換確認のメモ")
     page.locator("#modalSaveBtn").click()
     expect(page.locator('[data-details] [data-detail="memo"]')).to_have_text("互換確認のメモ")
@@ -150,6 +164,7 @@ def test_detail_dialog_manual_add_additional_generation_delete_and_export(page, 
             step_panel(page, 5).get_by_role("link", name=name).click()
         assert download_info.value.suggested_filename == f"fta_{analysis_id}.{suffix}"
 
+    assert same_page(page)
     page.locator(".edit-header").get_by_role("link", name="一覧へ").click()
     expect(page).to_have_url(f"{e2e_server.url}/")
     expect(page.locator(f'tr[data-analysis-id="{analysis_id}"]')).to_have_attribute("data-factor-count", "5")

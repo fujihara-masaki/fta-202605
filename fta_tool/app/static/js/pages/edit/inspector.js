@@ -298,6 +298,12 @@ export function renderInspector(app, { focusWarning = false, focusTitle = false 
     loadDetails(app, node, token, { focusWarning });
     if (focusWarning) focusWarningSection();
   }
+  if (app.gone) {
+    // The analysis is gone (edit/refresh.js): nothing can be saved any more.
+    root.querySelectorAll('[data-action="judgement"], [data-action^="legacy-"]').forEach((button) => {
+      button.disabled = true;
+    });
+  }
   if (focusTitle) {
     const title = root.querySelector('[data-inspector-title]');
     if (title) title.focus({ preventScroll: false });

@@ -11,7 +11,8 @@
 //   (WAI-ARIA tabs, arrow keys), judgement, filter;
 // - state in the URL hash and sessionStorage (plan 5.5), restored on reload;
 // - the bridge the legacy app.js uses for detail editing, manual add,
-//   delete and generation (still the old processing in PR-3).
+//   delete and generation (still the old processing in PR-3), whose results
+//   are shown by a partial update instead of a reload (edit/refresh.js).
 // Text from the user or the LLM is only ever inserted as text.
 
 import { el } from '../common/dom.js';
@@ -20,6 +21,7 @@ import { installBridge } from './edit/bridge.js';
 import { applyFilter, clearFilter, currentFilter, initFilter } from './edit/filter.js';
 import { renderInspector, updateTopEventText } from './edit/inspector.js';
 import { requestJudgement } from './edit/judgement.js';
+import { createRefresher } from './edit/refresh.js';
 import { getNode, readModel, stepForNode } from './edit/model.js';
 import { loadSession, saveSession, stateFromHash, VIEWS, writeHash } from './edit/state.js';
 import {
@@ -141,44 +143,17 @@ function start(root, model) {
     applyFilter(app);
   };
 
+  // Show the result of a legacy change (manual add: {select}, delete:
+  // {deleted}) by a partial update; none while a generation runs, one after.
+  const refresher = createRefresher(app, { scrollers });
+  app.refresh = (options = {}) => refresher.request(options);
+
   app.setGenerating = (on) => {
     app.generating = on;
     document.querySelectorAll('[data-generate]').forEach((button) => {
       button.disabled = on || button.hasAttribute('data-blocked-reason');
     });
-  };
-
-  // Is the selection this factor or below it (parent links, any analysis
-  // data on the page; a walk that remembers what it visited)?
-  const selectionAtOrBelow = (node) => {
-    const seen = new Set();
-    let current = getNode(app.model, app.state.sel);
-    while (current && !seen.has(current.id)) {
-      if (current.id === node.id) return true;
-      seen.add(current.id);
-      current = current.parentId === null ? null : getNode(app.model, current.parentId);
-    }
-    return false;
-  };
-
-  // Show the result of a legacy change. Until the partial update exists the
-  // page is reloaded; the state (hash, scroll, filter) comes back.
-  app.refresh = (options = {}) => {
-    if (options.select !== undefined && options.select !== null) {
-      app.state.sel = String(options.select);
-      if (options.level) app.state.step = Math.min(Math.max(Number(options.level) + 1, 2), 4);
-    } else if (options.deleted !== undefined && options.deleted !== null) {
-      const deleted = getNode(app.model, options.deleted);
-      if (deleted && selectionAtOrBelow(deleted)) {
-        const parent = deleted.parentId === null || deleted.parentId === deleted.id
-          ? null : getNode(app.model, deleted.parentId);
-        app.state.sel = parent ? String(parent.id) : 'top';
-        app.state.step = parent ? stepForNode(parent) : 1;
-      }
-    }
-    writeHash(app.state);
-    app.saveSession();
-    window.location.reload();
+    if (!on) refresher.flush();
   };
 
   installBridge(app);

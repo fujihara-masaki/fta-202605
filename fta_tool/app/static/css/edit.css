@@ -721,3 +721,13 @@
   color: var(--color-danger);
   font-weight: 700;
 }
+
+/* ----- Notifications while a legacy dialog of app.js is open -----
+   The dialogs (detail, manual add; replaced in PR-5・PR-6) keep their buttons
+   at the bottom, where the notifications appear, and errors stay until they
+   are closed (J-24): while a dialog is open the notifications go to the top,
+   so they never cover 保存・追加・キャンセル. */
+.edit-body:has(.modal:not(.hidden)) .ui-toast-stack {
+  top: var(--space-5);
+  bottom: auto;
+}
