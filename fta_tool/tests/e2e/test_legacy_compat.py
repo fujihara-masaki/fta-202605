@@ -125,6 +125,7 @@ def test_detail_dialog_manual_add_additional_generation_delete_and_export(page, 
     expect(page.locator("#nodeDetailModal")).to_be_visible()
     expect(page.locator("#modalTitle")).to_have_value("一次要因A")
     expect(page.locator("#modalTitle")).to_be_focused()  # app.js focuses it 50 ms after opening
+    expect(page.locator("#modalWarningRow")).to_be_hidden()  # no quality warning, no empty 要確認 row
     page.fill("#modalMemo", "互換確認のメモ")
     page.locator("#modalSaveBtn").click()
     expect(page.locator('[data-details] [data-detail="memo"]')).to_have_text("互換確認のメモ")
@@ -213,8 +214,10 @@ def test_saving_dialogs_and_delete_messages_use_the_shared_notifications(page, e
     page.keyboard.press("Enter")
     expect_once(page, "タイトルは必須です", "error")
     expect(page.locator("#ui-live-alert")).to_have_text("エラー：タイトルは必須です")
+    expect(page.locator("#titleError")).to_have_text("タイトルは必須です")
     page.keyboard.type("通知の確認（改名）")
     page.keyboard.press("Enter")
+    expect(page.locator("#titleError")).to_be_hidden()  # gone once the title is saved
 
     # Step ①.
     step_button(page, 1).click()

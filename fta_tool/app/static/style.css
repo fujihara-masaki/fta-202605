@@ -48,6 +48,11 @@
 .modal-footer { padding: 14px 24px 18px; display: flex; gap: 12px; justify-content: flex-end; border-top: 1px solid #ecf0f1; }
 .modal-body .form-group { margin-bottom: 16px; }
 .modal-warning-row { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; margin-bottom: 16px; background: #fef5e7; border: 1px solid #f5cba7; border-radius: 6px; font-size: 12px; color: #935b0b; line-height: 1.5; }
+/* The hidden attribute wins over the display above. The dialogs sit outside
+   .edit-page, whose [hidden] rule (css/edit.css) covers the rest of the
+   screen; before PR-3 the detail dialog showed an empty 要確認 row for a
+   factor without a quality warning. */
+.modal-warning-row[hidden] { display: none; }
 
 /* ===== Generation Status Badge (next to a parent group heading) ===== */
 .gen-status-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 700; flex-shrink: 0; }
