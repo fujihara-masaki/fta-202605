@@ -116,6 +116,7 @@ def test_detail_dialog_manual_add_additional_generation_delete_and_export(page, 
     b = e2e_server.add_level1(analysis_id, "一次要因B")
     c = e2e_server.add_child(a, "二次要因C")
     e2e_server.update_node(b, user_judgement="no")
+    e2e_server.set_warning(b, "既存要因「一次要因A」に類似; 要因名が長すぎる")
     open_edit(page, analysis_id)
     mark_page(page)
     expect_selected(page, a, "一次要因A")
@@ -133,6 +134,17 @@ def test_detail_dialog_manual_add_additional_generation_delete_and_export(page, 
     node = e2e_server.get_node(a)
     assert node["memo"] == "互換確認のメモ" and node["user_judgement"] == "unknown"
     expect(item(page, "work", a)).to_contain_text("メモあり")
+
+    # A factor with a quality warning keeps its 要確認 row with the full text.
+    select_button(page, "nav", b).click()
+    inspector(page).get_by_role("button", name="詳細を編集").click()
+    expect(page.locator("#modalTitle")).to_have_value("一次要因B")
+    expect(page.locator("#modalWarningRow")).to_be_visible()
+    expect(page.locator("#modalWarningText")).to_have_text("既存要因「一次要因A」に類似; 要因名が長すぎる")
+    page.locator("#nodeDetailModal").get_by_role("button", name="キャンセル").click()
+    expect(page.locator("#nodeDetailModal")).to_be_hidden()
+    select_button(page, "nav", a).click()
+    expect(inspector_title(page)).to_have_text("一次要因A")
 
     # Manual add below A from the inspector: the new factor is selected.
     inspector(page).get_by_role("button", name="手動追加").click()
@@ -193,6 +205,34 @@ def boxes_overlap(a: dict, b: dict) -> bool:
                 or a["y"] + a["height"] <= b["y"] or b["y"] + b["height"] <= a["y"])
 
 
+def expect_dialog_uncovered(page, dialog_id: str) -> None:
+    """While a legacy dialog is open the notifications cover no part of it:
+    the whole stack stays clear of the dialog box, and every button of the
+    dialog is what is drawn at its centre."""
+    stack = page.locator("#ui-toasts").bounding_box()
+    dialog = page.locator(f"#{dialog_id} .modal-content").bounding_box()
+    assert stack["height"] > 0
+    assert not boxes_overlap(stack, dialog), (stack, dialog)
+    buttons = page.locator(f"#{dialog_id} button")
+    assert buttons.count() >= 3  # ×, キャンセル and 保存 / 追加
+    for index in range(buttons.count()):
+        button = buttons.nth(index)
+        button.scroll_into_view_if_needed()
+        assert button.evaluate("""(el) => {
+          const r = el.getBoundingClientRect();
+          const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          return el === hit || el.contains(hit);
+        }"""), button.text_content()
+
+
+def expect_normal_place(page) -> None:
+    """Bottom centre, where the notifications are when no dialog is open."""
+    box = page.locator("#ui-toasts").bounding_box()
+    size = page.viewport_size
+    assert abs(box["x"] + box["width"] / 2 - size["width"] / 2) <= 2, box
+    assert 0 <= size["height"] - (box["y"] + box["height"]) <= 48, box
+
+
 @pytest.mark.acceptance("PR3-LEGACY-NOTIFY")
 def test_saving_dialogs_and_delete_messages_use_the_shared_notifications(page, e2e_server, page_watch):
     analysis_id = e2e_server.create_analysis("通知の確認", top_event="頂上")
@@ -200,6 +240,7 @@ def test_saving_dialogs_and_delete_messages_use_the_shared_notifications(page, e
     b = e2e_server.add_level1(analysis_id, "一次要因B")
     open_edit(page, analysis_id)
     expect(page.locator("#toast")).to_have_count(0)  # the old element is gone
+    expect(page.locator("#ui-toasts")).to_have_count(1)  # one place for every notification
 
     # Title: saved (success), empty (error, stays, announced).
     title = page.locator("#analysisTitle")
@@ -229,20 +270,22 @@ def test_saving_dialogs_and_delete_messages_use_the_shared_notifications(page, e
     expect_once(page, "分析コンテキストを保存しました", "success")
 
     # Detail dialog: an empty title is refused while the dialog stays open;
-    # the notification is not over the dialog's buttons.
+    # the notifications (two errors now) cover no part of the dialog, and are
+    # back in their usual place once it is closed.
+    expect_normal_place(page)
     select_button(page, "nav", a).click()
     inspector(page).get_by_role("button", name="詳細を編集").click()
     expect(page.locator("#modalTitle")).to_be_focused()
     page.fill("#modalTitle", "")
     page.locator("#modalSaveBtn").click()
     expect_once(page, "要因タイトルは必須です", "error")
-    stack = page.locator("#ui-toasts").bounding_box()
-    for button in (page.locator("#modalSaveBtn"), page.locator("#nodeDetailModal").get_by_role("button", name="キャンセル")):
-        assert not boxes_overlap(stack, button.bounding_box())
+    expect_dialog_uncovered(page, "nodeDetailModal")
     page.fill("#modalTitle", "一次要因A（改名）")
     page.locator("#modalSaveBtn").click()
     expect_once(page, "保存しました", "success")
     expect(inspector_title(page)).to_have_text("一次要因A（改名）")
+    expect(page.locator("#nodeDetailModal")).to_be_hidden()
+    expect_normal_place(page)
 
     # A communication error (the request never reaches the server).
     page_watch.allow_console_error(r"ERR_FAILED")
@@ -251,18 +294,23 @@ def test_saving_dialogs_and_delete_messages_use_the_shared_notifications(page, e
     expect(page.locator("#modalTitle")).to_be_focused()
     page.locator("#modalSaveBtn").click()
     expect_once(page, "通信エラーが発生しました", "error")
+    expect_dialog_uncovered(page, "nodeDetailModal")
     page.locator("#nodeDetailModal").get_by_role("button", name="キャンセル").click()
     page.unroute(f"**/nodes/{a}/update")
+    expect_normal_place(page)
 
     # Manual add: an empty title, then added.
     inspector(page).get_by_role("button", name="手動追加", exact=True).click()
     expect(page.locator("#addNodeTitle")).to_be_focused()
     page.locator("#addNodeModal").get_by_role("button", name="追加").click()
     expect_once(page, "タイトルを入力してください", "error")
+    expect_dialog_uncovered(page, "addNodeModal")
     page.fill("#addNodeTitle", "手動の二次要因")
     page.locator("#addNodeModal").get_by_role("button", name="追加").click()
     expect_once(page, "要因を追加しました", "success")
     expect(inspector_title(page)).to_have_text("手動の二次要因")
+    expect(page.locator("#addNodeModal")).to_be_hidden()
+    expect_normal_place(page)
 
     # Delete.
     select_button(page, "nav", b).click()
@@ -276,6 +324,7 @@ def test_saving_dialogs_and_delete_messages_use_the_shared_notifications(page, e
         expect(toast(page, text, "error", exact=True)).to_have_count(1)
     expect(page.locator('#ui-toasts .ui-toast[data-toast-type="success"]')).to_have_count(0)
     expect(page.locator("#toast")).to_have_count(0)
+    expect(page.locator("#ui-toasts")).to_have_count(1)
 
 
 @pytest.mark.acceptance("PR3-LEGACY-NOTIFY")

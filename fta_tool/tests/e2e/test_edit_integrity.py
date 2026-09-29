@@ -18,7 +18,9 @@ deletion walk cannot be completed) are injected through stub_control.json
          deletion; when blocked, no delete request is sent — neither from
          the button nor from app.js's deleteNode called directly; a missing
          parent / 「上位に不整合あり」 factor is deleted with exactly its
-         subtree.
+         subtree, a level-mismatched descendant included (the user's
+         additional decision of 2026-09-29), while such a descendant is
+         never offered for deletion itself.
 * PR3-GEN-PARENTS  the normal generation of 二次・三次 sends one request per
          consistent Yes parent (hidden by the filter or not), each naming its
          parent, never one for an inconsistent parent; with none left
@@ -293,11 +295,21 @@ def test_missing_parent_and_upper_factors_are_deleted_with_exactly_their_subtree
     a = e2e_server.add_level1(analysis_id, "一次要因A")
     m = e2e_server.insert_node(analysis_id, 2, MISSING, title="親不在の要因M")
     m2 = e2e_server.insert_node(analysis_id, 3, m, title="Mの下の要因M2")
+    m3 = e2e_server.insert_node(analysis_id, 3, m2, title="M2の下の階層不一致の要因M3")  # 三次 below a 三次
     n = e2e_server.insert_node(analysis_id, 2, MISSING, title="親不在の要因N")
     n2 = e2e_server.insert_node(analysis_id, 3, n, title="Nの下の要因N2")
     open_edit(page, analysis_id)
     dialogs = record_dialogs(page, action="accept")
+    deletes = posts(page, r"^/nodes/\d+/delete$")
     before = e2e_server.node_ids()
+
+    # The level-mismatched descendant is never offered itself (the additional
+    # decision of 2026-09-29) …
+    expect_delete_blocked(page, m3, "M2の下の階層不一致の要因M3", REASON_NOT_VERIFIED)
+    call_delete(page, m3, analysis_id)
+    expect(toast(page, REASON_NOT_VERIFIED, "error")).to_be_visible()
+    page.wait_for_timeout(300)
+    assert deletes == [] and dialogs == [] and e2e_server.node_ids() == before
 
     select(page, n2, "Nの下の要因N2")  # 「上位に不整合あり」
     delete_button(page).click()
@@ -305,13 +317,17 @@ def test_missing_parent_and_upper_factors_are_deleted_with_exactly_their_subtree
     wait_until(lambda: n2 not in e2e_server.node_ids())
     assert before - e2e_server.node_ids() == {n2}
 
-    select(page, m, "親不在の要因M")  # 親不在, with its child
+    # … and goes with its deletable ancestor: 親不在 M, its child and the
+    # mismatched grandchild, nothing else.
+    select(page, m, "親不在の要因M")
+    expect(delete_reason(page)).to_have_text(DELETE_ALLOWED_TEXT)
     delete_button(page).click()
     expect(select_button(page, "nav", m)).to_have_count(0)
+    expect(select_button(page, "nav", m3)).to_have_count(0)
     wait_until(lambda: m not in e2e_server.node_ids())
-    assert before - e2e_server.node_ids() == {n2, m, m2}
+    assert before - e2e_server.node_ids() == {n2, m, m2, m3}
     assert kept_elsewhere <= e2e_server.node_ids(other) and a in e2e_server.node_ids() and n in e2e_server.node_ids()
-    assert dialogs == ["confirm", "confirm"]
+    assert dialogs == ["confirm", "confirm"] and len(deletes) == 2
 
 
 # ----- PR3-GEN-PARENTS ---------------------------------------------------------------

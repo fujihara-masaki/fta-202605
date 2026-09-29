@@ -3,9 +3,10 @@
  * work area (tabs, filter, the chosen view) and inspector, each scrolling
  * on its own. PR-3 builds for display areas 1280px wide and wider (J-20,
  * provisional); the widths below that, zoom levels and low display areas are
- * finished in PR-7. The user's environment was measured at 1905×945 CSS px
- * (Chrome) and 1912×914 (Edge) (plan 5.9.4); the pane widths scale with the
- * width between those and 1280px.
+ * finished in PR-7. The user's display area was measured as
+ * document.documentElement.clientWidth × clientHeight: 1905×945 CSS px
+ * (Chrome) and 1912×914 (Edge) at 100 % (plan 5.9.4); the pane widths scale
+ * with the width between those and 1280px.
  * Parts come from components.css; the legacy dialogs, generation badges and
  * header parts of app.js keep their rules in style.css.
  */
@@ -723,11 +724,19 @@
 }
 
 /* ----- Notifications while a legacy dialog of app.js is open -----
-   The dialogs (detail, manual add; replaced in PR-5・PR-6) keep their buttons
-   at the bottom, where the notifications appear, and errors stay until they
-   are closed (J-24): while a dialog is open the notifications go to the top,
-   so they never cover 保存・追加・キャンセル. */
+   The dialogs (detail 560px wide, manual add 400px; replaced in PR-5・PR-6)
+   are centred and keep their buttons at the bottom, where the notifications
+   appear, and errors stay until they are closed (J-24). While a dialog is
+   open the notifications go to the top right, beside the dialog, so they
+   cover no part of it (×, 保存・追加, キャンセル included) however many are
+   stacked; when it closes they are back at the bottom centre. The width
+   keeps a gap beside the widest dialog from 1100px (the page's minimum
+   width) up; narrower display areas are PR-7. */
 .edit-body:has(.modal:not(.hidden)) .ui-toast-stack {
   top: var(--space-5);
+  right: var(--space-4);
   bottom: auto;
+  left: auto;
+  width: clamp(220px, calc((100vw - 560px) / 2 - 2 * var(--space-4)), 360px);
+  transform: none;
 }

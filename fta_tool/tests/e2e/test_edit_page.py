@@ -22,11 +22,12 @@ viewports (plan 5.9.4, 利用者環境の実測値).
          hash gives the default display; without Web Storage it still works.
 * E-E09  demo_points never shown; markup in factor texts stays text.
 * PR3-LAYOUT  the interim three panes (1280px and wider, J-20) at 1280x800
-         and at the viewports measured on the user's PC (Windows 11,
-         1920x1080, 100 %: Chrome 1905x945, Edge 1912x914): side by side,
-         no horizontal scroll of the page, the main controls visible and
-         not covered. Narrower widths, zoom 125 %/150 % and low heights are
-         PR-7 (E-V01〜E-V03).
+         and at the display areas measured on the user's PC (Windows 11,
+         1920x1080, 100 %; document.documentElement.clientWidth x
+         clientHeight: Chrome 1905x945, Edge 1912x914): side by side, no
+         horizontal scroll of the page, the main controls visible and not
+         covered. Narrower widths, zoom 125 %/150 % and low heights are PR-7
+         (E-V01〜E-V03).
 """
 
 from __future__ import annotations
@@ -469,9 +470,13 @@ def test_E_E09_demo_points_hidden_and_markup_stays_text(page, e2e_server):
 
 # ----- PR3-LAYOUT ---------------------------------------------------------------
 
-# The CSS viewport measured on the user's PC with the browser maximized
-# (Windows 11, 1920x1080, display scale 100 %, browser zoom 100 %;
-# window.innerWidth / innerHeight / devicePixelRatio = 1): not assumed sizes.
+# The display areas measured on the user's PC with the browser maximized
+# (Windows 11, 1920x1080, display scale 100 %, browser zoom 100 %), as
+# document.documentElement.clientWidth x document.documentElement.clientHeight
+# with window.devicePixelRatio 1 (Chrome, Edge; plan 5.9.4 利用者環境の実測値):
+# not assumed sizes. The test sets the browser's viewport to these sizes; the
+# edit page has no page scrollbar, so its clientWidth / clientHeight are then
+# the measured values (checked in the test).
 MEASURED_VIEWPORTS = [(1905, 945), (1912, 914)]
 
 
@@ -492,7 +497,9 @@ def test_three_panes_fit_at_the_base_and_the_measured_sizes(page, e2e_server, vi
     analysis_id, a, b, c, d = build_tree(e2e_server)
     open_edit(page, analysis_id)
 
-    width = page.evaluate("() => document.documentElement.clientWidth")
+    width, height = page.evaluate(
+        "() => [document.documentElement.clientWidth, document.documentElement.clientHeight]")
+    assert (width, height) == (viewport["width"], viewport["height"])  # the measured quantities
     assert page.evaluate("() => document.documentElement.scrollWidth") <= width
     nav = page.locator("#edit-nav").bounding_box()
     center = page.locator("#edit-work-area").bounding_box()

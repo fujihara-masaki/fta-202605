@@ -19,7 +19,9 @@ What is checked:
   or deeper; the ancestors of such a factor are not offered either. A walk
   that cannot be completed, or lookups that failed, mean no deletion;
 * for the deletable categories, the existing delete API removes exactly the
-  factor and its descendants (the scope the screen computed);
+  factor and its descendants (the scope the screen computed), also when
+  level-mismatched factors are among the descendants (the user's additional
+  decision of 2026-09-29); those factors are never offered themselves;
 * how the existing delete API behaves where the screen does not offer
   deletion (a factor of another analysis below; self-reference; cycle) is
   recorded as the current behaviour, not as a guarantee: the API itself is
@@ -317,6 +319,69 @@ def test_T07_below_an_inconsistent_ancestor_is_deletable_and_removes_only_its_su
     assert env.delete(below) == 200
     assert before - env.ids() == {below, below_child}
     assert ancestor in env.ids()
+
+
+def test_T07_level_mismatch_descendants_go_with_a_deletable_factor_and_nothing_else(env):
+    # The user's additional decision of 2026-09-29 (with the approval to open
+    # the PR): a factor whose own category is deletable (consistent, 上位に
+    # 不整合あり, missing parent) may be deleted with level-mismatched factors
+    # among its descendants, when every descendant was walked and none belongs
+    # to another analysis; the mismatched factors are never offered themselves,
+    # and an incomplete walk or a factor of another analysis below still takes
+    # the offer away (failed lookups: test_T07_failed_lookups_...).
+    a = env.analysis("A")
+    b = env.analysis("B")
+    r = env.node(a, 1)  # consistent 一次
+    r_child = env.node(a, 2, r)
+    r_grandchild = env.node(a, 3, r_child)
+    r_mismatch = env.node(a, 3, r)  # 三次 below a 一次
+    r_mismatch_child = env.node(a, 3, r_mismatch)  # 三次 below a 三次
+    m = env.node(a, 2, 99999)  # missing parent
+    m_mismatch = env.node(a, 2, m)  # 二次 below a 二次
+    m_upper = env.node(a, 3, m_mismatch)  # its own link is consistent
+    m_deep = env.node(a, 3, m_upper)  # 三次 below a 三次, four levels below m
+    z = env.node(a, 1, 99998)  # 一次 with a missing parent: never deletable
+    u = env.node(a, 2, z)  # 上位に不整合あり
+    u_mismatch = env.node(a, 2, u)  # 二次 below a 二次
+    r4 = env.node(a, 1)  # consistent, but a factor of B hangs below its mismatch
+    x4 = env.node(a, 3, r4)
+    stranger = env.node(b, 3, x4)
+    keep = env.node(a, 1)
+    keep_child = env.node(a, 2, keep)
+    other_root = env.node(b, 1)
+    other_child = env.node(b, 2, other_root)
+
+    view = env.view(a)
+    scopes = {
+        r: {r, r_child, r_grandchild, r_mismatch, r_mismatch_child},
+        m: {m, m_mismatch, m_upper, m_deep},
+        u: {u, u_mismatch},
+    }
+    assert (view.by_id[r].kind, view.by_id[m].kind, view.by_id[u].kind) == (OK, MISSING_PARENT, UPPER)
+    for start, scope in scopes.items():
+        assert view.by_id[start].delete_allowed, start
+        assert view.by_id[start].delete_scope == len(scope), start
+    # The level-mismatched factors (and Z) are not deletable themselves.
+    for node_id in (r_mismatch, r_mismatch_child, m_mismatch, m_deep, u_mismatch, x4, z):
+        assert LEVEL_MISMATCH in view.by_id[node_id].issues, node_id
+        assert not view.by_id[node_id].delete_allowed, node_id
+        assert view.by_id[node_id].delete_reason == detail_view.REASON_NOT_VERIFIED
+    # A factor of another analysis below a mismatched descendant blocks the start.
+    assert not view.by_id[r4].delete_allowed
+    assert view.by_id[r4].delete_reason == detail_view.REASON_FOREIGN_DESCENDANT
+    # So does a walk that cannot see every descendant.
+    limited = env.view(a, scope_limit=4)
+    assert not limited.by_id[r].delete_allowed
+    assert limited.by_id[r].delete_reason == detail_view.REASON_SCOPE_INCOMPLETE
+
+    # The unchanged delete API removes exactly the scope the screen computed.
+    before = env.ids()
+    for start, scope in scopes.items():
+        current = env.ids()
+        assert env.delete(start) == 200
+        assert current - env.ids() == scope, start
+    assert before - env.ids() == set().union(*scopes.values())
+    assert {z, r4, x4, stranger, keep, keep_child, other_root, other_child} <= env.ids()
 
 
 # ----- deletion: not offered ---------------------------------------------------
