@@ -26,9 +26,11 @@ function showToast(message, type = 'success') {
 }
 
 // ===== Show the result of a change =====
-// The edit screen shows it through the bridge (selection, step, view,
-// scroll and filter are kept); `options` names a factor to select after a
-// manual add ({ select, level }) or the deleted factor ({ deleted }).
+// The edit screen shows it by a partial update through the bridge
+// (js/pages/edit/refresh.js; the page is not reloaded, selection, step,
+// view, scroll, filter and typed input are kept); `options` names a factor
+// to select after a manual add ({ select, level }) or the deleted factor
+// ({ deleted }). The old name is kept for the callers below.
 function reloadPreservingScroll(delayMs = 0, options = {}) {
   const bridge = window.ftaEditBridge;
   if (bridge) {

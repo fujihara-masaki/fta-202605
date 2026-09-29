@@ -4,8 +4,8 @@
 Playwright で Chromium を動かし、本体のアプリ（FastAPI・Jinja2・JavaScript）を操作して確認します。
 
 - **実LLMは呼びません。** テスト用サーバー（`stub_server.py`）が AI プロバイダをスタブに差し替え、実プロバイダの取得と外部への HTTP 通信を遮断して記録します。記録があればテストは失敗します。
-- **利用者の DB は使いません。** テスト用サーバーは一時ディレクトリを作業ディレクトリにして起動し、DB（`fta_tool.db`）はその中に作られます（リポジトリ内では起動しません）。通常の pytest でも、アプリの DB エンジンは一時ディレクトリに向けます（`tests/conftest.py`）。
-- 各テストは画面寸法 1280×800 と 1440×900 の2通りで実行します（計画 第8.0節の基本寸法）。これは想定寸法での自動確認で、実利用環境の表示倍率・画面寸法の確認（手動）の代わりにはなりません。
+- **利用者の DB は使いません。** テスト用サーバーは一時ディレクトリを作業ディレクトリにして起動し、DB（`fta_tool.db`）はその中に作られます（リポジトリ内では起動しません）。通常の pytest でも、アプリの DB エンジンは一時ディレクトリに向けます（`tests/conftest.py`）。親子関係に不整合があるデータ（PR-3、J-25）は、このテスト用の一時 DB にだけ直接書き込みます（`support.py` の `insert_node`・`set_parent`）。
+- 各テストは画面寸法 1280×800 と 1440×900 の2通りで実行します（計画 第8.0節の基本寸法）。PR3-LAYOUT は、これに加えて利用者環境の実測値（計画 第5.9.4節。Windows 11・1920×1080・表示倍率100%・ブラウザ最大化で、Chrome 1905×945、Edge 1912×914）の表示領域でも実行します。いずれも Linux の Chromium での自動確認で、実利用環境（Windows の Edge・Chrome、表示倍率）での確認（手動）の代わりにはなりません。
 - 各テストの終了時に、ブラウザのコンソールエラー、ページの例外、アプリ以外への通信（E-X01）がないことを確認します。
 
 ## 準備
@@ -27,8 +27,8 @@ Claude Code のリモート実行環境（Linux）では、このブラウザが
 | UI 改修の必須受入検証 | `pytest -m e2e --e2e-required --e2e-env "<実行環境の区分>" --e2e-report e2e-report.md` | **失敗**（スキップ・未実施は合格にしない） |
 
 - `--e2e-required` の代わりに環境変数 `FTA_E2E_REQUIRED=1` でも必須受入検証になります。`--e2e-env` の代わりに `FTA_E2E_ENV` も使えます。
-- 必須受入検証では、`acceptance.py` の `REQUIRED_IDS`（PR-2 時点：E-L01〜E-L08、E-X01、E-N01〜E-N06、PR1-BASE-*、PR1-STUB、PR1-COMPAT-EDIT、PR2-IME、PR2-NO-SAMPLES）の各項目について、対応するテストがすべて実行されて成功することを求めます。スキップしたテストは失敗として報告し、`-k` などで実行しなかった項目は「未実施」として失敗にします。PR1-COMPAT-NEW（移行前の新規作成画面の互換確認）は、PR-2 で新規作成画面を移行したため E-N01〜E-N06 に置き換えました。
-- テンプレートの構造テスト（T-01〜T-03、`tests/test_ui_templates.py`）は通常の pytest で実行します。必須受入検証では、通常の pytest と E2E の両方の結果を記録してください。
+- 必須受入検証では、`acceptance.py` の `REQUIRED_IDS`（PR-3 時点：E-L01〜E-L08、E-X01、E-N01〜E-N06、PR1-BASE-*、PR1-STUB、PR2-IME、PR2-NO-SAMPLES、E-E01〜E-E09、E-E19、PR3-LEGACY-OPS、PR3-LEGACY-NOTIFY、PR3-LAYOUT、PR3-DELETE-SCOPE、PR3-GEN-PARENTS）の各項目について、対応するテストがすべて実行されて成功することを求めます。スキップしたテストは失敗として報告し、`-k` などで実行しなかった項目は「未実施」として失敗にします。PR1-COMPAT-NEW（移行前の新規作成画面の互換確認）は PR-2 で E-N01〜E-N06 に、PR1-COMPAT-EDIT（移行前の分析編集画面の互換確認）は PR-3 で E-E01〜 と PR3-LEGACY-OPS に置き換えました。
+- テンプレートの構造テスト（T-01〜T-04、`tests/test_ui_templates.py`）と不正な親子関係の区分・削除範囲のテスト（T-07、`tests/test_node_integrity.py`。テストごとの一時 DB）は通常の pytest で実行します。必須受入検証では、通常の pytest と E2E の両方の結果を記録してください。
 - 失敗の調査には pytest-playwright のオプションが使えます：`--headed`（画面を表示）、`--slowmo 200`、`--screenshot only-on-failure --tracing retain-on-failure --output <絶対パス>`。
 
 ## 記録
@@ -50,10 +50,14 @@ Windows の開発環境でも同じ手順で実行できます（`pip install -r
 | ファイル | 内容 |
 |---|---|
 | `conftest.py` | テスト用サーバー（セッションで1回起動）、テストごとの DB とスタブの初期化、画面寸法、ブラウザ起動、ページの監視 |
-| `stub_server.py` | 本体アプリをスタブの AI プロバイダで起動する（`python -m tests.e2e.stub_server --port N`、作業ディレクトリは `FTA_E2E_WORKDIR`）。スタブの動作は `FTA_E2E_STUB_MODE` またはテストが書く `stub_control.json`（`create`・`delay`・`no_candidates`・`error`） |
-| `support.py` | サーバーの操作（既存 API でのデータ作成、DB の参照）、ページの監視、ダイアログの記録 |
+| `stub_server.py` | 本体アプリをスタブの AI プロバイダで起動する（`python -m tests.e2e.stub_server --port N`、作業ディレクトリは `FTA_E2E_WORKDIR`）。スタブの動作は `FTA_E2E_STUB_MODE` またはテストが書く `stub_control.json`（`create`・`delay`・`no_candidates`・`error`）。編集画面の親子関係の確認への障害の注入も同じファイルで指定する（`"integrity": "lookup_error"`：確認用の問い合わせが失敗する、`"integrity_scope_limit": N`：削除範囲の走査を N 件で打ち切る。データは変えない） |
+| `support.py` | サーバーの操作（既存 API でのデータ作成、DB の参照、テスト用 DB への不整合データの直接書き込み、`stub_control.json` の変更）、ページの監視、ダイアログの記録 |
+| `edit_helpers.py` | 分析編集画面のテストで共通の要素の指定と確認（選択の一致、共通の通知の指定など） |
 | `acceptance.py` | 必須受入検証（スキップの失敗扱い、未実施の検出、必須項目の一覧、記録の出力） |
 | `test_list_page.py` | 分析一覧（E-L01〜E-L08） |
 | `test_new_analysis_page.py` | 新規分析作成（E-N01〜E-N06、PR2-IME、PR2-NO-SAMPLES）。PR2-NO-SAMPLES はサンプルの設定ファイルがない状態の2つ目のテスト用サーバーで確認する |
 | `test_foundation.py` | 外部通信（E-X01）、通知・保存領域・アクセシビリティ・スタブの確認（PR1-BASE-*、PR1-STUB） |
-| `test_legacy_compat.py` | 未移行の画面（分析編集）が引き続き使えることの確認（PR1-COMPAT-EDIT） |
+| `test_edit_page.py` | 分析編集の骨格（E-E01〜E-E06、E-E09、PR3-LAYOUT） |
+| `test_edit_refresh.py` | 部分更新（E-E07、E-E19） |
+| `test_edit_integrity.py` | 不正な親子関係の表示（E-E08）、削除範囲（PR3-DELETE-SCOPE）、生成・追加の親（PR3-GEN-PARENTS） |
+| `test_legacy_compat.py` | 分析編集で暫定的に旧処理（app.js）を使う操作と、その通知（PR3-LEGACY-OPS、PR3-LEGACY-NOTIFY） |

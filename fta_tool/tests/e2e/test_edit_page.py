@@ -1,7 +1,9 @@
-"""E2E: analysis edit (B), PR-3 skeleton — plan 8.3, E-E01〜E-E06, E-E09.
+"""E2E: analysis edit (B), PR-3 skeleton — plan 8.3, E-E01〜E-E06, E-E09,
+PR3-LAYOUT.
 
 Runs against the real app (stub AI provider, temporary database) in
-Chromium at 1280x800 and 1440x900.
+Chromium at 1280x800 and 1440x900; PR3-LAYOUT also at the user's measured
+viewports (plan 5.9.4, 利用者環境の実測値).
 
 * E-E01  default display: without factors ① and the top event, with factors
          ② and the first consistent 一次要因.
@@ -19,6 +21,12 @@ Chromium at 1280x800 and 1440x900.
 * E-E06  reload restores selection, step, tab, scroll and filter; an invalid
          hash gives the default display; without Web Storage it still works.
 * E-E09  demo_points never shown; markup in factor texts stays text.
+* PR3-LAYOUT  the interim three panes (1280px and wider, J-20) at 1280x800
+         and at the viewports measured on the user's PC (Windows 11,
+         1920x1080, 100 %: Chrome 1905x945, Edge 1912x914): side by side,
+         no horizontal scroll of the page, the main controls visible and
+         not covered. Narrower widths, zoom 125 %/150 % and low heights are
+         PR-7 (E-V01〜E-V03).
 """
 
 from __future__ import annotations
@@ -457,3 +465,51 @@ def test_E_E09_demo_points_hidden_and_markup_stays_text(page, e2e_server):
     expect(page.locator(".edit-crumbs li").nth(1)).to_have_text(f"一次{markup}")
     assert page.evaluate("window.__xss") is None
     assert page.locator("#edit-inspector img, .edit-page img, script:not([src]):not([type])").count() == 0
+
+
+# ----- PR3-LAYOUT ---------------------------------------------------------------
+
+# The CSS viewport measured on the user's PC with the browser maximized
+# (Windows 11, 1920x1080, display scale 100 %, browser zoom 100 %;
+# window.innerWidth / innerHeight / devicePixelRatio = 1): not assumed sizes.
+MEASURED_VIEWPORTS = [(1905, 945), (1912, 914)]
+
+
+def covered(page, locator) -> bool:
+    """Is something else drawn over the middle of the element?"""
+    locator.scroll_into_view_if_needed()
+    return not locator.evaluate("""(el) => {
+      const r = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return el === hit || el.contains(hit);
+    }""")
+
+
+@pytest.mark.acceptance("PR3-LAYOUT")
+@pytest.mark.parametrize("viewport", [(1280, 800), *MEASURED_VIEWPORTS], indirect=True,
+                         ids=["1280x800", "chrome-1905x945", "edge-1912x914"])
+def test_three_panes_fit_at_the_base_and_the_measured_sizes(page, e2e_server, viewport):
+    analysis_id, a, b, c, d = build_tree(e2e_server)
+    open_edit(page, analysis_id)
+
+    width = page.evaluate("() => document.documentElement.clientWidth")
+    assert page.evaluate("() => document.documentElement.scrollWidth") <= width
+    nav = page.locator("#edit-nav").bounding_box()
+    center = page.locator("#edit-work-area").bounding_box()
+    side = page.locator("#edit-inspector").bounding_box()
+    assert nav["x"] >= 0 and nav["x"] + nav["width"] <= center["x"] + 1
+    assert center["x"] + center["width"] <= side["x"] + 1 and side["x"] + side["width"] <= width + 1
+    for box in (nav, center, side):  # the panes scroll inside; the page does not
+        assert box["height"] > 200 and box["y"] + box["height"] <= viewport["height"] + 1
+    assert page.evaluate("() => document.documentElement.scrollHeight <= document.documentElement.clientHeight + 1")
+
+    controls = [step_button(page, n) for n in range(1, 6)]
+    controls += [tab(page, view) for view in ("work", "tree", "table")]
+    controls += [page.locator("#edit-filter-text"), select_button(page, "nav", a), select_button(page, "work", a),
+                 judgement_button(item(page, "work", a), a, "yes"),
+                 inspector(page).get_by_role("button", name="詳細を編集"),
+                 inspector(page).get_by_role("button", name="この要因を削除"),
+                 page.locator(".edit-header").get_by_role("link", name="一覧へ")]
+    for control in controls:
+        expect(control).to_be_visible()
+        assert not covered(page, control), control
