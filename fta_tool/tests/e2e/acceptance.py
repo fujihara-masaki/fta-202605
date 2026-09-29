@@ -34,10 +34,12 @@ REQUIRED_ENV = "FTA_E2E_REQUIRED"
 ENV_LABEL_ENV = "FTA_E2E_ENV"
 
 # Acceptance IDs that the required run must cover. Later PRs append theirs.
-# E-xx / T-xx follow plan section 8.9; PR1-xx / PR2-xx are checks added in
-# PR-1 / PR-2 for the shared foundation, the screens that are not migrated
-# yet, and conditions of plan 8.2 that have no E-xx. PR1-COMPAT-NEW (the new
-# analysis form before its migration) was replaced by E-N01〜E-N06 in PR-2.
+# E-xx / T-xx follow plan section 8.9; PR1-xx / PR2-xx / PR3-xx are checks
+# added in PR-1 / PR-2 / PR-3 for the shared foundation, the parts that still
+# run on the old processing, and conditions (or the user's decisions) that
+# have no E-xx. PR1-COMPAT-NEW (the new analysis form before its migration)
+# was replaced by E-N01〜E-N06 in PR-2; PR1-COMPAT-EDIT (the old edit screen)
+# by E-E01〜 and PR3-LEGACY-OPS in PR-3.
 REQUIRED_IDS: dict[str, str] = {
     "E-L01": "一覧から分析を開く（タイトル・「編集」）、並び順",
     "E-L02": "改名：Enter で保存、Esc・取消、変換中の Enter では保存しない",
@@ -58,9 +60,16 @@ REQUIRED_IDS: dict[str, str] = {
     "PR1-BASE-STORAGE": "保存領域が使えない環境でも一覧が動き、保存領域の処理が例外を出さない",
     "PR1-BASE-A11Y": "スキップリンク、ヘッダーの aria-current、ダイアログのフォーカスの戻り先",
     "PR1-STUB": "E2E 用スタブ：作成・候補0件・処理失敗、実LLMと外部通信の遮断",
-    "PR1-COMPAT-EDIT": "未移行画面の互換：分析・編集（保存・生成・評価・詳細・手動追加・削除・出力・一覧へ）",
     "PR2-IME": "新規作成：タイトルの Enter は検査を経て送信、変換確定の Enter では送信しない（合成キー操作。実機は手動）",
     "PR2-NO-SAMPLES": "新規作成：サンプルの設定ファイルがなくても、サンプル欄なしで作成できる",
+    "E-E01": "編集：既定の表示（要因なし→①と頂上事象、要因あり→②と最初の一次要因）",
+    "E-E02": "編集：R-01 の全経路での選択と、全表示・インスペクタの一致。要確認で品質警告の全文",
+    "E-E03": "編集：評価の保存と全表示への反映（ツリーを含む）、失敗時、連続クリック",
+    "E-E04": "編集：絞り込み（作業リスト・一覧表は非表示、構造ナビ・ツリーは強調）、件数、生成対象が変わらない",
+    "E-E05": "編集：表示タブのキー操作、選択の保持",
+    "E-E06": "編集：再読み込み後の復元（選択・ステップ・タブ・スクロール・絞り込み）、不正なハッシュ、保存領域なし",
+    "E-E09": "編集：demo_points を表示しない、マークアップを含む要因の文字列がそのまま文字として出る",
+    "PR3-LEGACY-OPS": "編集：暫定の旧処理（タイトル・①の保存、生成、詳細編集、手動追加、削除、出力、一覧へ）が新しい画面から使える",
 }
 
 OUTCOME_LABELS = {

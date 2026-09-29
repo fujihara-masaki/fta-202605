@@ -1,459 +1,74 @@
 {% extends "base.html" %}
 {% block title %}{{ analysis.title }} - FTA編集{% endblock %}
-
-{# ---- macro: render one node's badge/title/judgement row ---- #}
-{% macro node_row(n) -%}
-<span class="node-level-badge level-{{ n.level }}">{{ ['', '一次', '二次', '三次'][n.level] }}</span>
-<span class="tree-node-title">{{ n.title }}</span>
-<span class="tree-judgement tree-judgement-{{ n.user_judgement }}">{{ {'yes': 'Yes', 'no': 'No', 'unknown': '未評価'}.get(n.user_judgement, n.user_judgement) }}</span>
-{%- if n.direct_cause_status not in ['unknown', ''] %}
-<span class="direct-cause-badge status-{{ n.direct_cause_status }}">{{ {'likely': '直接要因の可能性高', 'unlikely': '可能性低', 'direct': '直接要因', 'not_direct': '直接要因でない'}.get(n.direct_cause_status, '') }}</span>
-{%- endif %}
-{%- if n.ai_generated %}<span class="ai-tag">AI</span>{% endif %}
-{%- if n.warning_flags %}<button type="button" class="warning-badge" title="{{ n.warning_flags }}" onclick="showWarningDetail(this.title)" aria-label="要確認の理由を表示">要確認</button>{% endif %}
-{%- endmacro %}
+{#- Analysis edit (B), PR-3 skeleton (plan 7.2, 8.3): three panes (structure
+    navigation / work area with the 作業・ツリー・一覧表 tabs / inspector),
+    work steps ①〜⑤, selection kept in step on every representation,
+    judgement, filter, state in the URL hash and sessionStorage, and the
+    groups of plan 5.9.5 for broken parent links. The server renders the
+    structure (app/detail_view.py); js/pages/edit keeps the screen state.
+    Detail editing, manual add, delete and generation still run through the
+    legacy app.js with its dialogs (replaced in PR-4〜PR-6); style.css keeps
+    only what those legacy parts use. -#}
+{% block screen_styles %}<link rel="stylesheet" href="/static/css/edit.css"><link rel="stylesheet" href="/static/style.css">{% endblock %}
+{% block body_class %}ui-page edit-body{% endblock %}
+{% block skip_links %}
+  <a class="skip-link" href="#edit-work-area">作業リストへ</a>
+  <a class="skip-link" href="#edit-inspector">インスペクタへ</a>
+{% endblock %}
 
 {% block content %}
-<div class="analysis-page">
-  <!-- Page header -->
-  <div class="analysis-header">
-    <div class="analysis-header-left">
-      <h1 class="analysis-title" id="analysisTitle"
-          contenteditable="true"
-          onblur="saveAnalysisTitle({{ analysis.id }}, this.textContent)"
-          title="クリックしてタイトルを編集">{{ analysis.title }}</h1>
-      <span id="titleError" class="title-error" hidden></span>
-      <span class="ai-badge">AI: {{ ai_provider_name }}</span>
-    </div>
-    <div class="analysis-header-right">
-      <a href="/analyses/{{ analysis.id }}/export/json" class="btn btn-sm btn-outline">JSON出力</a>
-      <a href="/analyses/{{ analysis.id }}/export/csv" class="btn btn-sm btn-outline">CSV出力</a>
-      <a href="/analyses/{{ analysis.id }}/export/markdown" class="btn btn-sm btn-outline">MD出力</a>
-      <a href="/" class="btn btn-sm btn-outline">一覧へ</a>
-    </div>
-  </div>
+<div class="edit-page" data-edit-page data-analysis-id="{{ analysis.id }}">
+  {% include "edit/_header.html" %}
+  {% include "edit/_steps.html" %}
+  <div class="edit-layout">
+    {% include "edit/_nav.html" %}
 
-  <!-- Filter bar -->
-  <div class="filter-bar">
-    <label for="nodeFilterText" class="filter-label">絞り込み（カード・一覧表）</label>
-    <input type="search" id="nodeFilterText" class="filter-input"
-           placeholder="要因名・説明で検索" oninput="applyNodeFilter()">
-    <select id="nodeFilterJudgement" class="filter-select" aria-label="評価で絞り込み" onchange="applyNodeFilter()">
-      <option value="">すべての評価</option>
-      <option value="yes">Yesのみ</option>
-      <option value="no">Noのみ</option>
-      <option value="unknown">未評価のみ</option>
-      <option value="warning">要確認のみ</option>
-    </select>
-    <button type="button" class="btn btn-sm btn-outline" onclick="clearNodeFilter()">クリア</button>
-    <span id="nodeFilterCount" class="filter-count" aria-live="polite"></span>
-  </div>
-
-  <!-- FTA Tree Area -->
-  <div class="fta-tree-scroll">
-    <div class="fta-tree-container" id="ftaTree">
-
-      <!-- Column: 頂上事象 -->
-      <div class="fta-column">
-        <div class="column-header">頂上事象</div>
-        <div class="fta-column-content">
-          <div class="node-card top-event-card">
-            <div class="node-card-body">
-              <div class="node-title-row">
-                <span class="node-level-badge level-0">頂上事象</span>
-              </div>
-              <label for="topEventInput" class="visually-hidden">頂上事象</label>
-              <textarea id="topEventInput" class="top-event-textarea" rows="4" placeholder="頂上事象を入力してください" data-saved="{{ analysis.top_event }}">{{ analysis.top_event }}</textarea>
-              <div class="node-card-actions">
-                <button class="btn btn-sm btn-primary" onclick="saveTopEvent({{ analysis.id }})">保存</button>
-              </div>
-            </div>
-          </div>
-          <!-- Analysis context (collapsible): system / incident info fed to
-               the AI generation as reference, separate from the top event -->
-          <details id="analysisContextDetails" class="analysis-context-details">
-            <summary class="analysis-context-summary">
-              分析コンテキスト（任意）
-              <span id="analysisContextStatus" class="context-status {{ 'filled' if system_context or incident_context else 'empty' }}">{{ '入力済み' if system_context or incident_context else '未入力・追加できます' }}</span>
-            </summary>
-            <div class="analysis-context-body">
-              <p class="field-hint">頂上事象（発生した事象そのもの）とは別の参考情報で、AIの要因生成時に使われます。</p>
-              <div class="form-group">
-                <label for="systemContextInput">システム構成・対象範囲</label>
-                <textarea id="systemContextInput" class="form-input" rows="3" placeholder="例：Webサーバ2台＋DBサーバ1台の冗長構成。対象は社内認証システムのみ。" data-saved="{{ system_context }}">{{ system_context }}</textarea>
-              </div>
-              <div class="form-group">
-                <label for="incidentContextInput">障害発生時の状況・観測事実</label>
-                <textarea id="incidentContextInput" class="form-input" rows="3" placeholder="例：4/1 9:00頃から全ユーザーがログイン不可。画面には500エラーが表示。" data-saved="{{ incident_context }}">{{ incident_context }}</textarea>
-              </div>
-              <div class="node-card-actions">
-                <button class="btn btn-sm btn-primary" onclick="saveAnalysisContext({{ analysis.id }})">コンテキストを保存</button>
-              </div>
-            </div>
-          </details>
-          <!-- Generate level 1 button -->
-          <div class="generate-section">
-            <button class="btn btn-generate" onclick="generateFactors({{ analysis.id }}, 1)">
-              一次要因を生成
-            </button>
-            {% if level1_nodes %}
-            <button class="btn btn-sm btn-outline btn-add-gen" onclick="generateAdditional({{ analysis.id }}, null, 1)"
-                    title="既存の一次要因と重複しないよう、一次要因を追加生成します">
-              一次要因を追加生成
-            </button>
-            {% endif %}
-            <button class="btn btn-sm btn-outline" onclick="showAddNodeModal({{ analysis.id }}, null, 1)">
-              手動追加
-            </button>
-          </div>
+    <section class="edit-pane edit-center" id="edit-work-area" aria-labelledby="edit-center-heading" tabindex="-1">
+      <h2 class="visually-hidden" id="edit-center-heading">作業エリア</h2>
+      <div class="edit-center__bar">
+        <div class="ui-tabs" role="tablist" aria-label="表示の切り替え">
+          <button type="button" class="ui-tabs__tab" role="tab" id="edit-tab-work" aria-controls="edit-panel-work" aria-selected="true" data-view-tab="work">作業</button>
+          <button type="button" class="ui-tabs__tab" role="tab" id="edit-tab-tree" aria-controls="edit-panel-tree" aria-selected="false" tabindex="-1" data-view-tab="tree">ツリー</button>
+          <button type="button" class="ui-tabs__tab" role="tab" id="edit-tab-table" aria-controls="edit-panel-table" aria-selected="false" tabindex="-1" data-view-tab="table">一覧表</button>
+        </div>
+        <div class="edit-filter" role="search" aria-label="要因の絞り込み">
+          <label class="visually-hidden" for="edit-filter-text">要因名・説明で絞り込み</label>
+          <input type="search" id="edit-filter-text" class="ui-input edit-filter__text" placeholder="要因名・説明で絞り込み" autocomplete="off" aria-describedby="edit-filter-help">
+          <label class="visually-hidden" for="edit-filter-judgement">評価で絞り込み</label>
+          <select id="edit-filter-judgement" class="ui-input edit-filter__select" aria-describedby="edit-filter-help">
+            <option value="">すべての評価</option>
+            <option value="yes">Yesのみ</option>
+            <option value="no">Noのみ</option>
+            <option value="unknown">未評価のみ</option>
+            <option value="warning">要確認のみ</option>
+          </select>
+          <button type="button" class="ui-btn ui-btn--sm" data-action="filter-clear">クリア</button>
+          <span class="edit-filter__count" id="edit-filter-count" aria-live="polite"></span>
+          <span class="visually-hidden" id="edit-filter-help">作業リストと一覧表では一致しない要因を隠し、構造ナビとツリーでは一致する要因を強調します。生成の対象は変わりません。</span>
         </div>
       </div>
+      <div class="edit-pane__scroll" data-scroll="center">
+        <section class="edit-view" role="tabpanel" id="edit-panel-work" aria-labelledby="edit-tab-work" data-view-panel="work" tabindex="0">
+          {% include "edit/_work.html" %}
+        </section>
+        <section class="edit-view" role="tabpanel" id="edit-panel-tree" aria-labelledby="edit-tab-tree" data-view-panel="tree" tabindex="0" hidden>
+          {% include "edit/_tree.html" %}
+        </section>
+        <section class="edit-view" role="tabpanel" id="edit-panel-table" aria-labelledby="edit-tab-table" data-view-panel="table" tabindex="0" hidden>
+          {% include "edit/_table.html" %}
+        </section>
+      </div>
+    </section>
 
-      <!-- Column: 一次要因 -->
-      <div class="fta-column">
-        <div class="column-header">一次要因</div>
-        <div class="fta-column-content" id="col-level1">
-          {% if level1_nodes %}
-            {% for node in level1_nodes %}
-            <div class="node-card level-1-card {{ node.user_judgement }}" id="node-{{ node.id }}" data-node-id="{{ node.id }}" data-level="{{ node.level }}">
-              <div class="node-card-header">
-                <span class="node-level-badge level-1">一次</span>
-                {% if node.ai_generated %}<span class="ai-tag">AI</span>{% endif %}
-                {% if node.warning_flags %}<button type="button" class="warning-badge" title="{{ node.warning_flags }}" onclick="showWarningDetail(this.title)" aria-label="要確認の理由を表示">要確認</button>{% endif %}
-                <div class="node-judgement-buttons">
-                  <button class="judgement-btn yes {{ 'active' if node.user_judgement == 'yes' }}" aria-pressed="{{ 'true' if node.user_judgement == 'yes' else 'false' }}" title="この要因はあり得る（Yes評価）" onclick="setJudgement({{ node.id }}, 'yes')">Yes</button>
-                  <button class="judgement-btn no {{ 'active' if node.user_judgement == 'no' }}" aria-pressed="{{ 'true' if node.user_judgement == 'no' else 'false' }}" title="この要因は該当しない（No評価）" onclick="setJudgement({{ node.id }}, 'no')">No</button>
-                  <button class="judgement-btn unknown {{ 'active' if node.user_judgement == 'unknown' }}" aria-pressed="{{ 'true' if node.user_judgement == 'unknown' else 'false' }}" title="未評価に戻す" onclick="setJudgement({{ node.id }}, 'unknown')">未</button>
-                </div>
-              </div>
-              <div class="node-card-body">
-                <div class="node-title" contenteditable="true" role="textbox" aria-label="要因タイトル" title="クリックで編集、Enterで確定" onblur="saveNodeTitle({{ node.id }}, this.textContent)">{{ node.title }}</div>
-                <div class="node-desc">{{ node.description }}</div>
-                {% if node.direct_cause_status not in ['unknown', ''] %}
-                <div class="direct-cause-badge status-{{ node.direct_cause_status }}">
-                  {{ {'likely': '直接要因の可能性高', 'unlikely': '可能性低', 'direct': '直接要因', 'not_direct': '直接要因でない'}.get(node.direct_cause_status, '') }}
-                </div>
-                {% endif %}
-              </div>
-              <div class="node-card-footer">
-                <button class="btn btn-xs btn-outline" onclick="openNodeDetail({{ node.id }})">詳細編集</button>
-                <button class="btn btn-xs btn-outline btn-add-gen" onclick="generateAdditional({{ analysis.id }}, {{ node.id }}, 2)"
-                        title="この要因の下に二次要因をAIで追加生成します">子を追加生成</button>
-                <button class="btn btn-xs btn-outline" onclick="showAddNodeModal({{ analysis.id }}, {{ node.id }}, 2)">子追加</button>
-                <button class="btn btn-xs btn-danger" onclick="deleteNode({{ node.id }}, {{ analysis.id }})">削除</button>
-              </div>
-            </div>
-            {% endfor %}
-          {% else %}
-            <div class="empty-col-msg">「一次要因を生成」ボタンを押してください</div>
-          {% endif %}
-        </div>
-        {% if level1_nodes %}
-        <div class="generate-section">
-          <button class="btn btn-generate" onclick="generateFactors({{ analysis.id }}, 2)">
-            Yesの一次要因から二次要因を生成
-          </button>
-        </div>
-        {% endif %}
-      </div>
-
-      <!-- Column: 二次要因 -->
-      <div class="fta-column">
-        <div class="column-header">二次要因</div>
-        <div class="fta-column-content" id="col-level2">
-          {% if level2_nodes %}
-            {% for node in level2_nodes %}
-            {% set parent = node_map.get(node.parent_id) %}
-            <div class="node-card level-2-card {{ node.user_judgement }}" id="node-{{ node.id }}" data-node-id="{{ node.id }}" data-level="{{ node.level }}">
-              <div class="node-card-header">
-                <span class="node-level-badge level-2">二次</span>
-                {% if node.ai_generated %}<span class="ai-tag">AI</span>{% endif %}
-                {% if node.warning_flags %}<button type="button" class="warning-badge" title="{{ node.warning_flags }}" onclick="showWarningDetail(this.title)" aria-label="要確認の理由を表示">要確認</button>{% endif %}
-                <div class="node-judgement-buttons">
-                  <button class="judgement-btn yes {{ 'active' if node.user_judgement == 'yes' }}" aria-pressed="{{ 'true' if node.user_judgement == 'yes' else 'false' }}" title="この要因はあり得る（Yes評価）" onclick="setJudgement({{ node.id }}, 'yes')">Yes</button>
-                  <button class="judgement-btn no {{ 'active' if node.user_judgement == 'no' }}" aria-pressed="{{ 'true' if node.user_judgement == 'no' else 'false' }}" title="この要因は該当しない（No評価）" onclick="setJudgement({{ node.id }}, 'no')">No</button>
-                  <button class="judgement-btn unknown {{ 'active' if node.user_judgement == 'unknown' }}" aria-pressed="{{ 'true' if node.user_judgement == 'unknown' else 'false' }}" title="未評価に戻す" onclick="setJudgement({{ node.id }}, 'unknown')">未</button>
-                </div>
-              </div>
-              {% if parent %}
-              <div class="parent-label">← {{ parent.title }}</div>
-              {% endif %}
-              <div class="node-card-body">
-                <div class="node-title" contenteditable="true" role="textbox" aria-label="要因タイトル" title="クリックで編集、Enterで確定" onblur="saveNodeTitle({{ node.id }}, this.textContent)">{{ node.title }}</div>
-                <div class="node-desc">{{ node.description }}</div>
-                {% if node.direct_cause_status not in ['unknown', ''] %}
-                <div class="direct-cause-badge status-{{ node.direct_cause_status }}">
-                  {{ {'likely': '直接要因の可能性高', 'unlikely': '可能性低', 'direct': '直接要因', 'not_direct': '直接要因でない'}.get(node.direct_cause_status, '') }}
-                </div>
-                {% endif %}
-              </div>
-              <div class="node-card-footer">
-                <button class="btn btn-xs btn-outline" onclick="openNodeDetail({{ node.id }})">詳細編集</button>
-                <button class="btn btn-xs btn-outline btn-add-gen" onclick="generateAdditional({{ analysis.id }}, {{ node.id }}, 3)"
-                        title="この要因の下に三次要因をAIで追加生成します">子を追加生成</button>
-                <button class="btn btn-xs btn-outline" onclick="showAddNodeModal({{ analysis.id }}, {{ node.id }}, 3)">子追加</button>
-                <button class="btn btn-xs btn-danger" onclick="deleteNode({{ node.id }}, {{ analysis.id }})">削除</button>
-              </div>
-            </div>
-            {% endfor %}
-          {% else %}
-            <div class="empty-col-msg">一次要因をYes評価後に生成できます</div>
-          {% endif %}
-        </div>
-        {% if level2_nodes %}
-        <div class="generate-section">
-          <button class="btn btn-generate" onclick="generateFactors({{ analysis.id }}, 3)">
-            Yesの二次要因から三次要因を生成
-          </button>
-        </div>
-        {% endif %}
-      </div>
-
-      <!-- Column: 三次要因 -->
-      <div class="fta-column">
-        <div class="column-header">三次要因</div>
-        <div class="fta-column-content" id="col-level3">
-          {% if level3_nodes %}
-            {% for node in level3_nodes %}
-            {% set parent = node_map.get(node.parent_id) %}
-            <div class="node-card level-3-card {{ node.user_judgement }}" id="node-{{ node.id }}" data-node-id="{{ node.id }}" data-level="{{ node.level }}">
-              <div class="node-card-header">
-                <span class="node-level-badge level-3">三次</span>
-                {% if node.ai_generated %}<span class="ai-tag">AI</span>{% endif %}
-                {% if node.warning_flags %}<button type="button" class="warning-badge" title="{{ node.warning_flags }}" onclick="showWarningDetail(this.title)" aria-label="要確認の理由を表示">要確認</button>{% endif %}
-                <div class="node-judgement-buttons">
-                  <button class="judgement-btn yes {{ 'active' if node.user_judgement == 'yes' }}" aria-pressed="{{ 'true' if node.user_judgement == 'yes' else 'false' }}" title="この要因はあり得る（Yes評価）" onclick="setJudgement({{ node.id }}, 'yes')">Yes</button>
-                  <button class="judgement-btn no {{ 'active' if node.user_judgement == 'no' }}" aria-pressed="{{ 'true' if node.user_judgement == 'no' else 'false' }}" title="この要因は該当しない（No評価）" onclick="setJudgement({{ node.id }}, 'no')">No</button>
-                  <button class="judgement-btn unknown {{ 'active' if node.user_judgement == 'unknown' }}" aria-pressed="{{ 'true' if node.user_judgement == 'unknown' else 'false' }}" title="未評価に戻す" onclick="setJudgement({{ node.id }}, 'unknown')">未</button>
-                </div>
-              </div>
-              {% if parent %}
-              <div class="parent-label">← {{ parent.title }}</div>
-              {% endif %}
-              <div class="node-card-body">
-                <div class="node-title" contenteditable="true" role="textbox" aria-label="要因タイトル" title="クリックで編集、Enterで確定" onblur="saveNodeTitle({{ node.id }}, this.textContent)">{{ node.title }}</div>
-                <div class="node-desc">{{ node.description }}</div>
-                {% if node.direct_cause_status not in ['unknown', ''] %}
-                <div class="direct-cause-badge status-{{ node.direct_cause_status }}">
-                  {{ {'likely': '直接要因の可能性高', 'unlikely': '可能性低', 'direct': '直接要因', 'not_direct': '直接要因でない'}.get(node.direct_cause_status, '') }}
-                </div>
-                {% endif %}
-              </div>
-              <div class="node-card-footer">
-                <button class="btn btn-xs btn-outline" onclick="openNodeDetail({{ node.id }})">詳細編集</button>
-                <button class="btn btn-xs btn-danger" onclick="deleteNode({{ node.id }}, {{ analysis.id }})">削除</button>
-              </div>
-            </div>
-            {% endfor %}
-          {% else %}
-            <div class="empty-col-msg">二次要因をYes評価後に生成できます</div>
-          {% endif %}
-        </div>
-      </div>
-
-    </div><!-- end fta-tree-container -->
-  </div><!-- end fta-tree-scroll -->
-
-  <!-- FTA Tree View Section (collapsible) -->
-  <div class="fta-tree-view-section">
-    <details id="ftaTreeDetails" class="fta-tree-details">
-      <summary class="fta-tree-summary">FTAツリー表示</summary>
-    <div class="fta-tree-view">
-      <ul class="tree-root">
-        <li class="tree-node tree-top-event">
-          <div class="tree-node-inner">
-            <span class="node-level-badge level-0">頂上事象</span>
-            <span class="tree-node-title">{{ analysis.top_event or '（頂上事象が未設定です）' }}</span>
-          </div>
-          {% if level1_nodes %}
-          <ul class="tree-children">
-            {% for l1 in level1_nodes %}
-            <li class="tree-node">
-              <div class="tree-node-inner">{{ node_row(l1) }}</div>
-              {% set l2_list = children_of.get(l1.id, []) %}
-              {% if l2_list %}
-              <ul class="tree-children">
-                {% for l2 in l2_list %}
-                <li class="tree-node">
-                  <div class="tree-node-inner">{{ node_row(l2) }}</div>
-                  {% set l3_list = children_of.get(l2.id, []) %}
-                  {% if l3_list %}
-                  <ul class="tree-children">
-                    {% for l3 in l3_list %}
-                    <li class="tree-node">
-                      <div class="tree-node-inner">{{ node_row(l3) }}</div>
-                    </li>
-                    {% endfor %}
-                  </ul>
-                  {% endif %}
-                </li>
-                {% endfor %}
-              </ul>
-              {% endif %}
-            </li>
-            {% endfor %}
-          </ul>
-          {% else %}
-          <p class="tree-empty-msg">要因がまだありません。「一次要因を生成」ボタンを押してください。</p>
-          {% endif %}
-        </li>
-      </ul>
-    </div>
-    </details>
-
-    <details id="ftaTableDetails" class="fta-tree-details">
-      <summary class="fta-tree-summary">一覧表表示</summary>
-      <div class="fta-table-wrap">
-        {% if nodes %}
-        <table class="node-table">
-          <thead>
-            <tr>
-              <th scope="col">階層</th>
-              <th scope="col">要因</th>
-              <th scope="col">親要因</th>
-              <th scope="col">評価</th>
-              <th scope="col">直接要因評価</th>
-              <th scope="col">要確認</th>
-              <th scope="col">説明</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for n in nodes %}
-            <tr class="node-table-row" data-node-id="{{ n.id }}" data-judgement="{{ n.user_judgement }}" data-warning="{{ '1' if n.warning_flags else '' }}">
-              <td><span class="node-level-badge level-{{ n.level }}">{{ ['', '一次', '二次', '三次'][n.level] }}</span></td>
-              <td class="node-table-title"><span class="node-table-title-text">{{ n.title }}</span>{% if n.ai_generated %} <span class="ai-tag">AI</span>{% endif %}</td>
-              <td class="node-table-parent">{{ node_map.get(n.parent_id).title if n.parent_id and node_map.get(n.parent_id) else '（頂上事象）' }}</td>
-              <td><span class="tree-judgement tree-judgement-{{ n.user_judgement }}">{{ {'yes': 'Yes', 'no': 'No', 'unknown': '未評価'}.get(n.user_judgement, n.user_judgement) }}</span></td>
-              <td>{{ {'likely': '可能性高', 'unlikely': '可能性低', 'direct': '直接要因', 'not_direct': '直接要因でない'}.get(n.direct_cause_status, '-') }}</td>
-              <td class="node-table-warning">{{ n.warning_flags or '-' }}</td>
-              <td class="node-table-desc">{{ n.description }}</td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-        {% else %}
-        <p class="tree-empty-msg">要因がまだありません。</p>
-        {% endif %}
-      </div>
-    </details>
-  </div><!-- end fta-tree-view-section -->
-</div>
-
-<!-- Node Detail Modal -->
-<div id="nodeDetailModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="nodeDetailModalTitle">
-  <div class="modal-backdrop" onclick="closeNodeDetail()"></div>
-  <div class="modal-content">
-    <div class="modal-header">
-      <h2 id="nodeDetailModalTitle">ノード詳細編集</h2>
-      <button class="modal-close" onclick="closeNodeDetail()" aria-label="閉じる">×</button>
-    </div>
-    <div class="modal-body">
-      <input type="hidden" id="modalNodeId">
-      <div id="modalWarningRow" class="modal-warning-row" hidden>
-        <span class="warning-badge">要確認</span>
-        <span id="modalWarningText"></span>
-      </div>
-      <div class="form-group">
-        <label for="modalTitle">要因タイトル <span class="required">*</span></label>
-        <input type="text" id="modalTitle" class="form-input">
-      </div>
-      <div class="form-group">
-        <label for="modalDescription">説明</label>
-        <textarea id="modalDescription" rows="3" class="form-input"></textarea>
-      </div>
-      <div class="form-group">
-        <label for="modalMemo">メモ</label>
-        <textarea id="modalMemo" rows="2" class="form-input"></textarea>
-      </div>
-      <hr>
-      <h3>直接要因評価</h3>
-      <div class="form-group">
-        <label for="modalDirectStatus">ステータス</label>
-        <select id="modalDirectStatus" class="form-input">
-          <option value="unknown">未評価</option>
-          <option value="likely">直接要因の可能性が高い</option>
-          <option value="unlikely">直接要因の可能性が低い</option>
-          <option value="direct">直接要因</option>
-          <option value="not_direct">直接要因でない</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="modalDirectComment">評価コメント</label>
-        <textarea id="modalDirectComment" rows="2" class="form-input"></textarea>
-      </div>
-      <div class="form-group">
-        <label for="modalEvidence">根拠</label>
-        <textarea id="modalEvidence" rows="2" class="form-input"></textarea>
-      </div>
-      <div class="form-group">
-        <label for="modalPrevention">再発防止策の候補</label>
-        <textarea id="modalPrevention" rows="2" class="form-input"></textarea>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline" onclick="closeNodeDetail()">キャンセル</button>
-      <button class="btn btn-primary" id="modalSaveBtn" onclick="saveNodeDetail()">保存</button>
-    </div>
+    {% include "edit/_inspector.html" %}
   </div>
 </div>
 
-<!-- Add Node Modal -->
-<div id="addNodeModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="addNodeModalTitle">
-  <div class="modal-backdrop" onclick="closeAddNodeModal()"></div>
-  <div class="modal-content modal-sm">
-    <div class="modal-header">
-      <h2 id="addNodeModalTitle">要因を手動追加</h2>
-      <button class="modal-close" onclick="closeAddNodeModal()" aria-label="閉じる">×</button>
-    </div>
-    <div class="modal-body">
-      <input type="hidden" id="addNodeAnalysisId">
-      <input type="hidden" id="addNodeParentId">
-      <input type="hidden" id="addNodeLevel">
-      <div class="form-group">
-        <label for="addNodeTitle">要因タイトル <span class="required">*</span></label>
-        <input type="text" id="addNodeTitle" class="form-input" placeholder="要因のタイトルを入力">
-      </div>
-      <div class="form-group">
-        <label for="addNodeDescription">説明</label>
-        <textarea id="addNodeDescription" rows="2" class="form-input" placeholder="説明（任意）"></textarea>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline" onclick="closeAddNodeModal()">キャンセル</button>
-      <button class="btn btn-primary" onclick="submitAddNode()">追加</button>
-    </div>
-  </div>
-</div>
+{% include "edit/_legacy_dialogs.html" %}
 
-<!-- Loading overlay -->
-<div id="loadingOverlay" class="loading-overlay hidden">
-  <div class="loading-spinner"></div>
-  <p>AIが要因を生成中...</p>
-</div>
-
+<script type="application/json" id="analysis-data">{{ view.data | tojson }}</script>
 {% endblock %}
 
 {% block extra_scripts %}
-<script>
-const ANALYSIS_ID = {{ analysis.id }};
-
-// Tree / table details: restore/persist open state via localStorage
-(function() {
-  const sections = [
-    ['ftaTreeDetails', 'ftaTreeOpen_' + ANALYSIS_ID],
-    ['ftaTableDetails', 'ftaTableOpen_' + ANALYSIS_ID],
-    ['analysisContextDetails', 'analysisContextOpen_' + ANALYSIS_ID],
-  ];
-  for (const [id, key] of sections) {
-    const details = document.getElementById(id);
-    if (!details) continue;
-    if (localStorage.getItem(key) === 'true') {
-      details.open = true;
-    }
-    details.addEventListener('toggle', () => {
-      localStorage.setItem(key, details.open ? 'true' : 'false');
-    });
-  }
-})();
-</script>
+<script type="module" src="/static/js/pages/edit.js"></script>
 {% endblock %}

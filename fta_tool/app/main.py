@@ -227,25 +227,14 @@ def analysis_detail(request: Request, analysis_id: int, db: Session = Depends(ge
         raise HTTPException(status_code=404, detail="分析が見つかりません")
 
     nodes = crud.get_nodes_by_analysis(db, analysis_id)
+    # Structure, parent-link categories, permissions and the embedded
+    # summary of the edit screen (app/detail_view.py).
     view = _edit_view(db, analysis, nodes)
-
-    # Build tree structure for template
-    node_map = {n.id: n for n in nodes}
-    # level1: top level factors, grouped by parent
-    level1_nodes = [n for n in nodes if n.level == 1]
-    level2_nodes = [n for n in nodes if n.level == 2]
-    level3_nodes = [n for n in nodes if n.level == 3]
-
-    # Build parent->children dict for levels
-    children_of: dict[int, list] = {}
-    for node in nodes:
-        if node.parent_id:
-            children_of.setdefault(node.parent_id, []).append(node)
 
     ai_provider_name = os.environ.get("AI_PROVIDER", "mock")
 
-    # Analysis context (system/incident) for the collapsible editor near the
-    # top event. demo_points and unknown keys are kept server-side only.
+    # Analysis context (system/incident) for the editor of step ①.
+    # demo_points and unknown keys are kept server-side only.
     context_data = _parse_analysis_context(analysis.analysis_context, analysis_id)
     system_context = context_data.get("system_context")
     incident_context = context_data.get("incident_context")
@@ -257,12 +246,6 @@ def analysis_detail(request: Request, analysis_id: int, db: Session = Depends(ge
             "analysis": analysis,
             "system_context": system_context if isinstance(system_context, str) else "",
             "incident_context": incident_context if isinstance(incident_context, str) else "",
-            "nodes": nodes,
-            "level1_nodes": level1_nodes,
-            "level2_nodes": level2_nodes,
-            "level3_nodes": level3_nodes,
-            "children_of": children_of,
-            "node_map": node_map,
             "ai_provider_name": ai_provider_name,
             "view": view,
         },

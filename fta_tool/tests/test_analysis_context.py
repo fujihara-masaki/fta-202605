@@ -27,6 +27,7 @@ from app import crud, models, schemas
 from app.database import get_db
 from app.main import app
 from app.services.ai_provider import GeneratedFactor
+from tests.test_ui_templates import parse
 
 
 @pytest.fixture()
@@ -124,11 +125,15 @@ def test_create_analysis_without_context_keeps_legacy_behavior(client):
 
     analysis_id = int(res.headers["location"].rstrip("/").split("/")[-1])
     assert _get_stored_context(client, analysis_id) == ""
-    # Detail page still renders (empty-context state shows the add affordance).
+    # The edit screen still opens: step ① has both reference fields (ids
+    # kept) and shows the empty state (plan appendix C).
     page = client.get(f"/analyses/{analysis_id}")
     assert page.status_code == 200
-    assert "分析コンテキスト" in page.text
-    assert "未入力" in page.text
+    root = parse(page.text)
+    for field_id in ("systemContextInput", "incidentContextInput"):
+        field = root.find("textarea", id=field_id)
+        assert (field.text(), field.attrs["data-saved"]) == ("", "")
+    assert "empty" in root.find(id="analysisContextStatus").attrs["class"].split()
 
 
 # --- New-analysis form: visible fields (sample apply targets them) -----------
@@ -180,10 +185,14 @@ def test_detail_page_renders_saved_context(client):
         client, analysis_context=json.dumps(ctx, ensure_ascii=False))
     res = client.get(f"/analyses/{analysis_id}")
     assert res.status_code == 200
-    assert "認証システムはWeb2台構成" in res.text
-    assert "9時から500エラー" in res.text
-    assert "入力済み" in res.text
-    # demo_points is kept server-side only, not surfaced as an input.
+    root = parse(res.text)
+    assert root.find("textarea", id="systemContextInput").text() == "認証システムはWeb2台構成"
+    assert root.find("textarea", id="incidentContextInput").text() == "9時から500エラー"
+    # Saved state of the reference information (the old status element,
+    # moved as it was; PR-4 replaces it with the new save status, J-11).
+    assert "filled" in root.find(id="analysisContextStatus").attrs["class"].split()
+    # demo_points is kept server-side only: not an input, not in the page,
+    # not in the embedded summary.
     assert "デモ観点X" not in res.text
 
 
@@ -191,7 +200,10 @@ def test_detail_page_safe_on_broken_context_json(client):
     analysis_id = _create_analysis(client, analysis_context="{broken json")
     res = client.get(f"/analyses/{analysis_id}")
     assert res.status_code == 200
-    assert "分析コンテキスト" in res.text
+    root = parse(res.text)
+    for field_id in ("systemContextInput", "incidentContextInput"):
+        assert root.find("textarea", id=field_id).text() == ""
+    assert "empty" in root.find(id="analysisContextStatus").attrs["class"].split()
 
 
 # --- POST /analyses/{id}/context ---------------------------------------------

@@ -1,0 +1,145 @@
+{#- Parts of the edit screen (B), rendered from app/detail_view.py.
+    Every representation of a factor carries data-node-id and a data-role,
+    so js/pages/edit keeps selection, judgement and filter in step on all of
+    them (plan 3.4-3). Every text is auto-escaped here and inserted with
+    textContent on the page. Recursive loops walk structures that
+    detail_view.py builds with visited sets and at most three levels. -#}
+{% import "_macros.html" as ui %}
+
+{#- Short text for a factor of the inconsistent group. -#}
+{% macro issue_text(n) -%}
+{{ '上位に不整合あり' if n.kind == 'upper' else n.label }}
+{%- endmacro %}
+
+{#- A row of the work list (UI-12: judgement; select; tags). Rows are flat
+    list items; a nested factor of the inconsistent group is indented with
+    data-depth instead of a nested list, so the filter hides rows one by one. -#}
+{% macro work_row(n, depth=1, anomaly=False) -%}
+<li class="edit-row{{ ' edit-row--anomaly' if anomaly else '' }}" data-node-id="{{ n.id }}" data-role="work-item" data-judgement="{{ n.judgement }}" data-depth="{{ depth }}">
+  {{ ui.judgement_toggle(n) }}
+  <div class="edit-row__body">
+    <div class="edit-row__head">
+      {%- if anomaly %}<span class="ui-tag ui-tag--level">{{ n.level_name }}</span>{% endif %}
+      <button type="button" class="edit-row__title" data-action="select" data-node-id="{{ n.id }}" data-role="work">{{ n.title }}</button>
+    </div>
+    <div class="edit-row__tags">
+      {{ ui.node_tags(n, 'work') }}
+      {%- if anomaly %}<span class="ui-tag ui-tag--issue">{{ issue_text(n) }}</span>{% endif %}
+    </div>
+    {%- if n.description %}
+    <p class="edit-row__desc">{{ n.description }}</p>
+    {%- endif %}
+  </div>
+</li>
+{%- endmacro %}
+
+{#- A parent group of steps ③・④: the parent's name selects it, its judgement
+    is shown (J-16), and additional generation / manual add name the parent
+    (the legacy functions need it). -#}
+{% macro group(parent, level) -%}
+<section class="edit-group" data-group-parent="{{ parent.id }}" aria-labelledby="group-{{ parent.id }}-title">
+  <div class="edit-group__header" data-node-id="{{ parent.id }}" data-role="group-item" data-judgement="{{ parent.judgement }}">
+    <h3 class="edit-group__title" id="group-{{ parent.id }}-title">
+      <span class="edit-group__prefix">親：</span>
+      <button type="button" class="edit-link" data-action="select" data-node-id="{{ parent.id }}" data-role="group">{{ parent.title }}</button>
+    </h3>
+    <span class="edit-group__judgement">親の評価：{{ ui.judgement_chip(parent) }}</span>
+    <span class="edit-group__gen" data-gen-host="{{ parent.id }}"></span>
+    <div class="edit-group__actions">
+      <button type="button" class="ui-btn ui-btn--sm" data-action="legacy-generate-additional" data-parent-id="{{ parent.id }}" data-level="{{ level }}" data-generate aria-label="AIで追加生成（親：{{ parent.title }}）">AIで追加生成</button>
+      <button type="button" class="ui-btn ui-btn--sm" data-action="legacy-add" data-parent-id="{{ parent.id }}" data-level="{{ level }}" aria-label="手動追加（親：{{ parent.title }}）">手動追加</button>
+    </div>
+  </div>
+  {%- if parent.children %}
+  <ul class="edit-rows">
+    {%- for n in parent.children %}
+    {{ work_row(n) }}
+    {%- endfor %}
+  </ul>
+  {%- else %}
+  <p class="edit-empty edit-empty--group">この親の下に要因はまだありません。</p>
+  {%- endif %}
+</section>
+{%- endmacro %}
+
+{#- The group of factors with inconsistent parent links, at the end of the
+    work list (J-25, plan 5.9.5): never hidden, never shown as the top event;
+    「上位に不整合あり」 below the inconsistent ancestor. -#}
+{% macro work_anomalies(view) -%}
+{%- if view.anomalies %}
+<section class="edit-anomalies" aria-labelledby="work-anomalies-title">
+  <h3 class="edit-anomalies__title" id="work-anomalies-title">親子関係に不整合がある要因（{{ view.anomaly_count }}件）</h3>
+  <p class="edit-anomalies__lead">親子関係に不整合があるため、ツリーの正しい位置に置けない要因です。選ぶと内容を確認できます。この要因を親にした生成・手動追加はできません。</p>
+  <ul class="edit-rows">
+    {%- for n in view.anomalies recursive %}
+    {{ work_row(n, loop.depth, True) }}
+    {%- if n.children and loop.depth < 3 %}{{ loop(n.children) }}{% endif %}
+    {%- endfor %}
+  </ul>
+</section>
+{%- endif %}
+{%- endmacro %}
+
+{#- One factor in the structure navigation (judgement, warning and manual marks). -#}
+{% macro nav_button(n, anomaly=False) -%}
+<button type="button" class="edit-outline__node" data-action="select" data-node-id="{{ n.id }}" data-role="nav">
+  {{ ui.judgement_chip(n) }}
+  <span class="edit-outline__title">{{ n.title }}</span>
+  {%- if n.warning_text %}<span class="ui-mark ui-mark--warning">要確認</span>{% endif %}
+  {%- if not n.ai_generated %}<span class="ui-mark">手動</span>{% endif %}
+  {%- if anomaly %}<span class="edit-outline__issue">{{ issue_text(n) }}</span>{% endif %}
+</button>
+{%- endmacro %}
+
+{#- One factor in the tree view: level, title, judgement and tags. -#}
+{% macro tree_row(n, anomaly=False) -%}
+<div class="edit-tree__row">
+  <span class="ui-tag ui-tag--level">{{ n.level_name }}</span>
+  <button type="button" class="edit-link edit-tree__title" data-action="select" data-node-id="{{ n.id }}" data-role="tree">{{ n.title }}</button>
+  {{ ui.judgement_chip(n) }}
+  {{ ui.node_tags(n, 'tree') }}
+  {%- if anomaly %}<span class="ui-tag ui-tag--issue">{{ issue_text(n) }}</span>{% endif %}
+</div>
+{%- endmacro %}
+
+{#- Nested outline (structure navigation or tree): the consistent tree below
+    the top event, then the inconsistent group. `role` is "nav" or "tree". -#}
+{% macro outline(view, role, top_event) -%}
+<ul class="edit-outline edit-outline--{{ role }}">
+  <li class="edit-outline__item edit-outline__item--top">
+    <button type="button" class="edit-outline__node edit-outline__node--top" data-action="select" data-select="top" data-role="{{ role }}">
+      <span class="ui-tag ui-tag--level">頂上事象</span>
+      <span class="edit-outline__title">{{ top_event or '（頂上事象が未設定です）' }}</span>
+    </button>
+    {%- if view.roots %}
+    <ul class="edit-outline__children">
+      {%- for n in view.roots recursive %}
+      <li class="edit-outline__item" data-node-id="{{ n.id }}" data-role="{{ role }}-item" data-judgement="{{ n.judgement }}">
+        {%- if role == 'nav' %}{{ nav_button(n) }}{% else %}{{ tree_row(n) }}{% endif %}
+        {%- if n.children and loop.depth < 3 %}
+        <ul class="edit-outline__children">{{ loop(n.children) }}</ul>
+        {%- endif %}
+      </li>
+      {%- endfor %}
+    </ul>
+    {%- elif role == 'tree' %}
+    <p class="edit-empty">要因がまだありません。「② 一次要因」で一次要因を生成・追加します。</p>
+    {%- endif %}
+  </li>
+</ul>
+{%- if view.anomalies %}
+<section class="edit-anomalies edit-anomalies--{{ role }}" aria-labelledby="{{ role }}-anomalies-title">
+  <h3 class="edit-anomalies__title" id="{{ role }}-anomalies-title">親子関係に不整合がある要因（{{ view.anomaly_count }}件）</h3>
+  <ul class="edit-outline">
+    {%- for n in view.anomalies recursive %}
+    <li class="edit-outline__item" data-node-id="{{ n.id }}" data-role="{{ role }}-item" data-judgement="{{ n.judgement }}" data-kind="{{ n.kind }}">
+      {%- if role == 'nav' %}{{ nav_button(n, True) }}{% else %}{{ tree_row(n, True) }}{% endif %}
+      {%- if n.children and loop.depth < 3 %}
+      <ul class="edit-outline__children">{{ loop(n.children) }}</ul>
+      {%- endif %}
+    </li>
+    {%- endfor %}
+  </ul>
+</section>
+{%- endif %}
+{%- endmacro %}

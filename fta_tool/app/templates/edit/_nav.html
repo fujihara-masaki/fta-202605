@@ -1,0 +1,14 @@
+{#- Structure navigation (left pane): the tree from the top event to the
+    三次要因 with judgement, warning and manual marks, then the group of
+    factors with inconsistent parent links. Choosing a factor selects it
+    everywhere and switches the work step. The filter only highlights here
+    (J-08). -#}
+{% import "edit/_parts.html" as parts %}
+<nav class="edit-pane edit-nav" id="edit-nav" aria-labelledby="edit-nav-heading">
+  <h2 class="edit-pane__heading" id="edit-nav-heading">構造</h2>
+  <div class="edit-pane__scroll" data-scroll="nav">
+    <div data-region="nav">
+      {{ parts.outline(view, 'nav', analysis.top_event) }}
+    </div>
+  </div>
+</nav>

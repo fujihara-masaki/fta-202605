@@ -535,3 +535,30 @@ def test_T07_lookups_are_two_queries_whatever_the_number_of_factors(env):
         db.close()
     assert parents == {}
     assert list(children) == [few[0]]
+
+
+def test_T07_the_edit_page_asks_the_same_number_of_queries_whatever_the_size(env):
+    statements = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    small = env.analysis("小")
+    env.node(small, 1)
+    large = env.analysis("大")
+    root = env.node(large, 1)
+    for index in range(40):
+        middle = env.node(large, 2, root)
+        env.node(large, 3, middle)
+    env.node(large, 2, 55555)  # a missing parent: the lookups still run once
+
+    counts = []
+    event.listen(env.engine, "before_cursor_execute", record)
+    try:
+        for analysis_id in (small, large):
+            statements.clear()
+            assert env.client.get(f"/analyses/{analysis_id}").status_code == 200
+            counts.append(sum(1 for s in statements if s.lstrip().upper().startswith("SELECT")))
+    finally:
+        event.remove(env.engine, "before_cursor_execute", record)
+    assert counts[0] == counts[1], counts

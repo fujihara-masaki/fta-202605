@@ -1,5 +1,37 @@
 {#- Shared UI parts (import with: {% import "_macros.html" as ui %}) -#}
 
+{#- Judgement of a factor (UI-12): Yes / No / 未 as toggle buttons in a group
+    (role="group", aria-pressed; plan 5.7). data-node-id ties every copy of
+    a factor's judgement on the page to one update function (js/pages/edit). -#}
+{% macro judgement_toggle(node) -%}
+<div class="ui-judgement" role="group" aria-label="評価：{{ node.title }}" data-judgement-toggle data-node-id="{{ node.id }}">
+  {%- for value, text in (("yes", "Yes"), ("no", "No"), ("unknown", "未")) %}
+  <button type="button" class="ui-judgement__option ui-judgement__option--{{ value }}" data-action="judgement" data-node-id="{{ node.id }}" data-value="{{ value }}" aria-pressed="{{ 'true' if node.judgement == value else 'false' }}">{{ text }}</button>
+  {%- endfor %}
+</div>
+{%- endmacro %}
+
+{#- The judgement as text (Yes / No / 未評価), kept in step by the same function. -#}
+{% macro judgement_chip(node) -%}
+<span class="ui-chip ui-chip--{{ node.judgement }}" data-judgement-chip data-node-id="{{ node.id }}">{{ node.judgement_label }}</span>
+{%- endmacro %}
+
+{#- Tags of a factor (J-14): AI / 手動, 要確認 (a button that selects the
+    factor and shows the quality warning in the inspector: UI-17, one of the
+    R-01 routes), 「直接要因評価：…」 with the item name, and メモあり. -#}
+{% macro node_tags(node, role) -%}
+<span class="ui-tag {{ 'ui-tag--ai' if node.ai_generated else 'ui-tag--manual' }}">{{ 'AI' if node.ai_generated else '手動' }}</span>
+{%- if node.warning_text %}
+<button type="button" class="ui-tag ui-tag--warning" data-action="select" data-node-id="{{ node.id }}" data-role="{{ role }}-warning" data-focus="warning" aria-label="要確認（品質警告を表示）：{{ node.title }}">要確認</button>
+{%- endif %}
+{%- if node.direct_cause_label %}
+<span class="ui-tag ui-tag--direct">直接要因評価：{{ node.direct_cause_label }}</span>
+{%- endif %}
+{%- if node.has_memo %}
+<span class="ui-tag ui-tag--memo">メモあり</span>
+{%- endif %}
+{%- endmacro %}
+
 {#- Export menu: the existing export URLs, with a short description of what
     each format contains (plan section 4, UI-04 note; based on
     services/export_service.py). The download attribute keeps the page in

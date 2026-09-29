@@ -1,0 +1,723 @@
+/* ===== Analysis edit (B), PR-3 skeleton =====
+ * Three panes below the header and the work steps: structure navigation,
+ * work area (tabs, filter, the chosen view) and inspector, each scrolling
+ * on its own. PR-3 builds for display areas 1280px wide and wider (J-20,
+ * provisional); the widths below that, zoom levels and low display areas are
+ * finished in PR-7. The user's environment was measured at 1905×945 CSS px
+ * (Chrome) and 1912×914 (Edge) (plan 5.9.4); the pane widths scale with the
+ * width between those and 1280px.
+ * Parts come from components.css; the legacy dialogs, generation badges and
+ * header parts of app.js keep their rules in style.css.
+ */
+
+.edit-page [hidden] {
+  display: none !important;
+}
+
+.edit-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - var(--header-height));
+  min-width: 1100px;
+  overflow: hidden;
+}
+
+/* ----- Header (legacy title editing and export links, moved as they were) ----- */
+.edit-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.edit-header__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.edit-header__title .analysis-title {
+  overflow-wrap: anywhere;
+}
+.edit-header__actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+}
+
+/* ----- Work steps ①〜⑤ ----- */
+.edit-steps {
+  flex: none;
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.edit-steps__list {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.edit-step {
+  display: grid;
+  grid-template-areas: "number name" "number status";
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-2);
+  width: 100%;
+  min-height: 44px;
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+.edit-step:hover {
+  background: var(--color-surface-hover);
+}
+.edit-step:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+.edit-step__number {
+  grid-area: number;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+}
+.edit-step__name {
+  grid-area: name;
+  overflow: hidden;
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.edit-step__status {
+  grid-area: status;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.edit-step[aria-current="step"] {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  box-shadow: inset 0 -3px 0 var(--color-primary);
+}
+.edit-step[aria-current="step"] .edit-step__number {
+  color: var(--color-primary);
+}
+
+/* ----- Three panes ----- */
+.edit-layout {
+  display: grid;
+  flex: 1;
+  grid-template-columns: clamp(240px, 17vw, 320px) minmax(0, 1fr) clamp(340px, 23vw, 440px);
+  min-height: 0;
+}
+.edit-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-surface);
+}
+.edit-nav {
+  border-right: 1px solid var(--color-border);
+}
+.edit-inspector {
+  border-left: 1px solid var(--color-border);
+}
+.edit-center {
+  background: var(--color-bg);
+}
+.edit-pane__heading {
+  flex: none;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.edit-pane__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.edit-nav .edit-pane__scroll {
+  padding: var(--space-2) var(--space-2) var(--space-5);
+}
+.edit-center .edit-pane__scroll {
+  padding: var(--space-4) var(--space-5) var(--space-6);
+}
+.edit-inspector .edit-pane__scroll {
+  padding: var(--space-3) var(--space-4) var(--space-6);
+}
+#edit-work-area:focus,
+#edit-inspector:focus,
+.edit-view:focus {
+  outline: none;
+}
+.edit-view:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 4px;
+}
+
+/* ----- Work area bar: tabs and filter ----- */
+.edit-center__bar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-2) var(--space-5) 0;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.edit-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+.edit-filter__text {
+  width: 220px;
+  min-height: 32px;
+}
+.edit-filter__select {
+  width: auto;
+  min-height: 32px;
+}
+.edit-filter__count {
+  min-width: 7em;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* ----- Outline: structure navigation and tree ----- */
+.edit-outline,
+.edit-outline__children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.edit-outline__children {
+  margin-left: 12px;
+  padding-left: 8px;
+  border-left: 1px solid var(--color-border);
+}
+.edit-outline__node {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  width: 100%;
+  margin: 1px 0;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+}
+.edit-outline__node:hover {
+  background: var(--color-surface-hover);
+}
+.edit-outline__node:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: -1px;
+}
+.edit-outline__node[aria-current="true"] {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+.edit-outline__title {
+  flex: 1 1 8em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.edit-outline__node--top .edit-outline__title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.edit-outline__issue {
+  flex-basis: 100%;
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+}
+.edit-tree__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin: 1px 0;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+}
+.edit-outline__item.is-selected > .edit-tree__row {
+  background: var(--color-primary-soft);
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+.edit-outline--tree {
+  font-size: var(--font-size-sm);
+}
+/* Filter (J-08): the navigation and the tree highlight, never hide. */
+.edit-outline__item.is-filter-match > .edit-outline__node,
+.edit-outline__item.is-filter-match > .edit-tree__row {
+  background: var(--color-warning-soft);
+  box-shadow: inset 3px 0 0 var(--color-warning);
+}
+.edit-outline__item.is-filter-dim > .edit-outline__node,
+.edit-outline__item.is-filter-dim > .edit-tree__row {
+  opacity: 0.45;
+}
+
+.edit-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-primary);
+  font-family: var(--font-sans);
+  font-size: inherit;
+  font-weight: 600;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.edit-link:hover {
+  color: var(--color-primary-hover);
+}
+.edit-link:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+.edit-link[aria-current="true"] {
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+/* ----- Group of factors with inconsistent parent links (J-25) ----- */
+.edit-anomalies {
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-soft);
+}
+.edit-anomalies__title {
+  margin-bottom: var(--space-2);
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+.edit-anomalies__lead {
+  margin-bottom: var(--space-2);
+  font-size: var(--font-size-xs);
+}
+.edit-anomalies .edit-outline__node,
+.edit-anomalies .edit-tree__row {
+  background: var(--color-surface);
+}
+
+/* ----- Work view ----- */
+.edit-step-panel__title {
+  margin-bottom: var(--space-3);
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+}
+.edit-opbar {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+.edit-opbar__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.edit-opbar__note {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.edit-rows {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.edit-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+.edit-row.is-selected {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-soft);
+}
+.edit-row[data-depth="2"] {
+  margin-left: 24px;
+}
+.edit-row[data-depth="3"] {
+  margin-left: 48px;
+}
+.edit-row__body {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+}
+.edit-row__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.edit-row__title {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-md);
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.edit-row__title:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+.edit-row__title:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+.edit-row[data-judgement="no"] .edit-row__title {
+  color: var(--color-text-muted);
+}
+.edit-row__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.edit-row__desc {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.edit-group {
+  margin-bottom: var(--space-4);
+}
+.edit-group__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-left: 4px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+}
+.edit-group__header.is-selected {
+  border-left-color: var(--color-primary);
+}
+.edit-group__title {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+.edit-group__prefix {
+  flex: none;
+  color: var(--color-text-muted);
+}
+.edit-group__judgement {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.edit-group__actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+.edit-empty {
+  padding: var(--space-3);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+.edit-empty--group {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+}
+.edit-work__anomalies {
+  margin-top: var(--space-5);
+}
+
+/* ① top event and the reference information (inputs moved as they were) */
+.edit-step1 {
+  display: grid;
+  gap: var(--space-4);
+}
+.edit-step1__block {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+.edit-step1__subtitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-md);
+  font-weight: 700;
+}
+.edit-step1__context {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+.edit-step1__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.context-status {
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.context-status.filled {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+.context-status.empty {
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+}
+
+/* ⑤ export links (provisional) */
+.edit-step5__lead {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+.edit-step5__links {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+/* ----- Table view ----- */
+.edit-table {
+  font-size: var(--font-size-sm);
+}
+.edit-table tbody tr.is-selected td {
+  background: var(--color-primary-soft);
+}
+.edit-table__title {
+  min-width: 180px;
+}
+.edit-table__title .ui-tag {
+  margin-left: 4px;
+}
+.edit-table__parent {
+  max-width: 240px;
+  overflow-wrap: anywhere;
+}
+.edit-table__warning {
+  max-width: 240px;
+  color: var(--color-warning);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+.edit-table__desc {
+  min-width: 200px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+/* ----- Inspector ----- */
+.edit-inspector__body {
+  display: grid;
+  gap: var(--space-3);
+}
+.edit-crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  margin: 0;
+  padding: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  list-style: none;
+}
+.edit-crumbs li + li::before {
+  margin-right: 4px;
+  content: "›";
+}
+.edit-crumbs [aria-current="page"] {
+  color: var(--color-text);
+  font-weight: 700;
+}
+.edit-inspector__title {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.edit-inspector__title:focus,
+.edit-inspector__section-title:focus {
+  outline: none;
+}
+.edit-inspector__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.edit-inspector__section {
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+.edit-inspector__section-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+.edit-inspector__section > .ui-judgement {
+  justify-self: start;
+}
+.edit-inspector__notice {
+  display: grid;
+  gap: 4px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-soft);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+.edit-inspector__warning {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-soft);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.edit-inspector__text {
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.edit-details {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px var(--space-3);
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+.edit-details dt {
+  color: var(--color-text-muted);
+  font-weight: 700;
+}
+.edit-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.edit-details dd[data-empty="true"] {
+  color: var(--color-text-muted);
+}
+.edit-inspector__status {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.edit-inspector__status[data-kind="error"] {
+  color: var(--color-danger);
+  font-weight: 700;
+}
+.edit-inspector__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.edit-inspector__reason {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.edit-children {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.edit-children li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  font-size: var(--font-size-sm);
+}
+
+/* ----- The analysis is gone (partial update got 404) ----- */
+.edit-gone {
+  flex: none;
+  margin: var(--space-2) var(--space-5) 0;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-weight: 700;
+}

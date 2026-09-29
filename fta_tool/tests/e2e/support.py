@@ -150,6 +150,50 @@ class E2EServer:
         with self._db() as conn:
             conn.execute("UPDATE analyses SET updated_at = ? WHERE id = ?", (value, analysis_id))
 
+    # ----- data the API cannot make (the test database only) -------------
+    def insert_node(self, analysis_id: int, level: int, parent_id: Optional[int] = None, *,
+                    title: Optional[str] = None, judgement: str = "unknown", description: str = "",
+                    ai_generated: bool = False, warning: str = "", memo: str = "") -> int:
+        """A factor written directly, e.g. with a parent link the API would
+        never create (J-25 checks). Only ever the temporary test database."""
+        import datetime as _dt
+
+        now = _dt.datetime.utcnow().isoformat(sep=" ")
+        with self._db() as conn:
+            cursor = conn.execute(
+                "INSERT INTO nodes (analysis_id, parent_id, level, title, description, ai_generated,"
+                " user_judgement, direct_cause_status, direct_cause_comment, evidence, prevention_idea,"
+                " display_order, memo, warning_flags, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, 'unknown', '', '', '', 0, ?, ?, ?, ?)",
+                (analysis_id, parent_id, level, title or f"要因（階層{level}）", description,
+                 1 if ai_generated else 0, judgement, memo, warning, now, now),
+            )
+            return cursor.lastrowid
+
+    def set_parent(self, node_id: int, parent_id: Optional[int]) -> None:
+        with self._db() as conn:
+            conn.execute("UPDATE nodes SET parent_id = ? WHERE id = ?", (parent_id, node_id))
+
+    def set_warning(self, node_id: int, text: str) -> None:
+        with self._db() as conn:
+            conn.execute("UPDATE nodes SET warning_flags = ? WHERE id = ?", (text, node_id))
+
+    def node_ids(self, analysis_id: Optional[int] = None) -> set[int]:
+        if analysis_id is None:
+            return {row[0] for row in self.query("SELECT id FROM nodes")}
+        return {row[0] for row in self.query("SELECT id FROM nodes WHERE analysis_id = ?", (analysis_id,))}
+
+    def judgement(self, node_id: int) -> Optional[str]:
+        rows = self.query("SELECT user_judgement FROM nodes WHERE id = ?", (node_id,))
+        return rows[0][0] if rows else None
+
+    def set_control(self, **fields) -> None:
+        """Merge settings into stub_control.json (stub mode, fault injection)."""
+        path = self.workdir / "stub_control.json"
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        data.update(fields)
+        path.write_text(json.dumps(data), encoding="utf-8")
+
 
 class _Closing:
     def __init__(self, conn: sqlite3.Connection):
