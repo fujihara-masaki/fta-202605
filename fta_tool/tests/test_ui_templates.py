@@ -492,10 +492,12 @@ def test_shared_frame_on_every_screen(client):
         styles = [s.attrs.get("href") for s in root.find_all("link", rel="stylesheet")]
         assert "/static/js/common/boot.js" in scripts
         assert "/static/css/tokens.css" in styles
-        # Screens not migrated yet keep the legacy script, stylesheet and toast.
+        # The edit screen still loads the legacy script and stylesheet (PR-3);
+        # its messages use the shared notifications, so no page renders the
+        # old toast any more (判断4).
         assert ("/static/app.js" in scripts) is legacy, path
         assert ("/static/style.css" in styles) is legacy, path
-        assert bool(root.find_all(id="toast")) is legacy, path
+        assert not root.find_all(id="toast"), path
 
 
 def test_javascript_is_served_with_a_javascript_mime_type(client):

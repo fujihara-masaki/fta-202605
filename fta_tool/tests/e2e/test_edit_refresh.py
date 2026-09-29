@@ -45,6 +45,7 @@ from tests.e2e.edit_helpers import (
     step_button,
     step_panel,
     tab,
+    toast,
     wait_until,
 )
 from tests.e2e.support import expect, record_dialogs
@@ -86,10 +87,6 @@ def scroll_top(page, name: str) -> int:
 
 def set_scroll_top(page, name: str, value: int) -> int:
     return page.locator(f'[data-scroll="{name}"]').evaluate("(el, v) => { el.scrollTop = v; return el.scrollTop; }", value)
-
-
-def toast(page, message: str, kind: str):
-    return page.locator(f'#ui-toasts .ui-toast[data-toast-type="{kind}"]').filter(has_text=message)
 
 
 def nav(page):

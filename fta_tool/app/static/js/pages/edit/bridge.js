@@ -13,6 +13,9 @@
 //   genHost(id)             where a parent's generation badge goes
 //   setGenerating(on)       generation buttons off while a generation runs
 //   nodeTitle(id)           the factor's name (delete confirmation)
+//   notify(message, type)   app.js's messages in the shared notifications
+//                           (J-24, moved forward to PR-3 by 判断4): the same
+//                           text and kind ('success' | 'warning' | 'error')
 //
 // checkParent and checkDelete answer from the summary the server computed
 // for the data of the page (app/detail_view.py; 判断2・判断3): the buttons
@@ -20,12 +23,16 @@
 // request. This is the screen's own check on the data as fetched; it does
 // not make the existing APIs safe.
 
+import { notify } from '../../common/notify.js';
 import { generationTargets, getNode } from './model.js';
 
 const GONE = '分析が見つかりません（削除された可能性があります）';
 const NOT_ON_PAGE = 'この要因は画面のデータにないため、操作できません。ページを再読み込みしてください。';
 const LEVEL_MISMATCH = '親要因の階層が合わないため、追加・生成できません。';
 const DELETE_UNKNOWN = '安全に削除できるか確認できていないため、この画面では削除できません。';
+
+// The kinds app.js's showToast knew; anything else was shown as success.
+const LEGACY_TYPES = new Set(['success', 'warning', 'error']);
 
 const allowed = () => ({ allowed: true, reason: '' });
 const refused = (reason) => ({ allowed: false, reason });
@@ -57,6 +64,9 @@ export function installBridge(app) {
     nodeTitle: (id) => {
       const node = getNode(app.model, id);
       return node ? node.title : null;
+    },
+    notify: (message, type) => {
+      notify(message, { type: LEGACY_TYPES.has(type) ? type : 'success' });
     },
   };
   window.ftaEditBridge = Object.freeze(bridge);

@@ -90,6 +90,17 @@ def notifications(page):
     return page.locator("#ui-toasts .ui-toast")
 
 
+def toast(page, text: str, kind: str, *, exact: bool = False):
+    """A notification of the shared stack (js/common/notify.js) of this kind
+    ('success' | 'info' | 'warning' | 'error') containing this text, or with
+    exactly this message; app.js's messages are shown here too (判断4)."""
+    base = f'#ui-toasts .ui-toast[data-toast-type="{kind}"]'
+    if exact:
+        value = text.replace("\\", "\\\\").replace('"', '\\"')
+        return page.locator(f'{base}[data-message="{value}"]')
+    return page.locator(base).filter(has_text=text)
+
+
 def wait_until(check, timeout: float = 10.0, interval: float = 0.1) -> None:
     """Poll a server-side condition (e.g. the database) until it holds."""
     deadline = time.monotonic() + timeout

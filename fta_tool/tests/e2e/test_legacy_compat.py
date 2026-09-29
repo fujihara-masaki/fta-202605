@@ -8,6 +8,12 @@ PR3-LEGACY-OPS drives them from the new page; their results are shown by a
 partial update, never by reloading the page (the page is marked and the mark
 must still be there).
 
+PR3-LEGACY-NOTIFY: app.js's messages (saving, generation, the dialogs,
+delete, communication errors) appear in the shared notifications with the
+same text and kind, once each, errors staying until closed (the user's
+decision of 2026-09-29, 判断4; J-24 moved forward); the old #toast element
+is gone. While a legacy dialog is open they never cover its buttons.
+
 Until PR-3 the old screen had this check as PR1-COMPAT-EDIT; the
 new-analysis form had PR1-COMPAT-NEW until PR-2 (now E-N01〜E-N06).
 """
@@ -29,6 +35,7 @@ from tests.e2e.edit_helpers import (
     select_button,
     step_button,
     step_panel,
+    toast,
     wait_until,
 )
 from tests.e2e.support import expect, record_dialogs
@@ -168,3 +175,126 @@ def test_detail_dialog_manual_add_additional_generation_delete_and_export(page, 
     page.locator(".edit-header").get_by_role("link", name="一覧へ").click()
     expect(page).to_have_url(f"{e2e_server.url}/")
     expect(page.locator(f'tr[data-analysis-id="{analysis_id}"]')).to_have_attribute("data-factor-count", "5")
+
+
+# ----- PR3-LEGACY-NOTIFY -------------------------------------------------------
+
+def expect_once(page, text: str, kind: str, *, exact: bool = True) -> None:
+    """Shown once, in the shared stack, with this kind (and nowhere else)."""
+    expect(toast(page, text, kind, exact=exact)).to_have_count(1)
+    for other in ("success", "info", "warning", "error"):
+        if other != kind:
+            expect(toast(page, text, other, exact=exact)).to_have_count(0)
+
+
+def boxes_overlap(a: dict, b: dict) -> bool:
+    return not (a["x"] + a["width"] <= b["x"] or b["x"] + b["width"] <= a["x"]
+                or a["y"] + a["height"] <= b["y"] or b["y"] + b["height"] <= a["y"])
+
+
+@pytest.mark.acceptance("PR3-LEGACY-NOTIFY")
+def test_saving_dialogs_and_delete_messages_use_the_shared_notifications(page, e2e_server, page_watch):
+    analysis_id = e2e_server.create_analysis("通知の確認", top_event="頂上")
+    a = e2e_server.add_level1(analysis_id, "一次要因A")
+    b = e2e_server.add_level1(analysis_id, "一次要因B")
+    open_edit(page, analysis_id)
+    expect(page.locator("#toast")).to_have_count(0)  # the old element is gone
+
+    # Title: saved (success), empty (error, stays, announced).
+    title = page.locator("#analysisTitle")
+    title.click()
+    page.keyboard.press("ControlOrMeta+a")
+    page.keyboard.type("通知の確認（改名）")
+    page.keyboard.press("Enter")
+    expect_once(page, "タイトルを保存しました", "success")
+    title.click()
+    page.keyboard.press("ControlOrMeta+a")
+    page.keyboard.press("Delete")
+    page.keyboard.press("Enter")
+    expect_once(page, "タイトルは必須です", "error")
+    expect(page.locator("#ui-live-alert")).to_have_text("エラー：タイトルは必須です")
+    page.keyboard.type("通知の確認（改名）")
+    page.keyboard.press("Enter")
+
+    # Step ①.
+    step_button(page, 1).click()
+    page.fill("#topEventInput", "通知の頂上事象")
+    step_panel(page, 1).get_by_role("button", name="保存", exact=True).click()
+    expect_once(page, "頂上事象を保存しました", "success")
+    page.fill("#incidentContextInput", "通知の確認の状況")
+    page.get_by_role("button", name="コンテキストを保存").click()
+    expect_once(page, "分析コンテキストを保存しました", "success")
+
+    # Detail dialog: an empty title is refused while the dialog stays open;
+    # the notification is not over the dialog's buttons.
+    select_button(page, "nav", a).click()
+    inspector(page).get_by_role("button", name="詳細を編集").click()
+    expect(page.locator("#modalTitle")).to_be_focused()
+    page.fill("#modalTitle", "")
+    page.locator("#modalSaveBtn").click()
+    expect_once(page, "要因タイトルは必須です", "error")
+    stack = page.locator("#ui-toasts").bounding_box()
+    for button in (page.locator("#modalSaveBtn"), page.locator("#nodeDetailModal").get_by_role("button", name="キャンセル")):
+        assert not boxes_overlap(stack, button.bounding_box())
+    page.fill("#modalTitle", "一次要因A（改名）")
+    page.locator("#modalSaveBtn").click()
+    expect_once(page, "保存しました", "success")
+    expect(inspector_title(page)).to_have_text("一次要因A（改名）")
+
+    # A communication error (the request never reaches the server).
+    page_watch.allow_console_error(r"ERR_FAILED")
+    page.route(f"**/nodes/{a}/update", lambda route: route.abort())
+    inspector(page).get_by_role("button", name="詳細を編集").click()
+    expect(page.locator("#modalTitle")).to_be_focused()
+    page.locator("#modalSaveBtn").click()
+    expect_once(page, "通信エラーが発生しました", "error")
+    page.locator("#nodeDetailModal").get_by_role("button", name="キャンセル").click()
+    page.unroute(f"**/nodes/{a}/update")
+
+    # Manual add: an empty title, then added.
+    inspector(page).get_by_role("button", name="手動追加", exact=True).click()
+    expect(page.locator("#addNodeTitle")).to_be_focused()
+    page.locator("#addNodeModal").get_by_role("button", name="追加").click()
+    expect_once(page, "タイトルを入力してください", "error")
+    page.fill("#addNodeTitle", "手動の二次要因")
+    page.locator("#addNodeModal").get_by_role("button", name="追加").click()
+    expect_once(page, "要因を追加しました", "success")
+    expect(inspector_title(page)).to_have_text("手動の二次要因")
+
+    # Delete.
+    select_button(page, "nav", b).click()
+    record_dialogs(page, action="accept")
+    inspector(page).get_by_role("button", name="この要因を削除").click()
+    expect_once(page, "削除しました", "success")
+
+    # Errors stay until they are closed; the rest has closed by itself.
+    page.wait_for_timeout(3500)
+    for text in ("タイトルは必須です", "要因タイトルは必須です", "通信エラーが発生しました", "タイトルを入力してください"):
+        expect(toast(page, text, "error", exact=True)).to_have_count(1)
+    expect(page.locator('#ui-toasts .ui-toast[data-toast-type="success"]')).to_have_count(0)
+    expect(page.locator("#toast")).to_have_count(0)
+
+
+@pytest.mark.acceptance("PR3-LEGACY-NOTIFY")
+def test_generation_messages_keep_their_text_and_kind(page, e2e_server):
+    analysis_id = e2e_server.create_analysis("通知の確認（生成）", top_event="頂上")
+    open_edit(page, analysis_id)
+    step_button(page, 2).click()
+
+    step_panel(page, 2).get_by_role("button", name="一次要因を生成").click()
+    expect_once(page, "4件の要因を生成しました", "success", exact=False)
+    expect(step_panel(page, 2).locator('[data-role="work-item"]')).to_have_count(4)
+
+    e2e_server.set_stub_mode("no_candidates")
+    step_panel(page, 2).get_by_role("button", name="一次要因を追加生成").click()
+    expect_once(page, "生成候補がありませんでした（LLMが要因を返しませんでした）。", "warning")
+
+    e2e_server.set_stub_mode("error")
+    step_panel(page, 2).get_by_role("button", name="一次要因を追加生成").click()
+    expect_once(page, "一部でエラーが発生しました", "error", exact=False)
+
+    # 二次要因 without a Yes parent: refused before a request, as an error.
+    step_button(page, 3).click()
+    step_panel(page, 3).get_by_role("button", name="Yesの一次要因から二次要因を生成").click()
+    expect_once(page, "Yes評価の要因がありません", "error")
+    expect(page.locator("#toast")).to_have_count(0)

@@ -69,6 +69,13 @@
 <script type="application/json" id="analysis-data">{{ view.data | tojson }}</script>
 {% endblock %}
 
+{#- app.js still runs the legacy parts; its messages go to the shared
+    notifications (showToast → window.ftaEditBridge.notify), so the old
+    #toast element of base.html is not rendered here. -#}
+{% block legacy_scripts %}
+<script src="/static/app.js"></script>
+{% endblock %}
+
 {% block extra_scripts %}
 <script type="module" src="/static/js/pages/edit.js"></script>
 {% endblock %}

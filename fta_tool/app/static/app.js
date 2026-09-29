@@ -6,17 +6,23 @@
 // judgement, filter and the views; the parts below that depended on the old
 // card columns reach it through window.ftaEditBridge (js/pages/edit/bridge.js).
 
-// ===== Toast notifications =====
+// ===== Notifications =====
+// Every message of this file goes to the shared notifications
+// (js/common/notify.js) with the same text and kind as before (the user's
+// decision of 2026-09-29, 判断4; J-24 moved forward to PR-3): success and
+// warnings close by themselves (3 s / 6 s as before), errors stay until
+// they are closed, screen readers are told. This is the one connection
+// point; the old #toast element is no longer rendered, so nothing is shown
+// twice. Without the edit screen's bridge the module is loaded directly.
 function showToast(message, type = 'success') {
-  const toast = document.getElementById('toast');
-  if (!toast) return;
-  toast.textContent = message;
-  toast.className = `toast ${type}`;
-  // Warnings (e.g. all candidates excluded) carry a longer reason note, so
-  // keep them on screen a little longer than success/error toasts.
-  const duration = type === 'warning' ? 6000 : 3000;
-  clearTimeout(toast._hideTimer);
-  toast._hideTimer = setTimeout(() => { toast.className = 'toast hidden'; }, duration);
+  const bridge = window.ftaEditBridge;
+  if (bridge) {
+    bridge.notify(message, type);
+    return;
+  }
+  import('/static/js/common/notify.js')
+    .then(({ notify }) => notify(message, { type }))
+    .catch(() => {});
 }
 
 // ===== Show the result of a change =====

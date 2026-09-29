@@ -1,7 +1,8 @@
 /* Legacy styles, loaded only by the analysis edit screen for the parts that
    still run on app.js in PR-3 (plan 7.2): the title and export links of the
    header, the detail and manual-add dialogs, the generation overlay and
-   badges, and the old toast. Everything else of the screen uses
+   badges. Their messages use the shared notifications (the old toast is
+   gone, see app.js showToast). Everything else of the screen uses
    css/tokens.css, css/base.css, css/components.css and css/edit.css.
    The element-level resets that used to be here are gone: the screen is a
    migrated page (body.ui-page) with the shared base styles. */
@@ -47,13 +48,6 @@
 .modal-footer { padding: 14px 24px 18px; display: flex; gap: 12px; justify-content: flex-end; border-top: 1px solid #ecf0f1; }
 .modal-body .form-group { margin-bottom: 16px; }
 .modal-warning-row { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; margin-bottom: 16px; background: #fef5e7; border: 1px solid #f5cba7; border-radius: 6px; font-size: 12px; color: #935b0b; line-height: 1.5; }
-
-/* ===== Toast ===== */
-.toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: 7px; color: #fff; font-size: 13px; z-index: 300; box-shadow: 0 4px 16px rgba(0,0,0,0.2); transition: opacity 0.3s; }
-.toast.success { background: #27ae60; }
-.toast.error { background: #e74c3c; }
-.toast.warning { background: #e67e22; }
-.toast.hidden { display: none; }
 
 /* ===== Generation Status Badge (next to a parent group heading) ===== */
 .gen-status-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 700; flex-shrink: 0; }

@@ -49,6 +49,7 @@ from tests.e2e.edit_helpers import (
     step_button,
     step_panel,
     tab,
+    toast,
     wait_until,
 )
 from tests.e2e.support import expect, record_dialogs
@@ -74,11 +75,6 @@ def posts(page, pattern: str) -> list[str]:
     page.on("request", lambda r: seen.append(urlparse(r.url).path)
             if r.method == "POST" and regex.search(urlparse(r.url).path) else None)
     return seen
-
-
-def legacy_message(page, text: str, kind: str):
-    """What app.js's showToast shows."""
-    return page.locator(f"#toast.{kind}").filter(has_text=text)
 
 
 def delete_button(page):
@@ -226,7 +222,7 @@ def test_other_analysis_below_blocks_the_factor_and_every_ancestor(page, e2e_ser
         expect(inspector(page).locator("[data-integrity-notice]")).to_have_count(0)  # its own link is fine
         delete_button(page).click(force=True)  # a disabled button does nothing
         call_delete(page, node_id, analysis_id)
-        expect(legacy_message(page, REASON_FOREIGN_DESCENDANT, "error")).to_be_visible()
+        expect(toast(page, REASON_FOREIGN_DESCENDANT, "error")).to_be_visible()
     page.wait_for_timeout(300)
     assert deletes == [] and dialogs == []
     assert e2e_server.node_ids() == before
@@ -256,7 +252,7 @@ def test_a_walk_that_cannot_be_completed_blocks_deletion(page, e2e_server):
 
     expect_delete_blocked(page, p1, "一次要因P1", REASON_SCOPE_INCOMPLETE)  # three factors, the walk stops at two
     call_delete(page, p1, analysis_id)
-    expect(legacy_message(page, REASON_SCOPE_INCOMPLETE, "error")).to_be_visible()
+    expect(toast(page, REASON_SCOPE_INCOMPLETE, "error")).to_be_visible()
     page.wait_for_timeout(300)
     assert deletes == [] and dialogs == [] and e2e_server.node_ids() == before
 
@@ -281,7 +277,7 @@ def test_failed_lookups_block_every_deletion_and_the_page_still_opens(page, e2e_
     for node_id, title in ((a, "一次要因A"), (b, "二次要因B"), (m, "親を確認できない要因M")):
         expect_delete_blocked(page, node_id, title, REASON_LOOKUP_FAILED)
         call_delete(page, node_id, analysis_id)
-        expect(legacy_message(page, REASON_LOOKUP_FAILED, "error")).to_be_visible()
+        expect(toast(page, REASON_LOOKUP_FAILED, "error")).to_be_visible()
     page.wait_for_timeout(300)
     assert deletes == [] and dialogs == [] and e2e_server.node_ids() == before
     select(page, a, "一次要因A")  # the rest of the screen works
@@ -350,7 +346,7 @@ def test_normal_generation_uses_consistent_yes_parents_only(page, e2e_server):
     expect(page.locator('[data-target-excluded="2"]')).to_be_visible()
     expect(page.locator('[data-target-excluded="2"] [data-target-excluded-count]')).to_have_text("2")
     step_panel(page, 3).get_by_role("button", name="Yesの一次要因から二次要因を生成").click()
-    expect(legacy_message(page, "2件の親要因から順に生成中...（親子関係に不整合があるYes評価の要因2件は対象外）", "success")).to_be_visible()
+    expect(toast(page, "2件の親要因から順に生成中...（親子関係に不整合があるYes評価の要因2件は対象外）", "success")).to_be_visible()
     for parent_id in (a, b):
         expect(page.locator(f'[data-group-parent="{parent_id}"] [data-role="work-item"]')).to_have_count(3)
     assert [(body["level"], body.get("parent_id")) for body in bodies] == [(2, a), (2, b)]
@@ -369,7 +365,7 @@ def test_no_request_when_every_yes_parent_is_inconsistent(page, e2e_server):
     expect(page.locator('[data-target-count="2"]')).to_have_text("0")
     expect(page.locator('[data-target-excluded="2"] [data-target-excluded-count]')).to_have_text("1")
     step_panel(page, 3).get_by_role("button", name="Yesの一次要因から二次要因を生成").click()
-    expect(legacy_message(
+    expect(toast(
         page, "生成できる親要因がありません（Yes評価の要因のうち1件は親子関係に不整合があるため対象外です）", "error",
     )).to_be_visible()
     page.wait_for_timeout(300)
@@ -396,11 +392,11 @@ def test_additional_generation_and_manual_add_below_inconsistent_parents_are_ref
 
     # Direct calls are refused before anything is sent (or opened).
     page.evaluate("([aid, id]) => generateAdditional(aid, id, 3)", [analysis_id, u])
-    expect(legacy_message(page, PARENT_REASON_INCONSISTENT, "error")).to_be_visible()
+    expect(toast(page, PARENT_REASON_INCONSISTENT, "error")).to_be_visible()
     page.evaluate("([aid, id]) => showAddNodeModal(aid, id, 3)", [analysis_id, m])
     expect(page.locator("#addNodeModal")).to_be_hidden()
     page.evaluate("([aid]) => generateAdditional(aid, null, 2)", [analysis_id])
-    expect(legacy_message(page, "親要因が指定されていないため、追加・生成できません", "error")).to_be_visible()
+    expect(toast(page, "親要因が指定されていないため、追加・生成できません", "error")).to_be_visible()
 
     # The manual-add dialog opened for A but pointed at M before sending.
     select(page, a, "一次要因A")
@@ -409,7 +405,7 @@ def test_additional_generation_and_manual_add_below_inconsistent_parents_are_ref
     page.evaluate("(id) => { document.getElementById('addNodeParentId').value = String(id); }", m)
     page.fill("#addNodeTitle", "送られてはいけない要因")
     page.locator("#addNodeModal").get_by_role("button", name="追加").click()
-    expect(legacy_message(page, PARENT_REASON_INCONSISTENT, "error")).to_be_visible()
+    expect(toast(page, PARENT_REASON_INCONSISTENT, "error")).to_be_visible()
     page.wait_for_timeout(300)
     assert bodies == [] and adds == [] and e2e_server.node_ids() == before
     page.locator("#addNodeModal").get_by_role("button", name="キャンセル").click()
