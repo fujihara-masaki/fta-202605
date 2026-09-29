@@ -199,6 +199,29 @@ function setGenerateButtonsDisabled(disabled) {
   });
 }
 
+// ===== Parents of manual add and generation (J-25, 判断3) =====
+// A 二次・三次 request always names its parent (never a request without
+// parent_id, which the API would answer for every Yes factor), and the
+// parent must be one the edit screen allows: never a factor with an
+// inconsistent parent link or ancestor. Asked right before every request,
+// from the data of the page; without the edit screen nothing is sent.
+function _parentAllowed(parentId, level) {
+  if (Number(level) === 1) return true;
+  if (!parentId) {
+    showToast('親要因が指定されていないため、追加・生成できません', 'error');
+    return false;
+  }
+  const bridge = window.ftaEditBridge;
+  const check = bridge
+    ? bridge.checkParent(Number(parentId), Number(level))
+    : { allowed: false, reason: '親要因を確認できないため、追加・生成できません' };
+  if (!check.allowed) {
+    showToast(check.reason, 'error');
+    return false;
+  }
+  return true;
+}
+
 // Level-1 generation needs a top event: block empty input, and silently save
 // an edited-but-unsaved value first so the LLM sees what the user sees.
 async function ensureTopEventReady(analysisId) {
@@ -265,17 +288,27 @@ async function generateFactors(analysisId, level) {
 // ===== Generate Factors Sequential (level 2/3 — per parent) =====
 // The parents are every Yes factor of the level above, taken from the edit
 // screen's data (hidden by the filter or not, J-07), in the same order as
-// before; one request per parent.
+// before, except factors with an inconsistent parent link or ancestor
+// (J-25, 判断3), which are counted and named separately; one request per
+// parent, each with its parent_id, each checked again before it is sent.
 async function generateFactorsSequential(analysisId, level) {
   const bridge = window.ftaEditBridge;
-  const parentIds = bridge ? bridge.generationTargets(level).targets : [];
+  const { targets: parentIds, excluded } = bridge
+    ? bridge.generationTargets(level)
+    : { targets: [], excluded: 0 };
 
   if (parentIds.length === 0) {
-    showToast('Yes評価の要因がありません', 'error');
+    showToast(
+      excluded > 0
+        ? `生成できる親要因がありません（Yes評価の要因のうち${excluded}件は親子関係に不整合があるため対象外です）`
+        : 'Yes評価の要因がありません',
+      'error',
+    );
     return;
   }
 
-  showToast(`${parentIds.length}件の親要因から順に生成中...`);
+  const excludedNote = excluded > 0 ? `（親子関係に不整合があるYes評価の要因${excluded}件は対象外）` : '';
+  showToast(`${parentIds.length}件の親要因から順に生成中...${excludedNote}`);
   setGenerateButtonsDisabled(true);
 
   let totalCreated = 0;
@@ -285,6 +318,11 @@ async function generateFactorsSequential(analysisId, level) {
 
   try {
     for (const nodeId of parentIds) {
+      if (!_parentAllowed(nodeId, level)) {
+        setNodeGenStatus(nodeId, 'error');
+        totalErrors++;
+        continue;
+      }
       setNodeGenStatus(nodeId, 'generating');
 
       try {
@@ -344,6 +382,7 @@ async function generateFactorsSequential(analysisId, level) {
 // - generateAdditional(analysisId, parentNodeId, childLevel): more children
 //   of one specific parent (level-1 card → level 2, level-2 card → level 3)
 async function generateAdditional(analysisId, parentNodeId, childLevel) {
+  if (!_parentAllowed(parentNodeId, childLevel)) return;
   if (childLevel === 1 && !(await ensureTopEventReady(analysisId))) return;
   if (!(await ensureAnalysisContextReady(analysisId))) return;
 
@@ -354,7 +393,7 @@ async function generateAdditional(analysisId, parentNodeId, childLevel) {
 
   try {
     const body = { additional: true };
-    if (parentNodeId) body.parent_id = parentNodeId;
+    if (Number(childLevel) !== 1) body.parent_id = Number(parentNodeId);
     const res = await fetch(`/analyses/${analysisId}/generate/level/${childLevel}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -395,9 +434,22 @@ async function generateAdditional(analysisId, parentNodeId, childLevel) {
 // detail dialog until the inspector takes over in PR-5).
 
 // ===== Delete Node =====
+// Only as the edit screen computed it for the data of the page (J-25,
+// 判断2): a factor whose delete would remove factors of another analysis,
+// whose subtree could not be walked completely, or whose category is kept
+// undeletable is refused before the confirmation, and nothing is sent.
+// Without the edit screen nothing is deleted. This does not make the delete
+// API itself safe.
 async function deleteNode(nodeId, analysisId) {
   const bridge = window.ftaEditBridge;
-  const title = bridge ? bridge.nodeTitle(nodeId) : null;
+  const check = bridge
+    ? bridge.checkDelete(Number(nodeId))
+    : { allowed: false, reason: '削除できるか確認できないため、削除できません' };
+  if (!check.allowed) {
+    showToast(check.reason, 'error');
+    return;
+  }
+  const title = bridge.nodeTitle(nodeId);
   const name = title !== null ? title : `ID: ${nodeId}`;
   if (!confirm(`要因「${name}」を削除しますか？\nこの要因の子要因もすべて削除されます。この操作は取り消せません。`)) return;
   try {
@@ -521,6 +573,7 @@ async function saveNodeDetail() {
 
 // ===== Add Node Modal =====
 function showAddNodeModal(analysisId, parentId, level) {
+  if (!_parentAllowed(parentId, level)) return;
   document.getElementById('addNodeAnalysisId').value = analysisId;
   document.getElementById('addNodeParentId').value = parentId || '';
   document.getElementById('addNodeLevel').value = level;
@@ -545,6 +598,8 @@ async function submitAddNode() {
     document.getElementById('addNodeTitle').focus();
     return;
   }
+  // The page may have been updated while the dialog was open.
+  if (!_parentAllowed(parentId, level)) return;
 
   try {
     let url, body;
