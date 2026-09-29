@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from . import crud, models, schemas
+from . import crud, detail_view, models, schemas
 from .database import SessionLocal, engine, get_db
 from .services import generation_config
 from .services.ai_provider import GeneratedFactor, get_ai_provider
@@ -227,6 +227,7 @@ def analysis_detail(request: Request, analysis_id: int, db: Session = Depends(ge
         raise HTTPException(status_code=404, detail="分析が見つかりません")
 
     nodes = crud.get_nodes_by_analysis(db, analysis_id)
+    view = _edit_view(db, analysis, nodes)
 
     # Build tree structure for template
     node_map = {n.id: n for n in nodes}
@@ -263,8 +264,34 @@ def analysis_detail(request: Request, analysis_id: int, db: Session = Depends(ge
             "children_of": children_of,
             "node_map": node_map,
             "ai_provider_name": ai_provider_name,
+            "view": view,
         },
     )
+
+
+def _edit_view(db: Session, analysis, nodes) -> detail_view.DetailView:
+    """View data of the edit screen (plan 3.4, 5.9.5): categories of the
+    parent links, deletion and parent permissions, the embedded summary.
+
+    The two read-only lookups of crud.get_cross_analysis_links tell a missing
+    parent from a parent in another analysis and find factors of other
+    analyses below this one. If they fail the screen still opens; nothing is
+    then offered for deletion (the user's decision of 2026-09-29, 判断2).
+    """
+    try:
+        parents_elsewhere, children_elsewhere = crud.get_cross_analysis_links(db, analysis.id)
+        links = detail_view.CrossAnalysisLinks(parents_elsewhere, children_elsewhere)
+    except Exception:  # noqa: BLE001 - the page still opens; deletion is disabled
+        logger.exception("親子関係の確認に必要な情報を取得できませんでした | analysis_id=%s", analysis.id)
+        db.rollback()
+        links = None
+    factor_counts = {
+        "1": _get_factor_count(1),
+        "2": _get_factor_count(2),
+        "3": _get_factor_count(3),
+        "additional": _get_factor_count("additional"),
+    }
+    return detail_view.build_detail_view(analysis, nodes, links, factor_counts=factor_counts)
 
 
 @app.post("/analyses/{analysis_id}/title")
