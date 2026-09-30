@@ -17,7 +17,9 @@ What is checked:
   delete API would remove was walked (no depth limit), stays inside the
   analysis and has no factor of another analysis anywhere below — directly
   or deeper; the ancestors of such a factor are not offered either. A walk
-  that cannot be completed, or lookups that failed, mean no deletion;
+  that cannot be completed, or lookups that failed, mean no deletion; after
+  failed lookups the page still opens from the factors already read (none
+  is read again, one removed meanwhile does not make it fail);
 * for the deletable categories, the existing delete API removes exactly the
   factor and its descendants (the scope the screen computed), also when
   level-mismatched factors are among the descendants (the user's additional
@@ -534,6 +536,48 @@ def test_T07_failed_lookups_mean_no_deletion_and_the_page_still_opens(env, monke
     assert view.by_id[root].kind == OK
     assert env.client.get(f"/analyses/{a}").status_code == 200
 
+
+
+def test_T07_failed_lookups_do_not_read_the_factors_again(env, monkeypatch):
+    """After failed lookups the page is built from the factors already read:
+    none is read again one by one, and one removed meanwhile (another tab)
+    does not turn the page into an error."""
+    statements = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    small = env.analysis("小")
+    env.node(small, 1)
+    large = env.analysis("大")
+    root = env.node(large, 1)
+    for _ in range(30):
+        env.node(large, 2, root)
+    removed = env.node(large, 2, root)
+
+    def fail(db, analysis_id):
+        if analysis_id == large:  # removed after the factors were read
+            other = env.Session()
+            try:
+                other.query(models.Node).filter(models.Node.id == removed).delete()
+                other.commit()
+            finally:
+                other.close()
+        raise RuntimeError("lookup failed (test)")
+
+    monkeypatch.setattr(crud, "get_cross_analysis_links", fail)
+    counts = []
+    event.listen(env.engine, "before_cursor_execute", record)
+    try:
+        for analysis_id in (small, large):
+            statements.clear()
+            response = env.client.get(f"/analyses/{analysis_id}")
+            assert response.status_code == 200, response.text[:300]
+            counts.append(sum(1 for s in statements
+                              if s.lstrip().upper().startswith("SELECT") and "nodes" in s))
+    finally:
+        event.remove(env.engine, "before_cursor_execute", record)
+    assert counts[0] == counts[1], counts
 
 # ----- parents of generation and manual add (判断3) ------------------------------
 

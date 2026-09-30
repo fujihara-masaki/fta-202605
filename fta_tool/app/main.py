@@ -265,8 +265,11 @@ def _edit_view(db: Session, analysis, nodes) -> detail_view.DetailView:
         parents_elsewhere, children_elsewhere = crud.get_cross_analysis_links(db, analysis.id)
         links = detail_view.CrossAnalysisLinks(parents_elsewhere, children_elsewhere)
     except Exception:  # noqa: BLE001 - the page still opens; deletion is disabled
+        # Nothing to undo: the lookups only read, and the session is closed at
+        # the end of the request. A rollback here would expire the analysis
+        # and every factor already read: each would be read again one by one,
+        # and the page would fail if one had been removed meanwhile.
         logger.exception("親子関係の確認に必要な情報を取得できませんでした | analysis_id=%s", analysis.id)
-        db.rollback()
         links = None
     factor_counts = {
         "1": _get_factor_count(1),

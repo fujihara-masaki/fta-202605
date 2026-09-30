@@ -6,14 +6,18 @@
 // answer but drawn again from the new data for the selection (it holds no
 // draft in PR-3) and reads the saved details again. Selection, step, tab,
 // filter and scroll positions stay (after a manual add the new factor is
-// selected, after a delete its parent, and brought into view); the focus
-// goes back to the same element (data-node-id and role), or to its parent's
-// row or the list heading when it is gone (plan 5.7). No new API.
+// selected, unless another one was chosen before the update was applied —
+// it waits while a generation runs; after a delete its parent; either is
+// brought into view); the focus goes back to the same element (data-node-id
+// and role), or to its parent's row or the list heading when it is gone
+// (plan 5.7). No new API.
 //
 // An old answer never rolls the page back (plan 3.4-5, P-3):
 // - one fetch at a time; requests while one runs are merged into one more;
-// - no fetch while a judgement is being saved; an answer to a fetch issued
-//   before a judgement write started is discarded and the fetch repeated;
+// - no fetch while a judgement or the top event of ① is being saved (the
+//   writes the page shows at once, registered with app.writes); an answer
+//   to a fetch issued before such a write started is discarded and the
+//   fetch repeated;
 // - the judgements the server confirmed on this page must be in the answer;
 //   if not, the fetch is repeated, and a second mismatch shows
 //   「表示を最新にできませんでした」 without applying anything. They are
@@ -215,7 +219,8 @@ export function createRefresher(app, { scrollers }) {
     // What to select now.
     const before = { sel: app.state.sel, step: app.state.step };
     const selected = app.state.sel === 'top' ? null : getNode(previousModel, app.state.sel);
-    if (options.select !== undefined && getNode(model, options.select)) {
+    if (options.select !== undefined && getNode(model, options.select)
+      && (options.selectFrom === undefined || options.selectFrom === app.state.sel)) {
       const node = getNode(model, options.select);
       app.state.sel = String(node.id);
       app.state.step = stepForNode(node);
@@ -276,6 +281,9 @@ export function createRefresher(app, { scrollers }) {
       let mismatches = 0;
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
         await app.writes.whenIdle();
+        // A write that ends can start the next one waiting for the same
+        // factor (judgement.js) before this goes on: no fetch while one runs.
+        while (app.writes.inFlight > 0) await app.writes.whenIdle();
         if (app.gone) return;
         if (app.generating) {
           defer(options);
@@ -335,11 +343,14 @@ export function createRefresher(app, { scrollers }) {
   return {
     request(options = {}) {
       if (app.gone) return;
+      // The factor to select is selected only if the selection is still the
+      // one of now when the update is applied (a newer choice stays).
+      const asked = options.select !== undefined ? { ...options, selectFrom: app.state.sel } : options;
       if (running || app.generating) {
-        pending = merge(pending, options);
+        pending = merge(pending, asked);
         return;
       }
-      run(merge(null, options));
+      run(merge(null, asked));
     },
     // After a generation: the one fetch that was held back.
     flush() {
@@ -348,5 +359,10 @@ export function createRefresher(app, { scrollers }) {
       pending = null;
       run(next);
     },
+    // For app.js's dialogs: where the focus is when one opens, and back
+    // there when it closes — to the same control, or to what replaced it
+    // when an update ran meanwhile (plan 5.7).
+    describeFocus: () => describeFocus(),
+    restoreFocus: (focus) => restoreFocus(app, focus, app.model),
   };
 }

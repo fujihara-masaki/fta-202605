@@ -13,17 +13,22 @@ page (window.__pr3NoReload) and check that the mark is still there.
          selection to its nearest ancestor; the analysis deleted elsewhere
          (404) stops the operations; a failed fetch reloads the page when
          nothing is typed and keeps the page (with a message) when something
-         is; nothing is fetched while a generation runs, once after it.
+         is; nothing is fetched while a generation runs, once after it; a
+         legacy dialog closed after an update gives the focus back to the
+         control that opened it (or the one that replaced it); a factor added
+         during a generation does not take a selection made after it.
 * E-E19  an old answer never rolls the page back: the answer to a fetch
-         issued before a judgement was saved is discarded and fetched again;
+         issued before a judgement or the top event of ① was saved is
+         discarded and fetched again, and nothing is fetched while the next
+         judgement waiting for the same factor is saved;
          an answer without the judgement the server confirmed is not applied
          and, the second time, 「表示を最新にできませんでした」 is shown. That
          update has then checked the judgement: when it was changed in
          another tab, the next update is applied, not refused until a reload.
 
 Where no screen operation can cause the case (the analysis deleted in
-another tab, a fetch while a generation runs), the tests call the bridge the
-legacy functions use (window.ftaEditBridge.refresh).
+another tab, a fetch while a generation runs or a dialog is open), the tests
+call the bridge the legacy functions use (window.ftaEditBridge.refresh).
 """
 
 from __future__ import annotations
@@ -371,6 +376,88 @@ def test_E_E07_no_fetch_while_a_generation_runs_one_after(page, e2e_server):
     assert same_page(page)
 
 
+
+@pytest.mark.acceptance("E-E07")
+def test_E_E07_legacy_dialog_gives_the_focus_back_after_an_update(page, e2e_server):
+    analysis_id = e2e_server.create_analysis("部分更新（ダイアログを開いている間）", top_event="頂上")
+    a = e2e_server.add_level1(analysis_id, "一次要因A")
+    open_edit(page, analysis_id, f"#sel={a}&step=2&view=work")
+    fetches = page_fetches(page, analysis_id)
+    mark_page(page)
+
+    # The page is updated behind an open dialog (e.g. a generation of 二次要因
+    # ends): the inspector is drawn again, the work list replaced.
+    open_detail(page)
+    refresh(page)
+    wait_for(page, lambda: len(fetches) == 1)
+    page.wait_for_timeout(300)
+    expect(page.locator("#modalTitle")).to_be_focused()
+    page.keyboard.press("Escape")
+    expect(page.locator("#nodeDetailModal")).to_be_hidden()
+    expect(inspector(page).get_by_role("button", name="詳細を編集")).to_be_focused()
+
+    add = step_panel(page, 2).get_by_role("button", name="手動追加", exact=True)
+    open_dialog(page, add, "#addNodeTitle")
+    refresh(page)
+    wait_for(page, lambda: len(fetches) == 2)
+    page.wait_for_timeout(300)
+    page.locator("#addNodeModal").get_by_role("button", name="キャンセル").click()
+    expect(page.locator("#addNodeModal")).to_be_hidden()
+    expect(add).to_be_focused()
+    assert same_page(page)
+
+
+@pytest.mark.acceptance("E-E07")
+def test_E_E07_a_factor_added_during_a_generation_leaves_a_newer_selection(page, e2e_server):
+    analysis_id = e2e_server.create_analysis("部分更新（生成中の手動追加）", top_event="頂上")
+    a = e2e_server.add_level1(analysis_id, "一次要因A")
+    b = e2e_server.add_level1(analysis_id, "一次要因B")
+    c = e2e_server.add_level1(analysis_id, "一次要因C")
+    e2e_server.update_node(a, user_judgement="yes")
+    e2e_server.update_node(c, user_judgement="yes")
+    open_edit(page, analysis_id, f"#sel={a}&step=2&view=work")
+    held = []
+
+    def hold_second_generation(route):
+        if route.request.method == "POST" and not held and len(generations) == 1:
+            held.append(route)  # the one for C waits until released
+            return
+        generations.append(route.request.url)
+        route.continue_()
+
+    generations: list[str] = []
+    page.route(f"**/analyses/{analysis_id}/generate/level/2", hold_second_generation)
+    fetches = page_fetches(page, analysis_id)
+    mark_page(page)
+
+    # 二次 is generated parent by parent (A, then C); nothing covers the page.
+    step_button(page, 3).click()
+    generate = step_panel(page, 3).get_by_role("button", name="Yesの一次要因から二次要因を生成")
+    generate.click()
+    wait_for(page, lambda: bool(held))  # A is done, C is being generated
+    expect(generate).to_be_disabled()
+
+    # A factor is added meanwhile: its update waits for the generation …
+    step_button(page, 2).click()
+    open_dialog(page, step_panel(page, 2).get_by_role("button", name="手動追加", exact=True), "#addNodeTitle")
+    page.fill("#addNodeTitle", "生成中に追加した一次要因")
+    page.locator("#addNodeModal").get_by_role("button", name="追加").click()
+    expect(page.locator("#addNodeModal")).to_be_hidden()
+    assert e2e_server.query("SELECT COUNT(*) FROM nodes WHERE analysis_id = ? AND title = ?",
+                            (analysis_id, "生成中に追加した一次要因"))[0][0] == 1
+    # … and another factor is chosen before it ends.
+    select_button(page, "nav", b).click()
+    expect_selected(page, b, "一次要因B")
+    page.wait_for_timeout(300)
+    assert fetches == []
+
+    held[0].continue_()  # C is generated; the generation ends, one update
+    expect(step_panel(page, 2).locator('[data-role="work-item"]')).to_have_count(4)
+    page.wait_for_timeout(500)
+    expect_selected(page, b, "一次要因B")  # the newer choice stays
+    assert len(fetches) == 1
+    assert same_page(page)
+
 # ----- E-E19 --------------------------------------------------------------------
 
 @pytest.mark.acceptance("E-E19")
@@ -508,4 +595,79 @@ def test_E_E19_judgement_changed_elsewhere_does_not_stop_later_updates(page, e2e
     assert len(fetches) == 3
     assert data_changes(page) == ["no"]
     expect(toast(page, "表示を最新にできませんでした。ページを再読み込みしてください。", "error")).to_have_count(1)
+    assert same_page(page)
+
+
+@pytest.mark.acceptance("E-E19")
+def test_E_E19_no_fetch_while_the_next_queued_judgement_is_saved(page, e2e_server):
+    analysis_id = e2e_server.create_analysis("書き込み中の取得", top_event="頂上")
+    a = e2e_server.add_level1(analysis_id, "一次要因A")
+    open_edit(page, analysis_id)
+    watch_data(page, a)
+    held = []
+
+    def hold_writes(route):
+        if route.request.method != "POST":
+            route.continue_()
+            return
+        held.append(route)
+
+    page.route(f"**/nodes/{a}/update", hold_writes)
+    fetches = page_fetches(page, analysis_id)
+    mark_page(page)
+
+    judgement_button(item(page, "work", a), a, "yes").click()  # being saved (held)
+    wait_for(page, lambda: len(held) == 1)
+    judgement_button(item(page, "work", a), a, "no").click()   # waits for it
+    refresh(page)                                              # asked meanwhile
+    page.wait_for_timeout(300)
+    assert fetches == []
+
+    # When Yes is saved, No starts at once: still nothing is fetched.
+    held[0].continue_()
+    wait_for(page, lambda: len(held) == 2)
+    page.wait_for_timeout(500)
+    assert fetches == []
+
+    held[1].continue_()  # No is saved; then one fetch
+    expect(chip(nav(page), a)).to_have_text("No")
+    page.wait_for_timeout(500)
+    assert len(fetches) == 1
+    assert data_changes(page) == ["no"]
+    assert e2e_server.judgement(a) == "no"
+    assert same_page(page)
+
+
+@pytest.mark.acceptance("E-E19")
+def test_E_E19_answer_fetched_before_a_top_event_save_is_discarded(page, e2e_server):
+    analysis_id = e2e_server.create_analysis("古い応答（頂上事象の保存）", top_event="")
+    e2e_server.add_level1(analysis_id, "一次要因A")
+    open_edit(page, analysis_id)
+    held_fetch = []
+
+    def hold_first_fetch(route):
+        if not is_page_fetch(route.request, analysis_id) or held_fetch:
+            route.continue_()
+            return
+        held_fetch.append((route, route.fetch()))  # the page as it is now, answered later
+
+    page.route(f"**/analyses/{analysis_id}", hold_first_fetch)
+    fetches = page_fetches(page, analysis_id)
+    mark_page(page)
+
+    refresh(page)  # e.g. after a detail save; its answer is held back …
+    wait_for(page, lambda: bool(held_fetch))
+    step_button(page, 1).click()  # … while the top event is saved
+    page.fill("#topEventInput", "保存後の頂上事象")
+    step_panel(page, 1).get_by_role("button", name="保存", exact=True).click()
+    expect(page.locator("#topEventInput")).to_have_attribute("data-saved", "保存後の頂上事象")
+    expect(page.locator('#edit-nav [data-select="top"]')).to_contain_text("保存後の頂上事象")
+
+    route, stale = held_fetch[0]
+    route.fulfill(response=stale)  # read before the save: discarded, fetched again
+    page.wait_for_timeout(800)
+    assert len(fetches) == 2
+    for role in ("nav", "tree"):  # the old answer had 「（頂上事象が未設定です）」
+        expect(page.locator(f'[data-select="top"][data-role="{role}"]')).to_contain_text("保存後の頂上事象")
+    expect(page.locator('[data-step-status="1"]')).to_have_text("頂上事象：入力済み")
     assert same_page(page)

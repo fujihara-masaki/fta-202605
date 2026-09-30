@@ -102,6 +102,10 @@ async function saveTopEvent(analysisId, { quiet = false } = {}) {
   const input = document.getElementById('topEventInput');
   if (!input) return false;
   const top_event = input.value.trim();
+  // The edit screen shows the saved top event at once: an update it fetched
+  // before this save must not put the old one back (P-3).
+  const bridge = window.ftaEditBridge;
+  const endWrite = bridge ? bridge.beginWrite() : () => {};
   try {
     const res = await fetch(`/analyses/${analysisId}/top-event`, {
       method: 'POST',
@@ -119,6 +123,8 @@ async function saveTopEvent(analysisId, { quiet = false } = {}) {
   } catch (e) {
     showToast('通信エラーが発生しました', 'error');
     return false;
+  } finally {
+    endWrite();
   }
 }
 
@@ -477,9 +483,12 @@ async function deleteNode(nodeId, analysisId) {
 // ===== Node Detail Modal =====
 let currentNodeId = null;
 let lastFocusedBeforeModal = null;
+let lastFocusBeforeModal = null;  // the same, as the edit screen describes it
 
 function _openModal(modalId, focusSelector) {
   lastFocusedBeforeModal = document.activeElement;
+  const bridge = window.ftaEditBridge;
+  lastFocusBeforeModal = bridge ? bridge.rememberFocus() : null;
   const modal = document.getElementById(modalId);
   modal.classList.remove('hidden');
   const target = focusSelector ? modal.querySelector(focusSelector) : null;
@@ -490,10 +499,16 @@ function _closeModal(modalId) {
   const modal = document.getElementById(modalId);
   if (!modal || modal.classList.contains('hidden')) return;
   modal.classList.add('hidden');
-  if (lastFocusedBeforeModal && typeof lastFocusedBeforeModal.focus === 'function') {
+  const bridge = window.ftaEditBridge;
+  if (lastFocusedBeforeModal && !lastFocusedBeforeModal.isConnected && bridge && lastFocusBeforeModal) {
+    // The page was updated while the dialog was open (e.g. a generation
+    // ended) and the control that opened it was replaced: its replacement.
+    bridge.restoreFocus(lastFocusBeforeModal);
+  } else if (lastFocusedBeforeModal && typeof lastFocusedBeforeModal.focus === 'function') {
     lastFocusedBeforeModal.focus();
-    lastFocusedBeforeModal = null;
   }
+  lastFocusedBeforeModal = null;
+  lastFocusBeforeModal = null;
 }
 
 async function openNodeDetail(nodeId) {

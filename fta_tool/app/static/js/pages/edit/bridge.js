@@ -16,6 +16,14 @@
 //   notify(message, type)   app.js's messages in the shared notifications
 //                           (J-24, moved forward to PR-3 by 判断4): the same
 //                           text and kind ('success' | 'warning' | 'error')
+//   beginWrite()            a save the page shows at once (the top event of
+//                           ①) starts; call the function it returns when it
+//                           has ended. Tracked like a judgement: no update
+//                           is fetched meanwhile, and one fetched before it
+//                           is not applied (plan 3.4-5, P-3)
+//   rememberFocus()         where the focus is (before a dialog opens) …
+//   restoreFocus(focus)     … and back there when it closes, or to the
+//                           control that replaced it after an update (5.7)
 //
 // checkParent and checkDelete answer from the summary the server computed
 // for the data of the page (app/detail_view.py; 判断2・判断3): the buttons
@@ -68,6 +76,17 @@ export function installBridge(app) {
     notify: (message, type) => {
       notify(message, { type: LEGACY_TYPES.has(type) ? type : 'success' });
     },
+    beginWrite: () => {
+      const write = app.writes.begin();
+      let ended = false;
+      return () => {
+        if (ended) return;
+        ended = true;
+        app.writes.end(write, null);
+      };
+    },
+    rememberFocus: () => app.describeFocus(),
+    restoreFocus: (focus) => app.restoreFocus(focus),
   };
   window.ftaEditBridge = Object.freeze(bridge);
   return bridge;

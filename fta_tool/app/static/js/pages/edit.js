@@ -147,6 +147,8 @@ function start(root, model) {
   // {deleted}) by a partial update; none while a generation runs, one after.
   const refresher = createRefresher(app, { scrollers });
   app.refresh = (options = {}) => refresher.request(options);
+  app.describeFocus = refresher.describeFocus;
+  app.restoreFocus = refresher.restoreFocus;
 
   app.setGenerating = (on) => {
     app.generating = on;
