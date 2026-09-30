@@ -1,5 +1,6 @@
 import json
 import logging
+import mimetypes
 import os
 import pathlib
 import time
@@ -164,6 +165,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="FTA分析支援ツール", lifespan=lifespan)
 
+# The screens load their scripts as ES modules, which browsers only run when
+# served with a JavaScript MIME type. On Windows, Python's mimetypes table is
+# read from the registry and may map ".js" to "text/plain"; pin the standard
+# type so static files are served the same way on every OS.
+mimetypes.add_type("text/javascript", ".js")
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
@@ -173,7 +179,13 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, db: Session = Depends(get_db)):
     analyses = crud.get_analyses(db)
-    return templates.TemplateResponse("index.html", {"request": request, "analyses": analyses})
+    # Factor count per analysis for the delete confirmation (J-13): one
+    # grouped query; the list does not show it as a column.
+    factor_counts = crud.count_nodes_by_analysis(db)
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "analyses": analyses, "factor_counts": factor_counts},
+    )
 
 
 @app.get("/analyses/new", response_class=HTMLResponse)
