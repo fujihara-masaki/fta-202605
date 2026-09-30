@@ -17,7 +17,9 @@ page (window.__pr3NoReload) and check that the mark is still there.
 * E-E19  an old answer never rolls the page back: the answer to a fetch
          issued before a judgement was saved is discarded and fetched again;
          an answer without the judgement the server confirmed is not applied
-         and, the second time, 「表示を最新にできませんでした」 is shown.
+         and, the second time, 「表示を最新にできませんでした」 is shown. That
+         update has then checked the judgement: when it was changed in
+         another tab, the next update is applied, not refused until a reload.
 
 Where no screen operation can cause the case (the analysis deleted in
 another tab, a fetch while a generation runs), the tests call the bridge the
@@ -463,4 +465,47 @@ def test_E_E19_answer_without_the_confirmed_judgement_is_not_applied(page, e2e_s
     assert data_changes(page) == []  # nothing applied
     expect(chip(nav(page), a)).to_have_text("Yes")
     expect(judgement_button(item(page, "work", a), a, "yes")).to_have_attribute("aria-pressed", "true")
+    assert same_page(page)
+
+
+@pytest.mark.acceptance("E-E19")
+def test_E_E19_judgement_changed_elsewhere_does_not_stop_later_updates(page, e2e_server):
+    analysis_id = e2e_server.create_analysis("別の画面で変わった評価", top_event="頂上")
+    a = e2e_server.add_level1(analysis_id, "一次要因A")
+    b = e2e_server.add_level1(analysis_id, "一次要因B")
+    open_edit(page, analysis_id)
+    watch_data(page, a)
+    judgement_button(item(page, "work", a), a, "yes").click()
+    expect(chip(nav(page), a)).to_have_text("Yes")
+    wait_until(lambda: e2e_server.judgement(a) == "yes")
+    e2e_server.update_node(a, user_judgement="no")  # changed afterwards in another tab
+    fetches = page_fetches(page, analysis_id)
+    mark_page(page)
+
+    # The update right after cannot tell the newer value from an old answer:
+    # as for an old answer, nothing is applied and a reload is asked for.
+    select_button(page, "nav", b).click()
+    open_detail(page)
+    page.fill("#modalMemo", "Bのメモ")
+    page.locator("#modalSaveBtn").click()
+    expect(toast(page, "表示を最新にできませんでした。ページを再読み込みしてください。", "error")).to_have_count(1)
+    page.wait_for_timeout(300)
+    assert len(fetches) == 2
+    assert data_changes(page) == []
+    expect(chip(nav(page), a)).to_have_text("Yes")
+
+    # That judgement has been checked; the next update is applied and shows
+    # the value from the other tab (it is not refused until a reload).
+    open_dialog(page, step_panel(page, 2).get_by_role("button", name="手動追加", exact=True), "#addNodeTitle")
+    page.fill("#addNodeTitle", "手動で追加した一次要因")
+    page.locator("#addNodeModal").get_by_role("button", name="追加").click()
+    expect(inspector_title(page)).to_have_text("手動で追加した一次要因")
+    expect(chip(nav(page), a)).to_have_text("No")
+    expect(chip(page.locator("#edit-panel-table"), a)).to_have_text("No")
+    expect(judgement_button(item(page, "work", a), a, "no")).to_have_attribute("aria-pressed", "true")
+    assert embedded_judgement(page, a) == "no"
+    page.wait_for_timeout(300)
+    assert len(fetches) == 3
+    assert data_changes(page) == ["no"]
+    expect(toast(page, "表示を最新にできませんでした。ページを再読み込みしてください。", "error")).to_have_count(1)
     assert same_page(page)

@@ -50,7 +50,7 @@ function createWriteTracker() {
   const tracker = {
     seq: 0,
     inFlight: 0,
-    confirmed: new Map(), // factor id -> judgement the server confirmed
+    confirmed: new Map(), // factor id -> judgement the server confirmed, until an update checked it
     begin() {
       tracker.seq += 1;
       tracker.inFlight += 1;

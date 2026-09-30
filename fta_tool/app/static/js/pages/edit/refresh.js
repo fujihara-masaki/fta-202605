@@ -16,7 +16,10 @@
 //   before a judgement write started is discarded and the fetch repeated;
 // - the judgements the server confirmed on this page must be in the answer;
 //   if not, the fetch is repeated, and a second mismatch shows
-//   「表示を最新にできませんでした」 without applying anything;
+//   「表示を最新にできませんでした」 without applying anything. They are
+//   checked by the next update only (dropped when it applies or gives up),
+//   so a judgement changed later elsewhere (another tab) does not refuse
+//   every update after it;
 // - nothing is fetched while a generation runs; one fetch follows its end.
 // 404: the analysis is gone — the page says so and stops the operations.
 // Another failure: the page is reloaded when nothing is being typed (the
@@ -305,6 +308,11 @@ export function createRefresher(app, { scrollers }) {
         if (!matchesConfirmed(model)) {
           mismatches += 1;
           if (mismatches >= 2) {
+            // Both answers were fetched after these judgements were
+            // confirmed, so they have been checked; most likely one was
+            // changed elsewhere since (another tab). Kept, they would refuse
+            // every later update until a reload.
+            app.writes.confirmed.clear();
             notify('表示を最新にできませんでした。ページを再読み込みしてください。', { type: 'error' });
             return;
           }
