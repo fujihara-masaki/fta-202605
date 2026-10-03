@@ -13,6 +13,8 @@
                                             browser is not installed)
     pytest -m e2e --e2e-required            required acceptance run
       [--e2e-env LABEL] [--e2e-report PATH] (FTA_E2E_REQUIRED=1 also works)
+    pytest -m e2e --e2e-preflight           preflight in another browser
+      --browser-channel chrome --headed     (a few tests; not the required run)
 """
 
 import importlib
@@ -60,6 +62,13 @@ def pytest_addoption(parser):
         default=False,
         help="UI改修の必須受入検証として実行する。E2E のスキップを失敗として扱い、"
         "必須の受入項目が未実施なら失敗にする（環境変数 FTA_E2E_REQUIRED=1 でも同じ）。",
+    )
+    group.addoption(
+        "--e2e-preflight",
+        action="store_true",
+        default=False,
+        help="準備確認として、編集画面を開く少数の既存 E2E だけを実行する（インストール済みの Chrome などを "
+        "--browser-channel で使う前の確認）。スキップと0件は失敗。全必須 E2E の合格ではない。--e2e-required とは同時に使えない。",
     )
     group.addoption(
         "--e2e-report",

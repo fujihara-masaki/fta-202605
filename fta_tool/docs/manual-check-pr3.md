@@ -4,6 +4,13 @@
 
 この手順書は確認の進め方をまとめたもので、受入の合否を決めるものではありません。合否と PR #18 のマージは、利用者が判断します。
 
+**確認の方式（2026-10-03 の利用者の判断）**：Edge は手動で確認しました（第1〜10節の手順）。Chrome は、同じ全手順を人手で繰り返さず、Windows のインストール済みの Chrome Stable で既存の E2E を自動で実行し、自動化だけでは確かめきれない表示・操作感を少数の目視で確認します。自動テストで代わりにならない部分があれば、その部分だけを手動で確認します。「Chrome でも全項目を人手で確認した」とは記録しません。
+
+| ブラウザ | 方式 | 対象の SHA | 状態 |
+|---|---|---|---|
+| Microsoft Edge | 手動確認（第1〜10節） | `4b49914` | 項目1〜10、第5節、第7節の主要な操作・期待結果を確認済み（2026-10-02、利用者）。未確認・未特定の事項は第11.2節 |
+| Google Chrome | 自動 E2E（第12節）＋限定した目視（第13節）。対応表は第11節 | PR #18 の最新 HEAD | 未実施。Windows 実機の結果を受けるまで、確認済みとしない |
+
 ## 0. はじめに（守ること）
 
 - **普段の DB と作業フォルダは使いません。** PR #18 のコードは、SHA ごとの別フォルダ（git worktree）に取り出します。確認用の DB は、確認の回ごとに作る記録フォルダの中にだけ置きます。
@@ -424,3 +431,200 @@ API の直接呼び出しによる連鎖削除（S-11）と、生成 API の循�
 - 起動ログで確かめた3行（第3節・第7節）と、画面の「AI: mock」。
 - 項目1〜10と、第5節・第7節の結果（OK／NG）。NG の場合は、手順・画面・通知の文言を記録し、画面のコピーを `screenshots` に残す。
 - 表示の更新の失敗や成否不明の通知が出た場合は、直前の通知と、確かめた結果（第6節）。
+
+## 11. 手動確認の項目と自動テストの対応（Chrome の確認方式、2026-10-03）
+
+Chrome では、次の対応表の自動テスト（第12節）と、右の列の目視（第13節）で確認します。自動テストは、受入 ID だけでなく、表の「自動で確かめる内容」の操作と期待結果を実際に検査しています。「追加」は、この方式に合わせて足したテスト（`tests/e2e/test_edit_manual_items.py`）です。テストのデータは手動確認の確認用 DB ではなく、テストごとの一時 DB に作る小さなデータです。
+
+### 11.1 対応表
+
+| 手動の項目 | 対応するテスト（受入 ID） | 自動で確かめる内容 | 残る目視・対象外 |
+|---|---|---|---|
+| 1 既定の表示 | `test_E_E01_without_factors_step_1_and_the_top_event`、`test_E_E01_with_factors_step_2_and_the_first_primary_factor`（E-E01） | 要因なし：①が選ばれ、①の欄に頂上事象、インスペクタの見出し「頂上事象」、URL にハッシュなし（不整合のある一次要因しかない場合も①）。要因あり：②と最初の一次要因が、構造ナビ・作業リスト・ツリー・一覧表・インスペクタで選ばれ、②③の件数が出る | ヘッダーの「AI: mock」は手動確認用のサーバーの表示。自動テストでは「AI: e2e-stub」（`test_title_step1_and_generation_from_the_new_page`）。画面の見え方は目視1 |
+| 2 全経路からの選択 | `test_E_E02_every_route_selects_and_all_views_agree`、`test_E_E02_the_inspector_shows_the_saved_details_of_the_latest_choice`（E-E02） | 構造ナビ・親グループの親名・作業リストの行・要確認・ツリー・一覧表・パンくず・子要因リンクの8経路で、全表示とインスペクタの選択が一致し、作業ステップが階層（一次②・二次③・三次④・頂上事象①）に合わせて切り替わる。要確認で品質警告の全文。詳細の表示と、古い応答で上書きされないこと | なし |
+| 3 評価の変更 | `test_E_E03_judgement_is_saved_and_shown_everywhere`、`test_E_E03_failure_leaves_the_judgement_and_rapid_clicks_end_on_the_last`、追加 `test_E_E03_back_to_unknown_from_the_inspector`（E-E03） | 作業リスト・インスペクタからの保存、構造ナビ・作業リスト・ツリー（C-04）・一覧表・インスペクタへの反映、②の件数、③④の生成の対象件数、通知「評価を更新しました」が1回、未評価に戻す、保存の失敗、連続クリック | なし |
+| 4 絞り込み | `test_E_E04_filter_hides_rows_highlights_the_tree_and_keeps_the_targets`、追加 `test_E_E04_no_and_unknown_filters`（E-E04） | 文字（説明の一致を含む）・Yes・No・未評価・要確認で、作業リスト・一覧表は隠れ、構造ナビ・ツリーは隠れずに強調と薄い表示（クラス）、件数、クリア、生成の対象は変わらない | 強調・薄い表示の見た目（Edge で確認済み）。実際の日本語入力（IME の変換）での入力は目視4（自動テストは文字列を直接入れる） |
+| 5 再読み込みでの復元 | `test_E_E06_reload_restores_selection_step_tab_scroll_and_filter`、`test_E_E06_invalid_hash_gives_the_default_display`、`test_E_E06_without_web_storage_the_screen_still_works`（E-E06） | 再読み込みの後に、選択・ステップ・タブ・構造ナビと作業エリアのスクロール位置・絞り込みが戻る。不正なハッシュ、保存領域が使えない場合 | F5 キーではなく、ブラウザの再読み込み（同じ動作）で確認 |
+| 6 旧モーダルでの操作 | `test_E_E07_detail_save_keeps_focus_scroll_and_typed_input`、`test_E_E07_manual_add_and_delete_select_and_keep_the_focus`、追加 `test_E_E07_deleting_a_primary_factor_selects_the_top_event`（E-E07）、`test_detail_dialog_manual_add_additional_generation_delete_and_export`（PR3-LEGACY-OPS）、`test_saving_dialogs_and_delete_messages_use_the_shared_notifications`（PR3-LEGACY-NOTIFY） | 詳細の保存・手動追加・削除が、ページを再読み込みせずに反映される（ページに付けた印が残る）。①の未保存の入力が残る。追加した要因・削除した要因の親・頂上事象（一次要因の削除）が選ばれる。フォーカスの戻り先。削除の確認の文（要因名を含む）。「保存しました」「要因を追加しました」「削除しました」 | なし |
+| 7 1280×800・1440×900 | `test_three_panes_fit_at_the_base_and_the_measured_sizes`（1280×800）、追加 `test_each_pane_scrolls_on_its_own`（1280×800・1440×900）（PR3-LAYOUT） | 3ペインが横に並び、ページの横スクロールがない。構造ナビ・作業エリア・インスペクタ（長い要因を選んだ状態）がそれぞれ個別にスクロールし、ページ全体はスクロールしない | 自動テストは表示領域（viewport）を指定して確かめる。開発者ツールでの寸法の指定は不要 |
+| 8 利用者の環境 | `test_three_panes_fit_at_the_base_and_the_measured_sizes`（利用者環境の実測値 1905×945・1912×914。PR3-LAYOUT） | 実測値の表示領域で、3ペインが収まり、主要な操作が見えて、ほかの要素に隠れない | **目視1**：通常の Chrome を最大化（100%）したときの読みやすさ。自動テストの viewport は、最大化したウィンドウとは別のもの |
+| 9 旧処理の通知 | `test_saving_dialogs_and_delete_messages_use_the_shared_notifications`、`test_generation_messages_keep_their_text_and_kind`（PR3-LEGACY-NOTIFY）、`test_notification_stack_stays_bounded`（PR1-BASE-NOTIFY）、追加 `test_generation_marks_each_parent_until_the_partial_update`（PR3-LEGACY-OPS）、`test_detail_dialog_manual_add_additional_generation_delete_and_export`（「要確認」行） | 通知は1か所に1回ずつ（旧 `#toast` なし）、成功は自動で閉じ、エラーは閉じるまで残る、同じエラーは1件にまとまる。旧ダイアログを開いている間は、通知がダイアログのどの部分（×・入力欄・保存・追加・キャンセル）にも重ならず、閉じると下部の中央に戻る。生成の開始と合計の通知。二次の生成中に親ごとの「生成中…」「+3件」が出て、部分更新で消える（PR-3 の暫定動作）。詳細ダイアログの「要確認」行は品質警告があるときだけ出る | **目視3**：通知が複数出ている間に、ダイアログを実際に操作できるか |
+| 10 生成の対象件数 | `test_E_E04_filter_hides_rows_highlights_the_tree_and_keeps_the_targets`、追加 `test_E_E04_no_and_unknown_filters`（E-E04）、`test_E_E03_judgement_is_saved_and_shown_everywhere`（E-E03）、`test_normal_generation_uses_consistent_yes_parents_only`（PR3-GEN-PARENTS） | ③④の対象件数、絞り込みで Yes の親を隠しても件数が変わらない、生成の要求がすべての Yes の親に送られる | 件数の前後の文（「生成の対象：Yesの一次要因」など）はテンプレートの文。テストは件数を確かめる |
+| 第5節 別タブでの復帰 | `test_E_E19_judgement_changed_elsewhere_does_not_stop_later_updates`（別のタブを API の更新で模擬）、追加 `test_E_E19_two_tabs_a_judgement_changed_in_the_other_tab`（同じブラウザの実際の2つのタブ）（E-E19） | タブBで評価を変えた後、タブAの最初の部分更新は反映されず「表示を最新にできませんでした。ページを再読み込みしてください。」が1回出る。保存は完了している（ダイアログで確認）。次の保存の部分更新で、タブBの値が反映され、通知は増えない | なし（タブは Ctrl+T ではなく、テストが同じブラウザに新しいタブを開く） |
+| 第7節 不整合データ | `test_E_E08_every_category_is_named_in_its_group`、追加 `test_E_E08_child_actions_are_refused_for_every_inconsistent_category`（E-E08）、PR3-DELETE-SCOPE の4件、PR3-GEN-PARENTS の3件 | すべての区分（親不在・別の分析の親・自己参照・循環・階層不一致・上位に不整合あり）の表示と、頂上事象の下に出ないこと。削除の可否と理由、親不在の要因の削除で消える範囲（別の分析の要因は消えない）。不整合のある二次要因のすべての区分で「AIで追加生成」「手動追加」が無効で、理由の文が表示される（二次F と同じ「別の分析の親」を含む） | **目視2**：右のインスペクタで、無効なボタンと理由の文が利用者に見えるか |
+
+### 11.2 Edge での確認結果（対象 `4b49914`、2026-10-02、利用者）
+
+- Windows 11 の Microsoft Edge で、項目1〜10、第5節（別のタブでの評価の変更後の復帰）、第7節（不整合データ）の主要な操作と期待結果を確認しました（記録フォルダ `4b49914-20261002-1038-edge`）。対象は `4b49914` です。その後の文書・テスト基盤だけの変更を、Edge で再確認したことにはしません。
+- 生成の開始・完了の通知と、旧右下トーストが出ないことは確認済みです。
+- 「+3件」などの生成中の一時表示は、目視できず未確認です。自動テスト `test_generation_marks_each_parent_until_the_partial_update` で、表示されることと部分更新で消えることを確かめます（人手での生成の繰り返しは行わない）。
+- 不整合要因「二次F」の「AIで追加生成」「手動追加」は、最初は有効と報告され、その後、`canParent=false`、両ボタンの `disabled=true`、理由の文の存在と表示が確認されました。当初の見え方の原因は確定していません。Chrome では自動テスト（E-E08 の追加）と目視2で確かめます。
+- DevTools を開いている間の `startTime` の TypeError は、発生元を特定していません。アプリの不具合とも、解決済みとも判断していません。自動テストは各テストでページのコンソールのエラーと例外を失敗にしますが、DevTools を開いた状態は再現しません。
+
+## 12. Windows の Chrome での自動確認（E2E）
+
+手順は「初回準備（12.3）→ 準備確認（12.4）→ 全件の自動確認（12.5）→ 少数の目視確認（第13節）」の順です。
+
+### 12.1 しくみと守ること
+
+- 自動確認専用の venv を、通常の `.venv` とは別の場所に作り、`requirements-dev.txt` の固定版（Playwright 1.56.0、pytest-playwright 0.7.1）だけを入れます。通常の `.venv` には何も入れません。ブラウザは入れません（`playwright install chrome` は、Playwright の文書のとおり既存のインストールを上書きするため使いません）。
+- インストール済みの Google Chrome（Stable）を `--browser-channel chrome` で、画面を表示して（`--headed`）起動します。プロフィールは起動のたびに作られる一時プロフィールで、通常のプロフィール・ログイン状態・Cookie・拡張機能は使いません（企業のポリシーは適用されることがあります）。Chrome が見つからない・起動できない場合は失敗として止まり、同梱の Chromium には切り替えません。
+- テスト用サーバーは、記録フォルダの中の一時領域（`pytest-tmp`）に一時 DB を作り、空いているポート（8000〜8002 は使わない）で起動します。テストごとに DB を空にします。普段の DB、手動確認の DB・ログ・画像、8001・8002 のサーバーには触れません。不整合データもこの一時 DB にだけ作ります。テスト用サーバー（同じ PC の 127.0.0.1）への接続には、プロキシの設定を使いません（設定は変更しません）。
+- 実LLMは呼びません。テスト用サーバーは AI の設定を `e2e-stub` に固定し、実プロバイダの取得と外部への通信を遮断し、試みがあればテストを失敗にします（画面のヘッダーは「AI: e2e-stub」）。これは、手動確認の「AI: mock」（第3節）とは別の起動方法です。シェルの `AI_PROVIDER` は使いません。コード側に `.env` がある場合、スクリプトは実行せずに止まります。
+- 並列にせず、通常の速度で順に実行します。`-SlowMo` は失敗の調査用です。
+- 実行中は Chrome のウィンドウが開いたり閉じたりします。見続ける必要はありませんが、テストのウィンドウをクリックしたり、キーを押したりしないでください。PC がスリープすると止まります。所要時間は、この開発環境（Linux）で約4分でした。Windows で画面を表示する実行では、それより長くかかる見込みです。
+
+### 12.2 PowerShell の設定（新しい PowerShell を開くたびに）
+
+```powershell
+$sha  = "<確認する SHA（PR #18 本文の最新 HEAD、40桁）>"
+$src  = "C:\fta-check\src-$($sha.Substring(0,7))\fta_tool"   # 第1節で取り出したその SHA の worktree
+$venv = "C:\fta-check\e2e-venv"                              # 自動確認専用の venv（コードのフォルダの外）
+$out  = "C:\fta-check\e2e"                                    # 自動確認の記録フォルダを作る場所（コードのフォルダの外）
+$ps1  = "$src\scripts\run_browser_e2e.ps1"                    # 確認する SHA と同じ版のスクリプト
+Get-ExecutionPolicy -List                                     # 確認だけ（変更しない）
+```
+
+実行ポリシーで止められた場合（「このシステムではスクリプトの実行が無効になっている」など）は、ポリシーを変更せずに報告してください。スクリプトを使わない同じ手順は 12.7 です。
+
+### 12.3 初回準備（1回だけ）
+
+```powershell
+& $ps1 -Mode Setup -Venv $venv -BasePython "C:\work\fta-202605\fta_tool\.venv\Scripts\python.exe"
+```
+
+- `-BasePython` は venv を作る元の python.exe です（通常の `.venv` の python.exe でよい。その `.venv` は変更しない）。
+- 新しいフォルダに venv を作り、`requirements-dev.txt` の固定版を入れ、入った版と、見つかった Chrome・Edge の場所と版を表示します。既にあるフォルダ（このスクリプトで作った venv 以外）やコードのフォルダの中には作りません。
+- `pip` が失敗した場合（プロキシなど）は、設定を変更せずに報告してください。
+- 版の互換性：Playwright 1.56.0 は Chromium 141 の時期の版です。Playwright の文書は「その時点の Stable・Beta のチャンネルに対応する」としており、それより新しい Chrome（例：154）は文書の対象外です。この開発環境では、Microsoft Edge 154（Chromium 154）で全必須 E2E を実行し、すべてのテストの操作と期待結果が成り立ちました（失敗は 12.8 の favicon だけ）。Chrome の起動や操作で互換性の問題が出た場合は、依存の更新やブラウザのダウングレードはせずに、記録を渡してください。根拠を付けて対応案を出します。
+
+### 12.4 準備確認
+
+```powershell
+& $ps1 -Mode Preflight -Venv $venv -OutRoot $out -ExpectedSha $sha
+```
+
+- 実行の前に、コードの HEAD が `$sha` と一致し未コミットの変更がないこと、コード側に `.env` がないこと、Chrome が見つかること、venv が使えることを確かめ、`$out` の下に新しい記録フォルダ（`<SHA7桁>-<日時>-chrome-preflight`）を作ります。どれかを満たさないときは、理由を表示して止まります（終了コード 9）。
+- 編集画面を開いて主要な要素を確かめる既存のテスト（E-E01 の2件と PR3-LAYOUT、計7件）だけを実行します。Chrome の起動、テスト用サーバー、テストデータ、終了までが成り立つかの確認で、**全必須 E2E の合格ではありません**。スキップや0件は失敗です。
+- 成功の条件：判定「成功」、終了コード 0、「起動したブラウザ」が「Google LLC …」。
+- 12.8 の favicon の扱いが決まるまでは、最初のテストがこの理由で失敗し、判定は「失敗」になる見込みです。失敗がこの1件だけのときも、全件の自動確認には進まずに、結果（12.6）を渡してください。
+
+### 12.5 全件の自動確認（準備確認が成功してから）
+
+```powershell
+& $ps1 -Mode Full -Venv $venv -OutRoot $out -ExpectedSha $sha
+```
+
+- 全必須 E2E（`pytest -m e2e --e2e-required`）を、準備確認と同じ確認の後に実行します（記録フォルダ `<SHA7桁>-<日時>-chrome-full`）。
+- 合格の条件：判定「合格」（`REQUIRED_IDS` のすべての受入項目が成功し、失敗・スキップ・未実施が0件）、終了コード 0。テストの件数は確認する SHA で決まるため、件数そのものは条件にしません（`4b49914` の時点は 155 件、この方式で足したテストを含めると 169 件）。
+- 一部のファイルだけを実行した結果を、全必須 E2E の合格とはしません。
+
+### 12.6 結果と、渡すファイル
+
+スクリプトは最後に、判定・終了コード・結果の件数・起動したブラウザ・所要時間・記録フォルダを表示します。記録フォルダには次のファイルがあります。
+
+| ファイル | 内容 |
+|---|---|
+| `e2e-report.md` | 受入の記録。実行条件（開始・終了と所要時間、Windows・Python・Playwright・pytest-playwright の版、指定した channel と実際に起動したブラウザの作成元・版・実行ファイル・プロフィール、headed、画面寸法、対象コミットと未コミットの変更の有無、コード側の `.env`、テスト用サーバー）、受入項目ごと・テストごとの結果（失敗はエラーの文） |
+| `run-info.md` | スクリプトが確かめた条件（SHA、Python、ソース、出力先、channel と Chrome の実行ファイル・ファイルの版、OS（Windows の版）、PowerShell）、終了コード、残っていたプロセス |
+| `pytest-output.log`・`pytest-stderr.log` | pytest の出力（UTF-8） |
+| `pytest-tmp\e2e-server0\server.log` | テスト用サーバーのログ（同じ場所の `fta_tool.db` はテスト用の一時 DB） |
+| `failures\` | 失敗したテストだけ：画面（`test-failed-1.png`）と Playwright の trace（`trace.zip`）。新規作成画面のうち、別のテスト用サーバーを使う2つのテスト（`test_E_N03_sample_and_input_text_stay_text`、`test_without_sample_scenarios_the_form_still_creates`）は、自分でブラウザの画面を開くため、画面と trace を残しません（失敗の理由は `e2e-report.md` に書かれる） |
+
+- 成功・合格のとき：`e2e-report.md` と `run-info.md` を渡してください。
+- 失敗・中止のとき：記録フォルダをまとめて（zip などで）渡してください。外部のサービスや GitHub へは、利用者が判断するまで上げません。記録にはローカルのパス（ユーザー名を含む）が入ります。
+- trace は、手元でだけ開けます（任意）：`& "$venv\Scripts\python.exe" -m playwright show-trace -h 127.0.0.1 -p 0 "<記録フォルダ>\failures\<テスト>\trace.zip"`（既定のブラウザで開き、Ctrl+C で終了）。trace を外部のサイトに読み込ませないでください。
+- テストの失敗を再実行で消さないでください。再実行するときは新しい記録フォルダで行い、前の記録も残して渡してください。環境の制約（ポリシー、拡張機能、ダウンロードの制限、プロキシなど）とアプリの不具合の切り分けは、渡された記録で行います。
+- 実行中に Ctrl+C で止めた場合、pytest がブラウザとテスト用サーバーを閉じます。スクリプトは、この実行で起動したプロセス（pytest の子孫で作成時刻も一致するもの）が残っていれば止め、`run-info.md` に書きます。名前やポート番号でほかのプロセスを止めることはしません。
+
+### 12.7 スクリプトを実行できないとき（手入力の同じ手順）
+
+実行ポリシーを変更せずに、同じ内容を手入力で行えます（12.2 の変数を使います）。
+
+```powershell
+# 初回準備
+& "C:\work\fta-202605\fta_tool\.venv\Scripts\python.exe" -m venv $venv
+& "$venv\Scripts\python.exe" -m pip install -r "$src\requirements-dev.txt"
+
+# 確認（準備確認。全件は --e2e-preflight を --e2e-required に、フォルダ名の preflight を full に）
+git -C (Split-Path $src) rev-parse HEAD        # $sha と同じこと
+git -C (Split-Path $src) status --short        # 何も出ないこと
+Test-Path "$src\.env"                          # False であること
+$run = "$out\{0}-{1}-chrome-preflight" -f $sha.Substring(0,7), (Get-Date -Format "yyyyMMdd-HHmmss")
+New-Item -ItemType Directory -Path $run | Out-Null
+$env:PYTHONIOENCODING = "utf-8"; $env:PYTHONUTF8 = "1"; $env:PYTHONDONTWRITEBYTECODE = "1"
+& "$venv\Scripts\python.exe" -m pytest "$src\tests" -m e2e --e2e-preflight --browser chromium --browser-channel chrome --headed `
+  --e2e-env "利用者の Windows PC（Google Chrome、headed）" --e2e-report "$run\e2e-report.md" `
+  --basetemp "$run\pytest-tmp" --output "$run\failures" --screenshot only-on-failure --tracing retain-on-failure -p no:cacheprovider -v -rfE
+"終了コード: $LASTEXITCODE"
+```
+
+この場合、pytest の出力は画面にだけ出ます（`e2e-report.md` は作られます）。
+
+### 12.8 既知事項：favicon の 404（判断待ち）
+
+画面を表示して実行すると、ブラウザはページを最初に開いたときに、アプリの `/favicon.ico` を自動で要求します。アプリには favicon がないため 404 になり、コンソールに「Failed to load resource: the server responded with a status of 404 (Not Found)（http://127.0.0.1:<ポート>/favicon.ico）」が出ます。自動テストはコンソールのエラーを失敗にするため、テスト用サーバーごとの最初のテスト（準備確認では1件、全件では3件）が、この理由で失敗します。
+
+- この開発環境（Linux）で、画面を表示した同梱の Chromium 141 と、Microsoft Edge 154 の両方で再現しました（`4b49914` のまま。同梱の headless shell は favicon を要求しないため、これまで出ませんでした）。PR-3 より前からの状態で、PR-3 の変更が原因ではありません。
+- 対応は利用者の判断待ちです（案：アプリの共通テンプレートに favicon を宣言する／自動テストで、ブラウザが自動で要求する `/favicon.ico` の 404 だけを確認から除き、件数を記録に残す）。決まるまでは、この理由の失敗も失敗として記録し、合格・成功にはしません。
+
+### 12.9 後片付け
+
+自動確認の記録フォルダと venv は、受入の判断が終わるまで残してかまいません。終わってから消す場合は、第9節と同じく、対象を `Remove-Item -Recurse <フォルダ> -WhatIf` で確かめてから1つずつ消します。自動確認は、終わったときにテスト用サーバーとブラウザを閉じるため、止めるサーバーはありません。
+
+## 13. Chrome での目視確認（限定）
+
+自動確認（第12節）の後に、自動化だけでは確かめきれない表示・操作感を、次の4つに絞って目視で確認します。人の手で生成を繰り返す確認はしません。
+
+### 13.1 準備
+
+- Chrome の回の記録フォルダと確認用 DB を、第2節の手順で新しく作ります（`$run` の末尾は `-chrome`）。Edge の回の DB は使いません。自動確認の一時 DB（`pytest-tmp`）とも別のものです。
+- 第3節の手順で正常データのサーバー（8001）を、第7節の手順で不整合データのサーバー（8002）を起動し、起動ログとヘッダーの「AI: mock」を確かめます。
+- ふだん使う Chrome を最大化します（Windows の表示倍率 100%、ブラウザの拡大 100%）。この回のタブは新しく開きます。
+- 画面のコピーは、記録フォルダの `screenshots` に保存します。
+
+### 13.2 目視1：最大化した Chrome での配置
+
+1. `http://127.0.0.1:8001/` から「PR3確認：三次まで」を開く。
+2. 3ペイン（構造ナビ・作業エリア・インスペクタ）が横に並び、文字が読みやすいこと。
+3. 主要な操作が画面の外に出たり、ほかの要素（通知を含む）の下に隠れたりしていないこと：作業ステップ①〜⑤、表示タブ、絞り込み欄、作業リストの評価のボタン（Yes・No・未）、② の「一次要因を生成」「手動追加」、③ の「Yesの一次要因から二次要因を生成」、インスペクタの「詳細を編集」「AIで追加生成」「手動追加」「この要因を削除」、ヘッダーの「一覧へ」と出力のリンク。
+4. 「一次01」を選び、インスペクタが下まで読めること（インスペクタの中でスクロールする）。
+5. 画面のコピーを1枚保存する。
+
+### 13.3 目視2：不整合要因のインスペクタ
+
+1. `http://127.0.0.1:8002/` から「PR3確認：不整合」を開く。
+2. 「二次F 親が別の分析にある」を選び、右のインスペクタで次を確認する。
+   - 「AIで追加生成」「手動追加」が無効に見える（押せない表示）。
+   - その下に「親子関係に不整合があるため、この要因の下には要因を追加・生成できません。」が見える。
+   - 「この要因を削除」が無効で、削除できない理由が見える。
+3. 「二次M 親要因が存在しない（親不在）」でも、「AIで追加生成」「手動追加」が無効で、同じ理由が見えること（削除は有効）。
+4. 2 と 3 の画面のコピーを保存する。ボタンが有効に見えた場合は、押さずに画面のコピーを保存して報告する。
+
+### 13.4 目視3：旧ダイアログ表示中の複数の通知
+
+`http://127.0.0.1:8001/` の「PR3確認：三次まで」で行います。
+
+1. ヘッダーの分析タイトルをクリックし、Ctrl+A → Delete で空にして Enter を押す（エラー「タイトルは必須です」）。続けて元のタイトルを入力して Enter を押す。
+2. 「一次05」を選び「詳細を編集」を開く。要因のタイトルを空にして「保存」を押す（エラー「要因タイトルは必須です」）。
+3. エラーが2件出ている状態で、次を確認する。
+   - 通知が上部の右側（ダイアログの横）に並び、ダイアログを隠していない。
+   - ダイアログのタイトル欄・メモ欄に入力でき、「保存」「キャンセル」「×」を押せる（通知が操作を妨げない）。
+4. タイトルを元に戻して「キャンセル」で閉じ、通知が下部の中央に戻ることを確認する。エラーの通知を × で閉じる。
+5. 3 の画面のコピーを保存する。
+
+### 13.5 目視4：日本語入力（IME）での絞り込み
+
+自動テストは文字列を直接入れるため、Microsoft IME での変換操作は確かめていません。
+
+1. 「PR3確認：三次まで」の絞り込み欄で、IME で「ざいこ」と入力し、変換して「在庫」で確定する（Enter）。
+2. 確定した後に、件数「一致 …件（全37件）」が出て、作業リストが絞り込まれること。変換の途中で画面が乱れたり、文字が消えたりしないこと。
+3. 「クリア」で戻す。
+
+### 13.6 記録
+
+Chrome の回の記録フォルダの `results.md` に、次を書きます。
+
+- 対象の SHA、Chrome の版（`chrome://version`）、Windows の版と表示倍率。
+- 自動確認の記録フォルダの名前と判定（第12節）。
+- 目視1〜4の結果（OK／NG）と、画面のコピーのファイル名。NG の場合は手順と見え方。

@@ -10,9 +10,18 @@ Two ways to run the browser tests:
   failure, and every acceptance ID in REQUIRED_IDS must have run and passed;
   an ID whose tests did not run ("未実施") fails the session as well.
 
+* ``pytest -m e2e --e2e-preflight``: the preflight before a run in another
+  browser (e.g. the installed Google Chrome, ``--browser-channel chrome``):
+  only PREFLIGHT_TESTS run (the edit screen opens with its main parts). A
+  skip, or no test at all, is a failure; success here is not the required
+  run.
+
 Each result is recorded as 成功 / 失敗 / スキップ / 未実施, together with the
 environment, the commit, the browser and the viewports (``--e2e-report``
-writes it as Markdown for the pull request).
+writes it as Markdown for the pull request); also when the run started and
+ended, the browser channel asked for and what was actually started
+(tests/e2e/conftest.py), the code-side .env, the test server and where the
+evidence of failures goes.
 
 This module is imported by tests/conftest.py and must not import Playwright.
 """
@@ -25,6 +34,7 @@ import pathlib
 import platform
 import shlex
 import subprocess
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -32,6 +42,16 @@ import pytest
 
 REQUIRED_ENV = "FTA_E2E_REQUIRED"
 ENV_LABEL_ENV = "FTA_E2E_ENV"
+FTA_TOOL_DIR = pathlib.Path(__file__).resolve().parents[2]
+
+# The preflight (--e2e-preflight): a few existing tests that open the edit
+# screen and check its main parts, enough to show that the browser starts,
+# the test server answers, test data is made and everything ends cleanly.
+PREFLIGHT_TESTS = (
+    "tests/e2e/test_edit_page.py::test_E_E01_without_factors_step_1_and_the_top_event",
+    "tests/e2e/test_edit_page.py::test_E_E01_with_factors_step_2_and_the_first_primary_factor",
+    "tests/e2e/test_edit_page.py::test_three_panes_fit_at_the_base_and_the_measured_sizes",
+)
 
 # Acceptance IDs that the required run must cover. Later PRs append theirs.
 # E-xx / T-xx follow plan section 8.9; PR1-xx / PR2-xx / PR3-xx are checks
@@ -64,19 +84,19 @@ REQUIRED_IDS: dict[str, str] = {
     "PR2-NO-SAMPLES": "新規作成：サンプルの設定ファイルがなくても、サンプル欄なしで作成できる",
     "E-E01": "編集：既定の表示（要因なし→①と頂上事象、要因あり→②と最初の一次要因）",
     "E-E02": "編集：R-01 の全経路での選択と、全表示・インスペクタの一致。要確認で品質警告の全文",
-    "E-E03": "編集：評価の保存と全表示への反映（ツリーを含む）、失敗時、連続クリック",
-    "E-E04": "編集：絞り込み（作業リスト・一覧表は非表示、構造ナビ・ツリーは強調）、件数、生成対象が変わらない",
+    "E-E03": "編集：評価の保存と全表示への反映（ツリーを含む）、未評価に戻す、失敗時、連続クリック",
+    "E-E04": "編集：絞り込み（作業リスト・一覧表は非表示、構造ナビ・ツリーは強調。文字、評価の Yes・No・未評価・要確認）、件数、生成対象が変わらない",
     "E-E05": "編集：表示タブのキー操作、選択の保持",
     "E-E06": "編集：再読み込み後の復元（選択・ステップ・タブ・スクロール・絞り込み）、不正なハッシュ、保存領域なし",
-    "E-E07": "編集：部分更新の後もフォーカス・スクロール・入力中の値が残る、分析が削除されていた場合、取得の失敗、生成中は取得しない。旧ダイアログを開いている間に更新されても閉じるとフォーカスが戻る、生成中に手動追加した要因が後から選んだ要因を置き換えない",
-    "E-E08": "編集：不正な親子関係の区分ごとの表示、走査が止まる、頂上事象として出ない、削除・追加・生成の可否と理由",
+    "E-E07": "編集：部分更新の後もフォーカス・スクロール・入力中の値が残る、分析が削除されていた場合、取得の失敗、生成中は取得しない。旧ダイアログを開いている間に更新されても閉じるとフォーカスが戻る、生成中に手動追加した要因が後から選んだ要因を置き換えない。一次要因を削除すると確認に要因名が出て、頂上事象が選ばれる",
+    "E-E08": "編集：不正な親子関係の区分ごとの表示、走査が止まる、頂上事象として出ない、削除・追加・生成の可否と理由（すべての区分で追加生成・手動追加が無効になり、理由が見える）",
     "E-E09": "編集：demo_points を表示しない、マークアップを含む要因の文字列がそのまま文字として出る",
-    "E-E19": "編集：部分更新の古い応答で表示が巻き戻らない（評価・頂上事象の保存の前に発行した取得、確定済みの評価と食い違う応答）、続けて保存される評価の間も取得しない。別のタブで後から評価が変わっても、以後の部分更新は止まらない",
-    "PR3-LAYOUT": "編集：暫定の3ペイン（1280px 以上）が 1280×800 と利用者環境の実測値（clientWidth×clientHeight：Chrome 1905×945・Edge 1912×914）で横に並び、ページ全体の横スクロールがなく、主要な操作が見えて隠れない（最終確認は PR-7 の E-V01〜E-V03）",
+    "E-E19": "編集：部分更新の古い応答で表示が巻き戻らない（評価・頂上事象の保存の前に発行した取得、確定済みの評価と食い違う応答）、続けて保存される評価の間も取得しない。別のタブで後から評価が変わっても、以後の部分更新は止まらない（実際の2つのタブでも確認）",
+    "PR3-LAYOUT": "編集：暫定の3ペイン（1280px 以上）が 1280×800 と利用者環境の実測値（clientWidth×clientHeight：Chrome 1905×945・Edge 1912×914）で横に並び、ページ全体の横スクロールがなく、主要な操作が見えて隠れない。1280×800・1440×900 で各ペインが個別にスクロールする（最終確認は PR-7 の E-V01〜E-V03）",
     "PR3-DELETE-SCOPE": "編集：別分析の要因が子孫にある要因とその祖先・走査を完了できない・確認用の情報を取得できない場合は削除できず、削除要求が送られない。親不在・上位に不整合ありはその部分木（階層不一致の子孫を含む）だけが消え、階層不一致の要因そのものは削除できない（判断2とその追加判断）",
     "PR3-GEN-PARENTS": "編集：生成・追加生成・手動追加の親に不整合のある要因を使わない。対象0件なら要求を送らない、親指定なしの要求を送らない、対象件数と除外件数の表示（判断3）",
     "PR3-LEGACY-NOTIFY": "編集：旧処理の通知（保存・生成・ダイアログ・削除・通信エラー）が共通の通知に同じ文言・種別で1回ずつ出る、エラーは閉じるまで残る、旧 #toast がない（判断4）。旧ダイアログを開いている間は通知がダイアログのどの部分にも重ならず、閉じると通常の位置に戻る",
-    "PR3-LEGACY-OPS": "編集：暫定の旧処理（タイトル・①の保存、生成、詳細編集、手動追加、削除、出力、一覧へ）が新しい画面から再読み込みなしで使える。詳細ダイアログの「要確認」行は品質警告があるときだけ出る",
+    "PR3-LEGACY-OPS": "編集：暫定の旧処理（タイトル・①の保存、生成、詳細編集、手動追加、削除、出力、一覧へ）が新しい画面から再読み込みなしで使える。詳細ダイアログの「要確認」行は品質警告があるときだけ出る。二次・三次の生成中は親ごとに「生成中…」「+N件」が出て、部分更新で消える（PR-3 の暫定）",
 }
 
 OUTCOME_LABELS = {
@@ -98,6 +118,7 @@ class TestRecord:
 @dataclass
 class RunState:
     required: bool = False
+    preflight: bool = False
     report_path: Optional[str] = None
     env_label: str = "未指定"
     records: dict[str, TestRecord] = field(default_factory=dict)
@@ -105,7 +126,16 @@ class RunState:
     playwright_available: bool = True
     playwright_reason: str = ""
     browser: dict[str, str] = field(default_factory=dict)
+    # How the browser was asked for and what was started (tests/e2e/conftest.py).
+    launch: dict = field(default_factory=dict)
+    # The E2E test server: URL, working directory (its database) and log.
+    server: dict[str, str] = field(default_factory=dict)
     viewports: list[str] = field(default_factory=list)
+    preflight_missing: list[str] = field(default_factory=list)
+    started: Optional[_dt.datetime] = None
+    finished: Optional[_dt.datetime] = None
+    started_clock: float = 0.0
+    duration_seconds: Optional[float] = None
     id_results: dict[str, dict] = field(default_factory=dict)
     verdict: Optional[str] = None
 
@@ -123,11 +153,19 @@ def state(config: pytest.Config) -> RunState:
 
 def configure(config: pytest.Config) -> None:
     required = bool(config.getoption("e2e_required", default=False)) or _truthy(os.environ.get(REQUIRED_ENV))
+    preflight = bool(config.getoption("e2e_preflight", default=False))
+    if required and preflight:
+        raise pytest.UsageError(
+            "--e2e-preflight（準備確認）と必須受入検証（--e2e-required・FTA_E2E_REQUIRED）は同時に指定できません"
+        )
     env_label = config.getoption("e2e_env", default=None) or os.environ.get(ENV_LABEL_ENV) or "未指定"
     config.stash[STATE_KEY] = RunState(
         required=required,
+        preflight=preflight,
         report_path=config.getoption("e2e_report", default=None),
         env_label=env_label,
+        started=_dt.datetime.now().astimezone(),
+        started_clock=time.monotonic(),
     )
 
 
@@ -154,8 +192,27 @@ def _playwright_status() -> tuple[bool, str]:
     return True, ""
 
 
+def _base_nodeid(item: pytest.Item) -> str:
+    return item.nodeid.split("[", 1)[0]
+
+
+def _select_preflight(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """--e2e-preflight: keep PREFLIGHT_TESTS (every parameter), nothing else."""
+    run = state(config)
+    selected = [item for item in items if is_e2e(item) and _base_nodeid(item) in PREFLIGHT_TESTS]
+    keep = {id(item) for item in selected}
+    found = {_base_nodeid(item) for item in selected}
+    run.preflight_missing = [name for name in PREFLIGHT_TESTS if name not in found]
+    others = [item for item in items if id(item) not in keep]
+    if others:
+        config.hook.pytest_deselected(items=others)
+        items[:] = selected
+
+
 def on_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     run = state(config)
+    if run.preflight:
+        _select_preflight(config, items)
     available, reason = _playwright_status()
     run.playwright_available = available
     run.playwright_reason = reason
@@ -169,6 +226,8 @@ def on_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -
 
 def on_deselected(config: pytest.Config, items: list[pytest.Item]) -> None:
     run = state(config)
+    if run.preflight:
+        return  # the preflight leaves out the rest on purpose: not 未実施
     for item in items:
         if is_e2e(item):
             run.deselected[item.nodeid] = TestRecord(item.nodeid, _acceptance_ids(item))
@@ -192,6 +251,10 @@ def _skip_reason(report: pytest.TestReport) -> str:
 def _failure_reason(report: pytest.TestReport) -> str:
     text = getattr(report, "longreprtext", "") or str(report.longrepr or "")
     lines = [line for line in text.strip().splitlines() if line.strip()]
+    # The error itself (pytest's "E   ..." lines) rather than only where it was raised.
+    errors = [line[1:].strip() for line in lines if line.startswith("E ")]
+    if errors:
+        return " / ".join(errors[:3])[:300]
     return lines[-1][:300] if lines else ""
 
 
@@ -202,12 +265,13 @@ def on_report(item: pytest.Item, report: pytest.TestReport) -> None:
         return
     if report.skipped:
         reason = _skip_reason(report)
-        if run.required:
-            # Required run: a skipped browser test is not an acceptance.
+        if run.required or run.preflight:
+            # Required run / preflight: a skipped browser test is not an acceptance.
+            label = "必須E2E" if run.required else "準備確認"
             report.outcome = "failed"
-            report.longrepr = f"[必須E2E] スキップは失敗として扱います：{reason}"
+            report.longrepr = f"[{label}] スキップは失敗として扱います：{reason}"
             record.outcome = "failed"
-            record.reason = f"スキップ（必須のため失敗）：{reason}"
+            record.reason = f"スキップ（{'必須' if run.required else '準備確認'}のため失敗）：{reason}"
         elif record.outcome != "failed":
             record.outcome = "skipped"
             record.reason = reason
@@ -225,9 +289,11 @@ def _test_outcome(record: TestRecord) -> str:
 def summarize(run: RunState) -> None:
     all_records = list(run.records.values()) + list(run.deselected.values())
     id_results: dict[str, dict] = {}
-    known = list(REQUIRED_IDS) + sorted(
-        {i for r in all_records for i in r.ids if i not in REQUIRED_IDS}
-    )
+    found_ids = {i for r in all_records for i in r.ids}
+    if run.preflight:  # only the items the preflight ran
+        known = [i for i in REQUIRED_IDS if i in found_ids] + sorted(found_ids - set(REQUIRED_IDS))
+    else:
+        known = list(REQUIRED_IDS) + sorted(found_ids - set(REQUIRED_IDS))
     for acceptance_id in known:
         related = [r for r in all_records if acceptance_id in r.ids]
         counts = {key: 0 for key in OUTCOME_LABELS}
@@ -250,16 +316,29 @@ def summarize(run: RunState) -> None:
     run.id_results = id_results
     required_ok = all(v["status"] == "passed" for k, v in id_results.items() if v["required"])
     tests_ok = all(_test_outcome(r) == "passed" for r in run.records.values())
+    if run.preflight:
+        # At least one test, every one passed, every preflight test found.
+        ok = bool(run.records) and tests_ok and not run.preflight_missing
+        run.verdict = "成功" if ok else "失敗"
+        return
     run.verdict = "合格" if required_ok and tests_ok and not run.deselected else "不合格"
+
+
+def passed(run: RunState) -> bool:
+    return run.verdict == ("成功" if run.preflight else "合格")
 
 
 def on_session_finish(session: pytest.Session) -> None:
     run = state(session.config)
-    if not run.records and not run.deselected and not run.required:
+    run.finished = _dt.datetime.now().astimezone()
+    run.duration_seconds = time.monotonic() - run.started_clock
+    if not run.records and not run.deselected and not run.required and not run.preflight:
         return
     summarize(run)
-    if run.required and run.verdict != "合格":
-        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+    if (run.required or run.preflight) and not passed(run):
+        # Keep a more specific failure (e.g. interrupted, usage error).
+        if session.exitstatus in (pytest.ExitCode.OK, pytest.ExitCode.NO_TESTS_COLLECTED):
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED
     if run.report_path:
         path = pathlib.Path(run.report_path)
         if not path.is_absolute():
@@ -296,6 +375,82 @@ def _package_version(name: str) -> str:
         return "未導入"
 
 
+def _clock(moment: Optional[_dt.datetime]) -> str:
+    return moment.strftime("%Y-%m-%d %H:%M:%S %z") if moment else "-"
+
+
+def _duration(seconds: Optional[float]) -> str:
+    if seconds is None:
+        return "-"
+    minutes, rest = divmod(int(round(seconds)), 60)
+    return f"{minutes}分{rest:02d}秒"
+
+
+def _cell(value) -> str:
+    return " ".join(str(value).split()).replace("|", "／")
+
+
+def _kind_of_run(run: RunState) -> str:
+    if run.required:
+        return "はい（スキップ・未実施は失敗）"
+    if run.preflight:
+        return "いいえ（準備確認：選んだ一部のテストだけ。スキップと0件は失敗。全必須 E2E の合格ではありません）"
+    return "いいえ（通常の実行）"
+
+
+def _verdict_text(run: RunState) -> str:
+    if not run.preflight:
+        return str(run.verdict)
+    text = f"{run.verdict}（準備確認。全必須 E2E の合格ではありません）"
+    if run.preflight_missing:
+        text += "。見つからない準備確認のテスト：" + "、".join(f"`{name}`" for name in run.preflight_missing)
+    return text
+
+
+def _browser_rows(config: pytest.Config, run: RunState) -> list[str]:
+    """What was asked for (channel, headed/headless) and what was started."""
+    launch = run.launch or {}
+    channel = config.getoption("browser_channel", default=None)
+    started = launch.get("product") or (
+        f"未起動（起動できませんでした：{_cell(launch['error'])}）" if launch.get("error") else "未起動")
+    headed = launch.get("headless") is False or bool(config.getoption("headed", default=False))
+    slowmo = config.getoption("slowmo", default=0) or 0
+    return [
+        f"| ブラウザの channel（指定） | {channel or 'なし（Playwright 同梱の Chromium）'} |",
+        f"| 起動したブラウザ | {_cell(started)} |",
+        f"| ブラウザの実行ファイル | {_cell(launch.get('executable') or '-')} |",
+        f"| ブラウザのプロフィール | {_cell(launch.get('profile') or '-')} |",
+        f"| 起動の設定 | {'headed（画面を表示）' if headed else 'headless'}、slowmo {f'{slowmo} ms（調査用）' if slowmo else 'なし'} |",
+    ]
+
+
+def _environment_rows(config: pytest.Config, run: RunState) -> list[str]:
+    """The code-side .env, the test server and where failures leave evidence."""
+    env_file = FTA_TOOL_DIR / ".env"
+    if env_file.exists():
+        env_text = (f"あり（{env_file}）。テスト用サーバーは読み込んだ後に AI の設定を e2e-stub に固定し、"
+                    "実プロバイダと外部への通信を遮断する")
+    else:
+        env_text = f"なし（{env_file}）"
+    server = run.server or {}
+    server_text = ("AI: e2e-stub（tests/e2e/stub_server.py。実LLMの取得と外部への HTTP は遮断し、試みがあればテストを失敗にする）"
+                   + (f"、{server['url']}、作業フォルダ（一時 DB）{server['workdir']}、ログ {server['log']}" if server else ""))
+    output = config.getoption("output", default=None)
+    if output:
+        output_path = pathlib.Path(output)
+        if not output_path.is_absolute():
+            output_path = pathlib.Path(config.invocation_params.dir) / output_path
+        evidence = (f"スクリーンショット {config.getoption('screenshot', default='off')}、"
+                    f"trace {config.getoption('tracing', default='off')}、保存先 {output_path}")
+    else:
+        evidence = "-"
+    return [
+        f"| コード側の .env | {_cell(env_text)} |",
+        f"| テスト用サーバー | {_cell(server_text)} |",
+        f"| 失敗時の証跡（pytest-playwright） | {_cell(evidence)} |",
+    ]
+
+
 def render_markdown(config: pytest.Config, run: RunState) -> str:
     sha = _git("rev-parse", "HEAD") or "取得できませんでした"
     dirty = _git("status", "--porcelain", "--untracked-files=no")
@@ -306,23 +461,30 @@ def render_markdown(config: pytest.Config, run: RunState) -> str:
     lines = [
         "## 実ブラウザテスト（E2E）の記録",
         "",
+    ]
+    if run.preflight:
+        lines += ["**準備確認の記録です（選んだ一部のテストだけを実行。全必須 E2E の合格ではありません）。**", ""]
+    lines += [
         "| 項目 | 値 |",
         "|---|---|",
         f"| 実行日時（UTC） | {_dt.datetime.now(_dt.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} |",
+        f"| 開始・終了（ローカル時刻） | {_clock(run.started)} 〜 {_clock(run.finished)}（所要 {_duration(run.duration_seconds)}） |",
         f"| 実行環境の区分 | {run.env_label} |",
         f"| OS | {platform.platform()} |",
         f"| Python | {platform.python_version()} |",
         f"| Playwright / pytest-playwright | {_package_version('playwright')} / {_package_version('pytest-playwright')} |",
         f"| ブラウザ | {browser.get('name', '未起動')} {browser.get('version', '')}（{browser.get('mode', '-')}） |",
+        *_browser_rows(config, run),
         f"| 対象コミット | `{sha}`（{'追跡中のファイルに未コミットの変更あり' if dirty else '未コミットの変更なし'}） |",
         f"| ブランチ | `{branch}` |",
         f"| 実行コマンド | `{args}` |",
-        f"| 必須受入検証として実行 | {'はい（スキップ・未実施は失敗）' if run.required else 'いいえ（通常の実行）'} |",
+        f"| 必須受入検証として実行 | {_kind_of_run(run)} |",
+        *_environment_rows(config, run),
         f"| 画面寸法（CSS ピクセル） | {'、'.join(run.viewports) or '-'} |",
         f"| 結果（テスト単位） | 成功 {counts['passed']}・失敗 {counts['failed']}・スキップ {counts['skipped']}・未実施 {counts['not_run']} |",
-        f"| 判定 | {run.verdict} |",
+        f"| 判定 | {_verdict_text(run)} |",
         "",
-        "### 受入項目ごとの結果",
+        "### 受入項目ごとの結果" + ("（準備確認で実行した項目だけ）" if run.preflight else ""),
         "",
         "| ID | 内容 | 結果 | 成功 | 失敗 | スキップ | 未実施 |",
         "|---|---|---|---|---|---|---|",
@@ -350,13 +512,21 @@ def terminal_summary(terminalreporter, config: pytest.Config) -> None:
     tr = terminalreporter
     counts = _count_tests(run)
     tr.section("実ブラウザテスト（E2E）の受入記録")
+    kind = "準備確認（全必須 E2E の合格ではありません）" if run.preflight else ("はい" if run.required else "いいえ")
     tr.line(
-        f"必須受入検証: {'はい' if run.required else 'いいえ'} / 判定: {run.verdict} / "
+        f"必須受入検証: {kind} / 判定: {run.verdict} / "
         f"成功 {counts['passed']}・失敗 {counts['failed']}・スキップ {counts['skipped']}・未実施 {counts['not_run']}"
     )
     browser = run.browser or {}
     if browser:
         tr.line(f"ブラウザ: {browser.get('name')} {browser.get('version')}（{browser.get('mode')}） 画面寸法: {'、'.join(run.viewports)}")
+    launch = run.launch or {}
+    channel = config.getoption("browser_channel", default=None)
+    if channel or launch.get("error"):
+        tr.line(f"channel: {channel or 'なし'} / 起動したブラウザ: {launch.get('product') or '未起動'}"
+                + (f"（{launch['error']}）" if launch.get("error") else ""))
+    if run.preflight_missing:
+        tr.line("見つからない準備確認のテスト: " + "、".join(run.preflight_missing), red=True)
     for acceptance_id, result in run.id_results.items():
         c = result["counts"]
         tr.line(
@@ -367,3 +537,8 @@ def terminal_summary(terminalreporter, config: pytest.Config) -> None:
         tr.line(f"注: {run.playwright_reason}")
     if run.required and run.verdict != "合格":
         tr.line("必須受入検証は不合格です（スキップ・未実施・失敗を含むため）。", red=True, bold=True)
+    if run.preflight:
+        if run.verdict == "成功":
+            tr.line("準備確認は成功しました。全必須 E2E の合格ではありません（次に必須受入検証を実行します）。", bold=True)
+        else:
+            tr.line("準備確認は失敗しました（失敗・スキップ・0件・見つからないテストのいずれかを含むため）。", red=True, bold=True)

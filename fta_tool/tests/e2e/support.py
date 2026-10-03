@@ -7,6 +7,7 @@ tests/conftest.py instead of breaking collection.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
 import re
@@ -36,7 +37,9 @@ class E2EServer:
         self.process = process
         self.log_path = log_path
         self.db_path = workdir / "fta_tool.db"
-        self.http = httpx.Client(base_url=url, timeout=30, follow_redirects=False)
+        # The test server is on this PC: never through a proxy of the
+        # environment or (on Windows) the system settings (trust_env=False).
+        self.http = httpx.Client(base_url=url, timeout=30, follow_redirects=False, trust_env=False)
 
     # ----- lifecycle -----------------------------------------------------
     def reset(self) -> None:
@@ -206,10 +209,36 @@ class _Closing:
         self.conn.close()
 
 
+# pytest-playwright 0.7.1 keeps the screenshot and trace of a failed test in
+# <--output>/<the whole node id, slugified>/ (up to 122 characters here). Below
+# a deep --output on Windows that passes MAX_PATH (260) and the evidence is
+# lost, so there the folder is the test's name, shortened, with a hash of the
+# node id (still one folder per test).
+WINDOWS_EVIDENCE_NAME = 60
+
+
+def evidence_folder_name(nodeid: str, name: str, slugify, windows: bool) -> str:
+    if not windows:  # pytest-playwright's own name (its _truncate_file_name)
+        full = slugify(nodeid)
+        if len(full) < 256:
+            return full
+        return f"{full[:100]}-{hashlib.sha256(full.encode()).hexdigest()[:7]}-{full[-100:]}"
+    digest = hashlib.sha256(nodeid.encode("utf-8")).hexdigest()[:7]
+    return f"{slugify(name)[:WINDOWS_EVIDENCE_NAME]}-{digest}"
+
+
+# Ports of the user's own servers (the manual check uses 8001 and 8002,
+# uvicorn's default is 8000): a test server never takes one of them.
+RESERVED_PORTS = frozenset({8000, 8001, 8002})
+
+
 def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+    while True:
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        if port not in RESERVED_PORTS:
+            return port
 
 
 def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str, str]] = None) -> E2EServer:
@@ -235,7 +264,7 @@ def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str,
             log.close()
             raise RuntimeError(f"E2E server exited early:\n{log_path.read_text(encoding='utf-8', errors='replace')}")
         try:
-            if httpx.get(url + "/", timeout=2).status_code == 200:
+            if httpx.get(url + "/", timeout=2, trust_env=False).status_code == 200:
                 break
         except httpx.HTTPError:
             pass
@@ -253,6 +282,7 @@ class PageWatcher:
     def __init__(self, page, origin: str):
         self.origin = origin.rstrip("/")
         self.console_errors: list[str] = []
+        self.console_error_urls: list[str] = []  # where each came from (e.g. the resource that failed)
         self.page_errors: list[str] = []
         self.requests: list[str] = []
         self.foreign_requests: list[str] = []
@@ -265,6 +295,7 @@ class PageWatcher:
     def _on_console(self, message) -> None:
         if message.type == "error":
             self.console_errors.append(message.text)
+            self.console_error_urls.append((message.location or {}).get("url") or "")
 
     def _on_request(self, request) -> None:
         url = request.url
@@ -277,15 +308,25 @@ class PageWatcher:
         """Expected console errors, e.g. the browser's log of a 500 the test forced."""
         self._allowed.append(re.compile(pattern))
 
-    def problems(self) -> list[str]:
-        unexpected = [text for text in self.console_errors if not any(p.search(text) for p in self._allowed)]
+    START = (0, 0, 0)
+
+    def mark(self) -> tuple[int, int, int]:
+        """How far the page has been checked (for problems() of what came after)."""
+        return (len(self.console_errors), len(self.page_errors), len(self.foreign_requests))
+
+    def problems(self, since: tuple[int, int, int] = START) -> list[str]:
+        console, page, foreign = since
+        # The allowed patterns match the message only; its URL is shown, never matched.
+        unexpected = [f"{text}（{url}）" if url else text
+                      for text, url in zip(self.console_errors[console:], self.console_error_urls[console:])
+                      if not any(p.search(text) for p in self._allowed)]
         found = []
         if unexpected:
             found.append(f"コンソールのエラー: {unexpected}")
-        if self.page_errors:
-            found.append(f"ページのエラー（例外）: {self.page_errors}")
-        if self.foreign_requests:
-            found.append(f"外部へのリクエスト: {self.foreign_requests}")
+        if self.page_errors[page:]:
+            found.append(f"ページのエラー（例外）: {self.page_errors[page:]}")
+        if self.foreign_requests[foreign:]:
+            found.append(f"外部へのリクエスト: {self.foreign_requests[foreign:]}")
         return found
 
 
