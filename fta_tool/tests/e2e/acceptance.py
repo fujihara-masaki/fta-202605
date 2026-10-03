@@ -21,7 +21,8 @@ environment, the commit, the browser and the viewports (``--e2e-report``
 writes it as Markdown for the pull request); also when the run started and
 ended, the browser channel asked for and what was actually started
 (tests/e2e/conftest.py), the code-side .env, the test server and where the
-evidence of failures goes.
+evidence of failures goes. Every console error let through as the known
+favicon 404 (tests/e2e/support.py) is listed with its test, URL and message.
 
 This module is imported by tests/conftest.py and must not import Playwright.
 """
@@ -138,6 +139,10 @@ class RunState:
     duration_seconds: Optional[float] = None
     id_results: dict[str, dict] = field(default_factory=dict)
     verdict: Optional[str] = None
+    # The known favicon 404s let through (test, URL, message, the response),
+    # and the pages whose browser records (CDP) could not be read.
+    known_console: list[dict] = field(default_factory=list)
+    cdp_unavailable: list[str] = field(default_factory=list)
 
 
 STATE_KEY = pytest.StashKey[RunState]()
@@ -280,6 +285,17 @@ def on_report(item: pytest.Item, report: pytest.TestReport) -> None:
         record.reason = f"{report.when}: {_failure_reason(report)}"
     elif report.when == "call" and record.outcome is None:
         record.outcome = "passed"
+
+
+def add_known_console(item: pytest.Item, watchers: list) -> None:
+    """What the pages of a test let through as the known favicon 404, each
+    console error once (PageWatcher.known holds one entry per message)."""
+    run = state(item.config)
+    for watcher in watchers:
+        for index in sorted(watcher.known):
+            run.known_console.append({"nodeid": item.nodeid, **watcher.known[index]})
+        if watcher.cdp_error:
+            run.cdp_unavailable.append(f"{item.nodeid}：{watcher.cdp_error}")
 
 
 def _test_outcome(record: TestRecord) -> str:
@@ -482,6 +498,7 @@ def render_markdown(config: pytest.Config, run: RunState) -> str:
         *_environment_rows(config, run),
         f"| 画面寸法（CSS ピクセル） | {'、'.join(run.viewports) or '-'} |",
         f"| 結果（テスト単位） | 成功 {counts['passed']}・失敗 {counts['failed']}・スキップ {counts['skipped']}・未実施 {counts['not_run']} |",
+        f"| 既知の例外（favicon の 404） | {len(run.known_console)} 件（コンソールの確認から除いたもの。下の「既知の例外として除いたコンソールのエラー」） |",
         f"| 判定 | {_verdict_text(run)} |",
         "",
         "### 受入項目ごとの結果" + ("（準備確認で実行した項目だけ）" if run.preflight else ""),
@@ -499,10 +516,35 @@ def render_markdown(config: pytest.Config, run: RunState) -> str:
     for record in list(run.records.values()) + list(run.deselected.values()):
         reason = record.reason.replace("|", "／").replace("\n", " ")
         lines.append(f"| `{record.nodeid}` | {OUTCOME_LABELS[_test_outcome(record)]} | {reason} |")
+    lines += ["", *_known_console_lines(run)]
     if not run.playwright_available:
         lines += ["", f"注：{run.playwright_reason}"]
     lines.append("")
     return "\n".join(lines)
+
+
+def _known_console_lines(run: RunState) -> list[str]:
+    lines = [
+        "### 既知の例外として除いたコンソールのエラー（favicon の 404）",
+        "",
+        "既知事項に対する検証条件の限定変更です（2026-10-03 の利用者の判断）。favicon の不具合を直したものではありません"
+        "（favicon の実装とこの除外の廃止は PR-7）。",
+        "",
+        "除くのは、テストのサーバーと同じオリジンの `/favicon.ico`（クエリ・別のパス・別のオリジンは対象外）に対するブラウザ自身の要求"
+        "（CDP の種類 Other）の 404 で、コンソールの文・発生元の URL・ブラウザの記録（CDP の Log と応答）が1件ずつ一致するものだけです。"
+        "ほかの 404、500、通信の失敗、発生元の分からないエラーは失敗のままです。",
+        "",
+        f"件数：{len(run.known_console)}",
+    ]
+    if run.known_console:
+        lines += ["", "| テスト | 発生元の URL | 元のメッセージ | 応答（CDP） |", "|---|---|---|---|"]
+        for event in run.known_console:
+            lines.append(f"| `{event['nodeid']}` | `{event['url']}` | {_cell(event['text'])} "
+                         f"| {event['status']}、種類 {event['type']}（要求 {event['request_id']}） |")
+    if run.cdp_unavailable:
+        lines += ["", f"注：ブラウザの記録（CDP）を読めなかったページが {len(run.cdp_unavailable)} 件あります"
+                      "（そのページでは何も除いていません）：" + "、".join(_cell(t) for t in run.cdp_unavailable)]
+    return lines
 
 
 def terminal_summary(terminalreporter, config: pytest.Config) -> None:
@@ -527,6 +569,7 @@ def terminal_summary(terminalreporter, config: pytest.Config) -> None:
                 + (f"（{launch['error']}）" if launch.get("error") else ""))
     if run.preflight_missing:
         tr.line("見つからない準備確認のテスト: " + "、".join(run.preflight_missing), red=True)
+    tr.line(f"既知の例外（favicon の 404。コンソールの確認から除いたもの）: {len(run.known_console)} 件")
     for acceptance_id, result in run.id_results.items():
         c = result["counts"]
         tr.line(

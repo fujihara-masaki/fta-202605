@@ -13,7 +13,10 @@ anything with exit code 9 and a reason: no -BasePython for the setup, no
 venv yet, no -OutRoot, no code at -Source, a venv inside the code's folder
 or in a folder it did not make, changed code, another SHA, a code-side .env.
 With a stand-in for the venv's python (a POSIX shell script) a run writes a
-new record folder (run-info.md, the logs) and passes on pytest's exit code.
+new record folder (run-info.md, the logs) and passes on pytest's exit code;
+the record names the environment (development / the user's, -Environment)
+with the actual OS, never "the user's Windows PC" for a run elsewhere, and
+says that leftover processes were not checked outside Windows (never "none").
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -143,17 +147,31 @@ FAKE_PYTHON = r"""#!/bin/sh
 case "$1" in
   -c) echo "Python 3.11 / playwright 1.56.0 / pytest-playwright 0.7.1 / pytest 8.2.0"; exit 0 ;;
 esac
-report=""; previous=""
+report=""; label=""; previous=""
 for argument in "$@"; do
   if [ "$previous" = "--e2e-report" ]; then report="$argument"; fi
+  if [ "$previous" = "--e2e-env" ]; then label="$argument"; fi
   previous="$argument"
 done
-printf '%s\n' '| 判定 | 失敗（準備確認。全必須 E2E の合格ではありません） |' \
+printf '%s\n' "| 実行環境の区分 | $label |" \
+  '| 判定 | 失敗（準備確認。全必須 E2E の合格ではありません） |' \
   '| 結果（テスト単位） | 成功 6・失敗 1・スキップ 0・未実施 0 |' \
+  '| 既知の例外（favicon の 404） | 1 件（コンソールの確認から除いたもの） |' \
   '| 起動したブラウザ | Microsoft Corporation 154.0.0.0 |' > "$report"
 echo "tests/e2e/test_x.py::test_x[1280x800] FAILED [100%]"
 exit 1
 """
+
+
+@pytest.fixture
+def short_dir():
+    """A short folder for the records: the script refuses a record folder
+    over 150 characters (MAX_PATH on Windows), and tmp_path can be long."""
+    path = pathlib.Path(tempfile.mkdtemp(prefix="e2e-"))
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 @pytest.fixture
@@ -178,9 +196,9 @@ def code_and_venv(tmp_path):
     return source, venv, sha
 
 
-def test_a_run_writes_a_new_record_folder_and_passes_on_the_exit_code(run_script, code_and_venv, tmp_path):
+def test_a_run_writes_a_new_record_folder_and_passes_on_the_exit_code(run_script, code_and_venv, short_dir):
     source, venv, sha = code_and_venv
-    out = tmp_path / "記録 置き場"
+    out = short_dir / "記録 置き場"
     result = run_script("-Mode", "Preflight", "-Venv", str(venv), "-OutRoot", str(out), "-Source", str(source),
                         "-Channel", "msedge", "-ExpectedSha", sha[:7])
     assert result.returncode == 1, result.stdout + result.stderr  # pytest's exit code
@@ -190,7 +208,13 @@ def test_a_run_writes_a_new_record_folder_and_passes_on_the_exit_code(run_script
     assert f"| 対象 SHA | {sha}（未コミットの変更なし） |" in info
     assert "| 終了コード（pytest） | 1 |" in info
     assert "| 判定（e2e-report.md） | 失敗（準備確認。全必須 E2E の合格ではありません） |" in info
-    assert "| 残っていたプロセス | なし |" in info
+    assert "| 既知の例外（favicon の 404） | 1 件（e2e-report.md の「既知の例外として除いたコンソールのエラー」） |" in info
+    # Not Windows: the leftover processes are not checked, and the record says so (never "none").
+    assert "| 残っていたプロセス | 未確認（Windows 以外では、このスクリプトはプロセスを確認しません） |" in info
+    # Where it ran: the development environment with the actual OS, never "the user's Windows PC".
+    label = re.search(r"^\| 実行環境の区分 \| (.+) \|$", (runs[0] / "e2e-report.md").read_text(encoding="utf-8"), re.M).group(1)
+    assert label.startswith("開発環境（") and label.endswith("、Microsoft Edge、headed）") and "Windows" not in label
+    assert f"| 実行環境の区分 | {label}（-Environment 未指定のため OS から判断） |" in info
     assert "FAILED" in (runs[0] / "pytest-output.log").read_text(encoding="utf-8")
     assert "判定             : 失敗" in result.stdout and "Microsoft Corporation 154.0.0.0" in result.stdout
 
@@ -214,3 +238,15 @@ def test_a_run_stops_for_changed_code_another_sha_or_a_code_side_env(run_script,
     result = run_script(*args)
     assert result.returncode == ABORT and "未コミットの変更" in result.stdout
     assert not out.exists()
+
+
+def test_the_environment_is_recorded_as_given(run_script, code_and_venv, short_dir):
+    source, venv, sha = code_and_venv
+    out = short_dir / "out"
+    args = ("-Mode", "Preflight", "-Venv", str(venv), "-OutRoot", str(out), "-Source", str(source), "-Channel", "msedge")
+    result = run_script(*args, "-Environment", "Windows")
+    assert result.returncode == ABORT and "-Environment" in result.stdout and not out.exists()
+    result = run_script(*args, "-Environment", "User")
+    assert result.returncode == 1, result.stdout + result.stderr
+    info = (next(out.iterdir()) / "run-info.md").read_text(encoding="utf-8")
+    assert re.search(r"^\| 実行環境の区分 \| 利用者環境（.+、Microsoft Edge、headed）（-Environment User） \|$", info, re.M), info

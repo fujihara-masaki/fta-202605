@@ -8,7 +8,9 @@
 * page: pytest-playwright's page, run at the plan's base viewports
   (1280x800 and 1440x900; plan 8.0). A console error, an uncaught page error
   or a request to another origin fails the test (E-X01 is checked on every
-  test as well as in its own test).
+  test as well as in its own test). The one exception is the browser's own
+  404 for /favicon.ico of the test's server, matched with the browser's
+  records (tests/e2e/support.py); each one is listed in the report.
 * browser: skipped with an explanation when the browser cannot be started
   (a failure in the required run and the preflight, see
   tests/e2e/acceptance.py). With --browser-channel (chrome, msedge) Playwright
@@ -173,10 +175,21 @@ def pytest_runtest_call(item):
     result = yield  # a test that failed already is reported as it is
     watcher = item.stash.get(WATCHER_KEY, None)
     if watcher is not None:
-        problems = watcher.problems()
-        item.stash[CHECKED_KEY] = watcher.mark()
+        checked = watcher.mark()  # before the check, which may wait for the browser's records
+        problems = watcher.problems(PageWatcher.START, checked)
+        item.stash[CHECKED_KEY] = checked
         assert not problems, " / ".join(problems)
     return result
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item, nextitem):
+    """After every fixture's check: the known favicon 404s the test's pages
+    let through (tests/e2e/support.py), each once, go to the report."""
+    try:
+        return (yield)
+    finally:
+        acceptance.add_known_console(item, PageWatcher.take_made())
 
 
 @pytest.fixture

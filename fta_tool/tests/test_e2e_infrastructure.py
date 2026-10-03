@@ -11,7 +11,13 @@ the check in Google Chrome of 2026-10-03, see tests/e2e/README.md).
   for it;
 * the test servers never take the ports of the user's own servers, and are
   reached without a proxy;
-* the evidence folder of a failed test stays short on Windows (MAX_PATH).
+* the evidence folder of a failed test stays short on Windows (MAX_PATH);
+* the known favicon 404 (the user's decision of 2026-10-03, PR-7 removes
+  it): only the browser's own 404 for /favicon.ico of the test's server,
+  matched with the browser's records, is let through; the same message of
+  another resource, origin, status, type or without its origin or records
+  fails; another error next to it fails the test; each one is recorded
+  once; and the exception ends as soon as the app has an icon.
 """
 
 from __future__ import annotations
@@ -251,3 +257,267 @@ def test_the_test_server_is_reached_without_a_proxy(tmp_path, monkeypatch):
         assert server.http.trust_env is False
     finally:
         server.http.close()
+
+
+# ----- the known favicon 404 (the user's decision of 2026-10-03) ------------------
+
+ORIGIN = "http://127.0.0.1:43210"
+FAVICON = ORIGIN + "/favicon.ico"
+REASONS = {404: "Not Found", 500: "Internal Server Error"}
+
+
+class FakeCDP:
+    def __init__(self):
+        self.handlers = {}
+
+    def on(self, name, handler):
+        self.handlers[name] = handler
+
+    def send(self, method, params=None):
+        return {}
+
+
+class FakeBrowserPage:
+    """What PageWatcher uses of a page; cdp None: no CDP session (not Chromium)."""
+
+    def __init__(self, cdp):
+        self.handlers = {}
+        self.cdp = cdp
+        self.waits = 0
+        self.on_wait = None
+        self.context = types.SimpleNamespace(on=lambda name, handler: None, new_cdp_session=self._cdp_session)
+
+    def _cdp_session(self, page):
+        if self.cdp is None:
+            raise RuntimeError("CDP session is only available in Chromium")
+        return self.cdp
+
+    def on(self, name, handler):
+        self.handlers[name] = handler
+
+    def wait_for_timeout(self, milliseconds):
+        self.waits += 1
+        if self.on_wait:
+            self.on_wait()
+
+
+@pytest.fixture(autouse=True)
+def _no_watcher_left():
+    yield
+    support.PageWatcher.take_made()  # the fakes never reach a report of the E2E tests
+
+
+def watched(cdp: bool = True):
+    page = FakeBrowserPage(FakeCDP() if cdp else None)
+    return support.PageWatcher(page, ORIGIN), page
+
+
+def console_error(page, text: str, url: str = "") -> None:
+    page.handlers["console"](types.SimpleNamespace(type="error", text=text, location={"url": url} if url else {}))
+
+
+def failed_load(page, url: str, *, status: int = 404, kind: str = "Other", request_id: str = "7.1",
+                console: bool = True, log: bool = True, response: bool = True) -> None:
+    """What the browser reports for a resource that failed to load, as
+    Chromium 141 and Edge 154 did (the response, its log entry, the console)."""
+    text = f"Failed to load resource: the server responded with a status of {status} ({REASONS[status]})"
+    if response and page.cdp:
+        page.cdp.handlers["Network.responseReceived"](
+            {"requestId": request_id, "type": kind, "response": {"url": url, "status": status}})
+    if log and page.cdp:
+        page.cdp.handlers["Log.entryAdded"]({"entry": {
+            "source": "network", "level": "error", "text": text, "url": url, "networkRequestId": request_id}})
+    if console:
+        console_error(page, text, url)
+
+
+def test_the_browsers_own_favicon_404_of_the_tests_server_is_let_through():
+    watcher, page = watched()
+    failed_load(page, FAVICON)
+    assert watcher.problems() == []
+    assert watcher.known == {0: {"url": FAVICON, "text": support.FAVICON_404_TEXT, "status": 404,
+                                 "type": "Other", "request_id": "7.1"}}
+
+
+@pytest.mark.parametrize("path", [
+    "/static/js/pages/edit.js", "/static/css/edit.css", "/analyses/1/nodes", "/favicon.ico?v=1",
+    "/favicon.ico/", "/static/favicon.ico", "/Favicon.ico", "/favicon.png",
+])
+def test_the_same_404_of_another_resource_fails(path):
+    watcher, page = watched()
+    failed_load(page, ORIGIN + path)
+    assert watcher.problems() == [f"コンソールのエラー: ['{support.FAVICON_404_TEXT}（{ORIGIN}{path}）']"]
+    assert watcher.known == {}
+    assert watcher.responses == {}  # only the response of <origin>/favicon.ico is kept
+
+
+def test_another_message_of_the_favicon_fails():
+    watcher, page = watched()  # e.g. a 404 without its reason phrase: not the known message
+    text = "Failed to load resource: the server responded with a status of 404 ()"
+    page.cdp.handlers["Network.responseReceived"](
+        {"requestId": "7.1", "type": "Other", "response": {"url": FAVICON, "status": 404}})
+    page.cdp.handlers["Log.entryAdded"]({"entry": {"source": "network", "level": "error", "text": text,
+                                                   "url": FAVICON, "networkRequestId": "7.1"}})
+    console_error(page, text, FAVICON)
+    assert len(watcher.problems()) == 1 and watcher.known == {}
+
+
+@pytest.mark.parametrize("kind", ["Fetch", "Image", "Script", "XHR"])
+def test_the_favicon_loaded_by_the_page_fails(kind):
+    watcher, page = watched()
+    failed_load(page, FAVICON, kind=kind)
+    assert len(watcher.problems()) == 1 and watcher.known == {}
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1:43211/favicon.ico", "http://localhost:43210/favicon.ico",
+                                 "https://127.0.0.1:43210/favicon.ico", "http://example.com/favicon.ico"])
+def test_a_favicon_of_another_origin_fails(url):
+    watcher, page = watched()
+    failed_load(page, url)
+    assert len(watcher.problems()) == 1 and watcher.known == {}
+
+
+def test_a_favicon_500_a_failed_connection_or_another_answer_fails():
+    watcher, page = watched()
+    failed_load(page, FAVICON, status=500, request_id="7.1")
+    refused = "Failed to load resource: net::ERR_CONNECTION_REFUSED"  # no response at all
+    page.cdp.handlers["Log.entryAdded"]({"entry": {"source": "network", "level": "error", "text": refused,
+                                                   "url": FAVICON, "networkRequestId": "7.2"}})
+    console_error(page, refused, FAVICON)
+    # The console says 404 while the browser's record of the response says 500.
+    page.cdp.handlers["Network.responseReceived"](
+        {"requestId": "7.3", "type": "Other", "response": {"url": FAVICON, "status": 500}})
+    page.cdp.handlers["Log.entryAdded"]({"entry": {"source": "network", "level": "error",
+                                                   "text": support.FAVICON_404_TEXT, "url": FAVICON,
+                                                   "networkRequestId": "7.3"}})
+    console_error(page, support.FAVICON_404_TEXT, FAVICON)
+    problems = watcher.problems()
+    assert len(problems) == 1 and problems[0].count(f"（{FAVICON}）") == 3
+    assert watcher.known == {}
+
+
+def test_without_its_origin_or_the_browsers_records_the_404_fails():
+    watcher, page = watched()
+    console_error(page, support.FAVICON_404_TEXT)  # where it came from is not known
+    assert watcher.problems() == [f"コンソールのエラー: ['{support.FAVICON_404_TEXT}']"] and watcher.known == {}
+    for missing in ({"log": False}, {"response": False}):
+        watcher, page = watched()
+        failed_load(page, FAVICON, **missing)
+        assert len(watcher.problems()) == 1 and watcher.known == {}
+        assert page.waits == 20  # waited 2 seconds for the browser's records, then failed
+    watcher, page = watched(cdp=False)
+    failed_load(page, FAVICON)
+    assert len(watcher.problems()) == 1 and watcher.known == {}
+    assert "Chromium" in watcher.cdp_error and page.waits == 0
+
+
+def test_the_browsers_records_coming_a_moment_later_are_waited_for():
+    watcher, page = watched()
+    failed_load(page, FAVICON, log=False, response=False)  # the console message comes first
+
+    def records_arrive():
+        if page.waits == 3:
+            failed_load(page, FAVICON, console=False)
+
+    page.on_wait = records_arrive
+    assert watcher.problems() == [] and list(watcher.known) == [0] and page.waits == 3
+
+
+def test_each_console_error_is_paired_with_the_browsers_log_in_order():
+    watcher, page = watched()  # the page fetches /favicon.ico, then the browser asks for its icon
+    failed_load(page, FAVICON, kind="Fetch", request_id="7.1")
+    failed_load(page, FAVICON, kind="Other", request_id="7.2")
+    assert len(watcher.problems()) == 1 and list(watcher.known) == [1] and watcher.known[1]["request_id"] == "7.2"
+    watcher, page = watched()  # the other way round
+    failed_load(page, FAVICON, kind="Other", request_id="7.1")
+    failed_load(page, FAVICON, kind="Fetch", request_id="7.2")
+    assert len(watcher.problems()) == 1 and list(watcher.known) == [0]
+    watcher, page = watched()  # two console errors, one log entry: one is let through
+    failed_load(page, FAVICON, request_id="7.1")
+    console_error(page, support.FAVICON_404_TEXT, FAVICON)
+    assert len(watcher.problems()) == 1 and list(watcher.known) == [0]
+
+
+def test_the_known_favicon_next_to_another_error_fails_by_the_other():
+    watcher, page = watched()
+    failed_load(page, FAVICON, request_id="7.1")
+    failed_load(page, ORIGIN + "/static/js/pages/edit.js", kind="Script", request_id="7.2")
+    page.handlers["pageerror"](RuntimeError("TypeError: x is undefined"))
+    assert watcher.problems() == [
+        f"コンソールのエラー: ['{support.FAVICON_404_TEXT}（{ORIGIN}/static/js/pages/edit.js）']",
+        "ページのエラー（例外）: ['TypeError: x is undefined']",
+    ]
+    assert list(watcher.known) == [0]
+
+
+def test_each_known_exception_is_recorded_once():
+    config = configured(e2e_required=True)
+    item = types.SimpleNamespace(nodeid="tests/e2e/test_x.py::test_x[1280x800]", config=config)
+    watcher, page = watched()
+    watcher.allow_console_error(r"status of 404")  # a test's own allowance does not hide it from the record
+    failed_load(page, FAVICON, request_id="7.1")
+    checked = watcher.mark()
+    assert watcher.problems(support.PageWatcher.START, checked) == []  # at the end of the test
+    failed_load(page, FAVICON, request_id="7.2")  # one more, later
+    assert watcher.problems(checked) == []  # at its teardown
+    assert watcher.problems() == [] and watcher.problems() == []  # checked again
+    tab, tab_page = watched()  # another page of the same test
+    failed_load(tab_page, FAVICON, request_id="8.1")
+    failed_load(tab_page, ORIGIN + "/static/app.js", kind="Script", request_id="8.2")
+    assert len(tab.problems()) == 1  # the test fails by the other error ...
+    with pytest.raises(AssertionError):  # ... (here: in its teardown) and still records its known one
+        teardown_of(item, error=AssertionError("コンソールのエラー"))
+    teardown_of(item)  # the next test's teardown: nothing of this test again
+    run = acceptance.state(config)
+    assert [(e["nodeid"], e["request_id"]) for e in run.known_console] == [
+        (item.nodeid, "7.1"), (item.nodeid, "7.2"), (item.nodeid, "8.1")]
+
+
+def teardown_of(item, error=None) -> None:
+    """tests/e2e/conftest.py's pytest_runtest_teardown, around a teardown
+    that went well (error None) or raised `error`."""
+    from tests.e2e import conftest
+
+    hook = conftest.pytest_runtest_teardown(item, None)
+    next(hook)
+    try:
+        if error is None:
+            hook.send(None)
+        else:
+            hook.throw(error)
+    except StopIteration:
+        pass
+
+
+def test_the_record_lists_each_known_exception():
+    config = configured(e2e_required=True)
+    run = acceptance.state(config)
+    text = acceptance.render_markdown(config, run)
+    assert "| 既知の例外（favicon の 404） | 0 件" in text and "件数：0" in text
+    run.known_console.append({"nodeid": "tests/e2e/test_x.py::test_x[1280x800]", "url": FAVICON,
+                              "text": support.FAVICON_404_TEXT, "status": 404, "type": "Other", "request_id": "7.1"})
+    run.cdp_unavailable.append("tests/e2e/test_y.py::test_y[1280x800]：CDP session is only available in Chromium")
+    text = acceptance.render_markdown(config, run)
+    assert "| 既知の例外（favicon の 404） | 1 件" in text and "件数：1" in text
+    assert (f"| `tests/e2e/test_x.py::test_x[1280x800]` | `{FAVICON}` | {support.FAVICON_404_TEXT} "
+            "| 404、種類 Other（要求 7.1） |") in text
+    assert "検証条件の限定変更" in text and "直したものではありません" in text and "PR-7" in text
+    assert "ブラウザの記録（CDP）を読めなかったページが 1 件" in text
+
+
+def test_the_favicon_exception_lasts_only_while_the_app_has_no_icon():
+    """PR-7 adds the icon and removes the exception (tests/e2e/support.py).
+    As soon as the app declares an icon or answers /favicon.ico this fails,
+    so that a 404 of an icon the app has is never let through."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    templates = support.FTA_TOOL_DIR / "app" / "templates"
+    declared = [str(path.relative_to(templates)) for path in sorted(templates.rglob("*.html"))
+                if re.search(r"""rel\s*=\s*["'][^"']*\bicon\b""", path.read_text(encoding="utf-8"), re.IGNORECASE)]
+    with TestClient(app) as client:
+        status = client.get("/favicon.ico").status_code
+    assert declared == [] and status == 404, (
+        "アプリに favicon ができました。tests/e2e/support.py の favicon の 404 の例外（FAVICON_404_TEXT など）と"
+        f"この確認を削除してください（宣言：{declared}、/favicon.ico：{status}）")

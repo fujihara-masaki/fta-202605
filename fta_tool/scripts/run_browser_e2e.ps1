@@ -49,6 +49,11 @@
 .PARAMETER ExpectedSha
     確認する SHA（7 桁以上）。コードの HEAD と一致しなければ止まる。
 
+.PARAMETER Environment
+    実行環境の区分：User（利用者環境）または Dev（開発環境）。省略すると、
+    Windows では User、それ以外では Dev。記録（e2e-report.md の「実行環境の
+    区分」と run-info.md）には、この区分と実際の OS を書きます。
+
 .PARAMETER SlowMo
     失敗の調査用。操作ごとに待つミリ秒（既定 0。正式な確認では使わない）。
 
@@ -66,6 +71,9 @@
       止められた場合は、そのまま報告してください。
     - 終わったときに、この実行で起動して残っているプロセス（pytest の子孫で、
       作成時刻も一致するもの）だけを止めます。名前やポート番号では止めません。
+      プロセスの確認は Windows だけで行い、記録には「確認して0件」「あり
+      （止めたもの）」「未確認」「取得失敗」を区別して書きます（Windows 以外
+      では「未確認」）。
     - このファイルは UTF-8 BOM 付き・CRLF で保存します
       （tests/test_run_browser_e2e_script.py が検査します）。
 #>
@@ -78,6 +86,7 @@ param(
     [string]$OutRoot = "",
     [ValidateSet("chrome", "msedge")][string]$Channel = "chrome",
     [string]$ExpectedSha = "",
+    [string]$Environment = "",
     [ValidateRange(0, 5000)][int]$SlowMo = 0,
     [switch]$DryRun
 )
@@ -89,7 +98,11 @@ $AbortCode = 9
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $OnWindows = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
 $ChannelNames = @{ "chrome" = "Google Chrome"; "msedge" = "Microsoft Edge" }
+$EnvironmentNames = @{ "User" = "利用者環境"; "Dev" = "開発環境" }
 $MaxRunDirLength = 150  # a failed test's evidence lies up to ~100 characters deeper (MAX_PATH 260)
+# What the check of leftover processes saw (Windows only): snapshots taken
+# while pytest ran, and the first error of a snapshot.
+$ProcessCheck = @{ Watched = 0; Failed = "" }
 
 # --- helpers --------------------------------------------------------------------
 
@@ -157,10 +170,12 @@ function Find-Browser([string]$Name) {
 }
 
 function Get-ProcessSnapshot {
+    # Win32_Process (Windows only). A failure is remembered, never taken for "none".
     if (-not $OnWindows) { return @() }
     try {
         return @(Get-CimInstance -ClassName Win32_Process -Property ProcessId, ParentProcessId, Name, CreationDate -ErrorAction Stop)
     } catch {
+        if (-not $ProcessCheck.Failed) { $ProcessCheck.Failed = $_.Exception.Message }
         return @()
     }
 }
@@ -180,6 +195,7 @@ function Watch-Descendants([System.Diagnostics.Process]$Root, [hashtable]$Seen) 
     $rootProc = $byId[$Root.Id]
     if ($null -ne $rootProc -and (Test-SameTime $rootProc.CreationDate $Root.StartTime)) {
         $known[$Root.Id] = $rootProc.CreationDate
+        $ProcessCheck.Watched++
     }
     foreach ($id in @($Seen.Keys)) {
         $proc = $byId[[int]$id]
@@ -203,8 +219,9 @@ function Watch-Descendants([System.Diagnostics.Process]$Root, [hashtable]$Seen) 
 function Stop-Leftovers([hashtable]$Seen) {
     # Stop what this run started and is still running (same id and creation time).
     $stopped = @()
-    if ($Seen.Count -eq 0) { return $stopped }
+    if (-not $OnWindows -or $ProcessCheck.Watched -eq 0) { return $stopped }
     $snapshot = @(Get-ProcessSnapshot)
+    if ($snapshot.Count -eq 0) { return $stopped }  # the error is in $ProcessCheck.Failed
     foreach ($proc in $snapshot) {
         $id = [int]$proc.ProcessId
         if (-not $Seen.ContainsKey($id)) { continue }
@@ -217,6 +234,28 @@ function Stop-Leftovers([hashtable]$Seen) {
         }
     }
     return $stopped
+}
+
+function Get-LeftoverText([string[]]$Stopped, [int]$SeenCount) {
+    # Checked and none / some (stopped) / not checked / could not be checked.
+    if (-not $OnWindows) { return "未確認（Windows 以外では、このスクリプトはプロセスを確認しません）" }
+    $found = if ($Stopped.Count -gt 0) { "。止めたもの：" + ($Stopped -join "、") } else { "" }
+    if ($ProcessCheck.Failed) { return "取得失敗（プロセスの一覧を取得できませんでした：{0}）{1}" -f $ProcessCheck.Failed, $found }
+    if ($ProcessCheck.Watched -eq 0) { return "未確認（実行中のプロセスを確認する前に終わりました）" }
+    if ($Stopped.Count -gt 0) { return "あり：{0} 件{1}" -f $Stopped.Count, $found }
+    return "確認して0件（実行中に記録した {0} 個のプロセスは、終了後に残っていませんでした。記録は開始の約2秒後と、その後約10秒ごと）" -f $SeenCount
+}
+
+function Get-OsText {
+    if ($OnWindows) {
+        try {
+            $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+            return "{0} {1}" -f $os.Caption, $os.Version
+        } catch {
+            return [System.Environment]::OSVersion.VersionString
+        }
+    }
+    return ([System.Runtime.InteropServices.RuntimeInformation]::OSDescription).Trim()
 }
 
 function Read-SharedText([string]$Path) {
@@ -318,6 +357,9 @@ function Invoke-Setup([hashtable]$S) {
 # --- Preflight / Full -------------------------------------------------------------------
 
 function Invoke-Run([hashtable]$S) {
+    if ($Environment -and @("User", "Dev") -notcontains $Environment) {
+        Stop-Run "-Environment には User（利用者環境）か Dev（開発環境）を指定してください：$Environment"
+    }
     if (-not (Test-Path -LiteralPath $S.Python -PathType Leaf)) {
         Stop-Run "自動確認専用の venv がありません：$($S.Python)。先に -Mode Setup を実行してください"
     }
@@ -368,7 +410,11 @@ function Invoke-Run([hashtable]$S) {
         Evidence = Join-Path $runDir "failures"
     }
     $kind = if ($Mode -eq "Full") { "全必須 E2E（--e2e-required）" } else { "準備確認（--e2e-preflight。全必須 E2E の合格ではありません）" }
-    $label = "利用者の Windows PC（{0}、headed）" -f $ChannelNames[$Channel]
+    # Where it runs: the user's environment or the development one, with the actual OS.
+    $envKind = if ($Environment) { $Environment } elseif ($OnWindows) { "User" } else { "Dev" }
+    $envHow = if ($Environment) { "-Environment $Environment" } else { "-Environment 未指定のため OS から判断" }
+    $osText = Get-OsText
+    $label = "{0}（{1}、{2}、headed）" -f $EnvironmentNames[$envKind], $osText, $ChannelNames[$Channel]
     $pytestArgs = @("-m", "pytest", (Join-Path $S.Source "tests"), "-m", "e2e")
     $pytestArgs += $(if ($Mode -eq "Full") { "--e2e-required" } else { "--e2e-preflight" })
     $pytestArgs += @("--browser", "chromium", "--browser-channel", $Channel, "--headed",
@@ -380,6 +426,7 @@ function Invoke-Run([hashtable]$S) {
     $commandLine = ($pytestArgs | ForEach-Object { ConvertTo-Argument $_ }) -join " "
 
     Write-Host ("== 実ブラウザテスト（E2E）：{0} ==" -f $kind)
+    Write-Host ("  実行環境の区分   : {0}（{1}）" -f $label, $envHow)
     Write-Host ("  コード（Source） : {0}" -f $S.Source)
     Write-Host ("  対象 SHA         : {0}（未コミットの変更なし{1}）" -f $head, $(if ($ExpectedSha) { "、-ExpectedSha と一致" } else { "、-ExpectedSha 未指定" }))
     Write-Host ("  コード側の .env  : なし（{0}）" -f $envFile)
@@ -396,6 +443,7 @@ function Invoke-Run([hashtable]$S) {
     $started = Get-Date
     $info = [ordered]@{
         "種類" = $kind
+        "実行環境の区分" = "$label（$envHow）"
         "開始" = $started.ToString("yyyy-MM-dd HH:mm:ss zzz")
         "対象 SHA" = "$head（未コミットの変更なし）"
         "期待した SHA" = $(if ($ExpectedSha) { $ExpectedSha } else { "未指定" })
@@ -405,7 +453,7 @@ function Invoke-Run([hashtable]$S) {
         "ブラウザの channel" = $Channel
         "ブラウザの実行ファイル" = $browserText
         "表示" = $(if ($SlowMo -gt 0) { "headed、slowmo $SlowMo ms（調査用）" } else { "headed、slowmo なし" })
-        "OS" = $(if ($OnWindows) { (Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Caption) $($_.Version)" }) } else { [System.Environment]::OSVersion.VersionString })
+        "OS" = $osText
         "PowerShell" = $PSVersionTable.PSVersion.ToString()
         "実行コマンド" = "$($S.Python) $commandLine"
         "状態" = "実行中"
@@ -435,7 +483,7 @@ function Invoke-Run([hashtable]$S) {
         $ticks = 0
         while (-not $process.WaitForExit(2000)) {
             $ticks++
-            if ($ticks % 5 -eq 0) { Watch-Descendants $process $seen }
+            if ($OnWindows -and ($ticks -eq 1 -or $ticks % 5 -eq 0)) { Watch-Descendants $process $seen }
             if ($ticks % 15 -eq 0) {
                 $text = Read-SharedText $paths.Output
                 $done = ([regex]::Matches($text, ' (PASSED|FAILED|ERROR|SKIPPED)\s+\[')).Count
@@ -463,8 +511,10 @@ function Invoke-Run([hashtable]$S) {
         $info["終了コード（pytest）"] = $(if ($null -ne $exitCode) { "$exitCode" } else { "-" })
         $info["判定（e2e-report.md）"] = $(if ($verdict) { $verdict } else { "（e2e-report.md がありません）" })
         $info["結果（テスト単位）"] = $(Get-ReportValue $paths.Report "結果（テスト単位）")
+        $knownText = Get-ReportValue $paths.Report "既知の例外（favicon の 404）"
+        $info["既知の例外（favicon の 404）"] = $(if ($knownText -and $knownText -match '^(\d+) 件') { "{0} 件（e2e-report.md の「既知の例外として除いたコンソールのエラー」）" -f $Matches[1] } else { $knownText })
         $info["起動したブラウザ"] = $(Get-ReportValue $paths.Report "起動したブラウザ")
-        $info["残っていたプロセス"] = $(if ($leftovers.Count -gt 0) { "止めたもの：" + ($leftovers -join "、") } else { "なし" })
+        $info["残っていたプロセス"] = Get-LeftoverText $leftovers $seen.Count
         Save-RunInfo $paths.Info $info
     }
 
@@ -479,6 +529,7 @@ function Invoke-Run([hashtable]$S) {
     Write-Host ("  判定             : {0}" -f $verdict) -ForegroundColor $(if ($ok) { "Green" } else { "Red" })
     Write-Host ("  終了コード       : {0}" -f $exitCode)
     Write-Host ("  結果（テスト単位）: {0}" -f $info["結果（テスト単位）"])
+    Write-Host ("  既知の例外       : {0}" -f $info["既知の例外（favicon の 404）"])
     Write-Host ("  起動したブラウザ : {0}" -f $browser)
     Write-Host ("  所要時間         : {0}" -f $info["所要時間"])
     Write-Host ("  記録フォルダ     : {0}" -f $runDir)
@@ -489,7 +540,7 @@ function Invoke-Run([hashtable]$S) {
     if (Test-Path -LiteralPath $paths.Evidence) {
         Write-Host  "    failures            失敗したテストの画面（png）と trace（trace.zip）"
     }
-    if ($leftovers.Count -gt 0) { Write-Host ("  残っていたプロセスを止めました：{0}" -f ($leftovers -join "、")) }
+    Write-Host ("  残っていたプロセス: {0}" -f $info["残っていたプロセス"])
     if ($null -eq $exitCode) { return 2 }
     return [int]$exitCode
 }
