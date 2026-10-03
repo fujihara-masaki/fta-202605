@@ -24,6 +24,14 @@ stub_control.json in the working directory ({"mode": ..., "delay_seconds": ...})
   no_candidates  return no factor
   error          raise RuntimeError (the API answers success=false)
 Every call is appended to stub_calls.jsonl.
+
+Faults of the edit screen's parent-link checks (PR-3, J-25), per test from
+the same file (the functions are wrapped, the data is never changed):
+  "integrity": "lookup_error"   crud.get_cross_analysis_links fails, as if
+                                the lookups could not be made
+  "integrity_scope_limit": N    the deletion walk of
+                                detail_view.build_detail_view gives up after
+                                N factors, as if it could not be completed
 """
 
 from __future__ import annotations
@@ -160,6 +168,35 @@ def install_guards(main_module, workdir: pathlib.Path) -> None:
     httpx.AsyncClient.send = blocked_async_send
 
 
+def install_integrity_faults(main_module, workdir: pathlib.Path) -> None:
+    """Wrap the lookups and the view of the edit screen for fault injection."""
+    crud = main_module.crud
+    detail_view = main_module.detail_view
+    original_links = crud.get_cross_analysis_links
+    original_build = detail_view.build_detail_view
+
+    def control() -> dict:
+        path = workdir / "stub_control.json"
+        try:
+            return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except (ValueError, OSError):
+            return {}
+
+    def links(db, analysis_id):
+        if control().get("integrity") == "lookup_error":
+            raise RuntimeError("E2Eスタブ：親子関係の確認に必要な情報を取得できません（検証用）")
+        return original_links(db, analysis_id)
+
+    def build(analysis, nodes, links, **kwargs):
+        limit = control().get("integrity_scope_limit")
+        if limit is not None:
+            kwargs["scope_limit"] = int(limit)
+        return original_build(analysis, nodes, links, **kwargs)
+
+    crud.get_cross_analysis_links = links
+    detail_view.build_detail_view = build
+
+
 def _check_working_directory() -> pathlib.Path:
     workdir = pathlib.Path(os.environ["FTA_E2E_WORKDIR"]).resolve()
     cwd = pathlib.Path.cwd().resolve()
@@ -183,6 +220,7 @@ def main() -> None:
 
     os.environ.update(PINNED_ENV)
     install_guards(main_module, workdir)
+    install_integrity_faults(main_module, workdir)
 
     import uvicorn
 

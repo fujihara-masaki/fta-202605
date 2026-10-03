@@ -144,6 +144,7 @@ def client(tmp_path, monkeypatch):
     app.dependency_overrides[get_db] = _override_get_db
     with TestClient(app) as c:
         c.SessionLocal = TestingSessionLocal
+        c.engine = engine
         yield c
     app.dependency_overrides.clear()
 
@@ -491,14 +492,262 @@ def test_shared_frame_on_every_screen(client):
         styles = [s.attrs.get("href") for s in root.find_all("link", rel="stylesheet")]
         assert "/static/js/common/boot.js" in scripts
         assert "/static/css/tokens.css" in styles
-        # Screens not migrated yet keep the legacy script, stylesheet and toast.
+        # The edit screen still loads the legacy script and stylesheet (PR-3);
+        # its messages use the shared notifications, so no page renders the
+        # old toast any more (判断4).
         assert ("/static/app.js" in scripts) is legacy, path
         assert ("/static/style.css" in styles) is legacy, path
-        assert bool(root.find_all(id="toast")) is legacy, path
+        assert not root.find_all(id="toast"), path
 
 
 def test_javascript_is_served_with_a_javascript_mime_type(client):
-    for path in ("/static/js/common/boot.js", "/static/js/pages/list.js", "/static/js/pages/new.js", "/static/app.js"):
+    edit_modules = sorted((STATIC_DIR / "js" / "pages" / "edit").glob("*.js"))
+    assert edit_modules
+    paths = ["/static/js/common/boot.js", "/static/js/pages/list.js", "/static/js/pages/new.js",
+             "/static/js/pages/edit.js", "/static/app.js"]
+    paths += [f"/static/js/pages/edit/{module.name}" for module in edit_modules]
+    for path in paths:
         response = client.get(path)
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/javascript"), path
+
+
+# ----- T-04 -------------------------------------------------------------------
+# Analysis edit (B), PR-3 skeleton: regions, the embedded summary, data-node-id
+# on every representation, broken parent links (J-25), tags (J-14), counts.
+
+EDIT_REGIONS = {"steps", "nav", "work-2", "work-3", "work-4", "work-anomalies", "tree", "table"}
+SUMMARY_KEYS = {
+    "id", "parentId", "level", "title", "description", "judgement", "directCause", "ai", "warning", "memo",
+    "kind", "label", "notes", "anomalyRoot", "canParent", "parentReason", "delete",
+}
+
+
+def _raw_node(client, analysis_id, level, parent_id=None, *, title, judgement="unknown", description="",
+              ai=False, warning="", memo="", direct="unknown"):
+    """A factor inserted directly (parent links the API never makes)."""
+    with client.engine.begin() as conn:
+        result = conn.execute(models.Node.__table__.insert().values(
+            analysis_id=analysis_id, parent_id=parent_id, level=level, title=title,
+            description=description, ai_generated=ai, user_judgement=judgement,
+            direct_cause_status=direct, display_order=0, memo=memo, warning_flags=warning,
+        ))
+        return result.inserted_primary_key[0]
+
+
+def _set_parent(client, node_id, parent_id):
+    with client.engine.begin() as conn:
+        conn.execute(models.Node.__table__.update().where(models.Node.id == node_id).values(parent_id=parent_id))
+
+
+def _edit_page(client, analysis_id):
+    response = client.get(f"/analyses/{analysis_id}")
+    assert response.status_code == 200
+    return response.text, parse(response.text)
+
+
+def _summary(root):
+    return json.loads(root.find("script", id="analysis-data").text())
+
+
+def test_T04_edit_regions_steps_tabs_and_moved_inputs(client):
+    analysis_id = _create(client, "編集画面の構造", top_event="頂上事象",
+                          context='{"system_context": "構成", "incident_context": "状況"}')
+    html, root = _edit_page(client, analysis_id)
+
+    assert {e.attrs["data-region"] for e in root.find_all(**{"data-region": True})} == EDIT_REGIONS
+    steps = root.find("nav", **{"aria-label": "作業ステップ"}).find_all("button", **{"data-action": "step"})
+    assert [b.attrs["data-step"] for b in steps] == ["1", "2", "3", "4", "5"]
+    assert [b.find(**{"class": "edit-step__name"}).text() for b in steps] == [
+        "頂上事象・参考情報", "一次要因", "二次要因", "三次要因", "確認・出力"]
+    tablist = root.find(role="tablist")
+    tabs = tablist.find_all("button", role="tab")
+    assert [(t.attrs["id"], t.attrs["aria-controls"], t.text()) for t in tabs] == [
+        ("edit-tab-work", "edit-panel-work", "作業"),
+        ("edit-tab-tree", "edit-panel-tree", "ツリー"),
+        ("edit-tab-table", "edit-panel-table", "一覧表"),
+    ]
+    for view in ("work", "tree", "table"):
+        assert root.find("section", id=f"edit-panel-{view}").attrs["role"] == "tabpanel"
+    for element_id in ("edit-nav", "edit-work-area", "edit-inspector", "edit-filter-text", "edit-filter-judgement"):
+        root.find(id=element_id)
+    root.find(**{"data-inspector-body": True})
+
+    # Skip links to the work list and the inspector (plan 5.7).
+    skip = {a.text(): a.attrs["href"] for a in root.find_all("a", **{"class": "skip-link"})}
+    assert skip == {"本文へ移動": "#main", "作業リストへ": "#edit-work-area", "インスペクタへ": "#edit-inspector"}
+
+    # Step ① and the header keep the ids and save functions of the old screen (PR-4 rebuilds them).
+    top = root.find("textarea", id="topEventInput")
+    assert (top.text(), top.attrs["data-saved"]) == ("頂上事象", "頂上事象")
+    assert root.find("textarea", id="systemContextInput").attrs["data-saved"] == "構成"
+    assert root.find("textarea", id="incidentContextInput").attrs["data-saved"] == "状況"
+    assert "filled" in root.find(id="analysisContextStatus").attrs["class"].split()
+    title = root.find("h1", id="analysisTitle")
+    assert title.attrs["contenteditable"] == "true" and title.text() == "編集画面の構造"
+    header_links = [a.attrs["href"] for a in root.find(**{"class": "edit-header"}).find_all("a")]
+    assert header_links == [f"/analyses/{analysis_id}/export/{fmt}" for fmt in ("json", "csv", "markdown")] + ["/"]
+    step5 = [a for a in root.find("section", **{"data-step-panel": "5"}).find_all("a")]
+    assert [(a.attrs["href"], "download" in a.attrs) for a in step5] == [
+        (f"/analyses/{analysis_id}/export/{fmt}", True) for fmt in ("json", "csv", "markdown")]
+
+    # The legacy dialogs stay until PR-5 / PR-6.
+    for element_id in ("nodeDetailModal", "addNodeModal", "loadingOverlay"):
+        root.find(id=element_id)
+
+    # Scripts: the module and the legacy script by URL; the only inline
+    # script is the embedded data.
+    scripts = root.find_all("script")
+    inline = [s for s in scripts if "src" not in s.attrs]
+    assert [(s.attrs.get("type"), s.attrs.get("id")) for s in inline] == [("application/json", "analysis-data")]
+    sources = [s.attrs["src"] for s in scripts if "src" in s.attrs]
+    assert "/static/js/pages/edit.js" in sources and "/static/app.js" in sources
+    styles = [s.attrs["href"] for s in root.find_all("link", rel="stylesheet")]
+    assert "/static/css/edit.css" in styles and "/static/style.css" in styles
+    assert "ui-page" in root.find("body").attrs["class"].split()
+
+
+def test_T04_embedded_summary_shape_and_content(client, monkeypatch):
+    monkeypatch.setenv("FTA_PRIMARY_FACTOR_COUNT", "5")
+    monkeypatch.setenv("FTA_SECONDARY_FACTOR_COUNT", "4")
+    monkeypatch.setenv("FTA_TERTIARY_FACTOR_COUNT", "3")
+    monkeypatch.setenv("FTA_ADDITIONAL_FACTOR_COUNT", "1")
+    analysis_id = _create(client, "埋め込みデータ",
+                          context='{"system_context": "構成", "incident_context": "状況", "demo_points": "デモ観点Q-秘匿"}')
+    root_id = _raw_node(client, analysis_id, 1, title="一次</script><script>alert(1)</script>", judgement="yes",
+                        description="説明A", ai=True, memo="メモの本文M", direct="likely")
+    child_id = _raw_node(client, analysis_id, 2, root_id, title="二次", warning="既存要因に類似")
+    html, root = _edit_page(client, analysis_id)
+
+    summary = _summary(root)
+    assert summary["analysisId"] == analysis_id
+    assert summary["factorCounts"] == {"1": 5, "2": 4, "3": 3, "additional": 1}
+    assert summary["lookupsOk"] is True
+    nodes = {n["id"]: n for n in summary["nodes"]}
+    assert [n["id"] for n in summary["nodes"]] == [root_id, child_id]  # server order
+    for node in summary["nodes"]:
+        assert set(node) == SUMMARY_KEYS
+    first = nodes[root_id]
+    assert (first["parentId"], first["level"], first["title"], first["description"]) == (
+        None, 1, "一次</script><script>alert(1)</script>", "説明A")
+    assert (first["judgement"], first["directCause"], first["ai"], first["warning"], first["memo"]) == (
+        "yes", "likely", True, False, True)
+    assert (first["kind"], first["canParent"], first["delete"]) == ("ok", True, {"allowed": True, "reason": ""})
+    second = nodes[child_id]
+    assert (second["parentId"], second["warning"], second["memo"], second["ai"]) == (root_id, True, False, False)
+
+    # Never in the page: demo_points and the memo text (only whether there is one).
+    assert "デモ観点Q" not in html
+    assert "メモの本文M" not in html
+    # The title cannot leave the JSON block.
+    assert "</script><script>alert(1)" not in html
+    assert len(root.find_all("script")) == len(re.findall(r"<script\b", html))
+
+
+def test_T04_every_representation_carries_data_node_id(client):
+    analysis_id = _create(client, "表示の対応", top_event="頂上")
+    a = _raw_node(client, analysis_id, 1, title="一次A", judgement="yes")
+    b = _raw_node(client, analysis_id, 2, a, title="二次B")
+    c = _raw_node(client, analysis_id, 3, b, title="三次C")
+    d = _raw_node(client, analysis_id, 1, title="一次D")
+    broken = _raw_node(client, analysis_id, 2, 99999, title="親不在")
+    html, root = _edit_page(client, analysis_id)
+
+    for node_id in (a, b, c, d, broken):
+        for role in ("nav", "tree", "table"):
+            buttons = root.find_all("button", **{"data-action": "select", "data-role": role, "data-node-id": str(node_id)})
+            assert len(buttons) == 1, (role, node_id)
+        for role in ("nav-item", "work-item", "tree-item", "table-item"):
+            assert len(root.find_all(**{"data-role": role, "data-node-id": str(node_id)})) == 1, (role, node_id)
+    # Parent groups of ③ and ④ for the consistent parents.
+    assert sorted(int(e.attrs["data-node-id"]) for e in root.find_all(**{"data-role": "group-item"})) == sorted([a, b, d])
+    work = {int(e.attrs["data-node-id"]): e for e in root.find_all("li", **{"data-role": "work-item"})}
+    step = {n: e for n in (2, 3, 4) for e in [root.find("section", **{"data-step-panel": str(n)})]}
+    assert {int(e.attrs["data-node-id"]) for e in step[2].find_all("li", **{"data-role": "work-item"})} == {a, d}
+    assert {int(e.attrs["data-node-id"]) for e in step[3].find_all("li", **{"data-role": "work-item"})} == {b}
+    assert {int(e.attrs["data-node-id"]) for e in step[4].find_all("li", **{"data-role": "work-item"})} == {c}
+    assert work[broken].attrs["class"].split() == ["edit-row", "edit-row--anomaly"]
+    # Judgement toggles of the work list start from the saved value.
+    toggle = root.find(**{"data-judgement-toggle": True, "data-node-id": str(a)})
+    assert [(b_.attrs["data-value"], b_.attrs["aria-pressed"]) for b_ in toggle.find_all("button")] == [
+        ("yes", "true"), ("no", "false"), ("unknown", "false")]
+
+
+def test_T04_broken_parent_links_are_named_and_never_the_top_event(client):
+    analysis_id = _create(client, "不正な親子関係", top_event="頂上")
+    other = _create(client, "別の分析")
+    root_id = _raw_node(client, analysis_id, 1, title="正常な一次")
+    missing = _raw_node(client, analysis_id, 2, 99999, title="親不在の二次")
+    foreign_parent = _raw_node(client, other, 1, title="別分析の一次")
+    foreign = _raw_node(client, analysis_id, 2, foreign_parent, title="別分析が親の二次")
+    self_ref = _raw_node(client, analysis_id, 2, title="自己参照の二次")
+    _set_parent(client, self_ref, self_ref)
+    p = _raw_node(client, analysis_id, 2, title="循環P")
+    q = _raw_node(client, analysis_id, 1, p, title="循環Q")
+    _set_parent(client, p, q)
+    skipped = _raw_node(client, analysis_id, 3, root_id, title="一次の下の三次")
+    below = _raw_node(client, analysis_id, 3, missing, title="親不在の下の三次")
+    html, root = _edit_page(client, analysis_id)
+
+    expected = {
+        missing: "（親が見つかりません：ID 99999）",
+        foreign: f"（別の分析の要因を親にしています：ID {foreign_parent}）",
+        self_ref: "（自分自身を親にしています）",
+        p: "（親子関係が循環しています）",
+        q: "（親子関係が循環しています）",
+        skipped: "（階層が合いません：親は一次）",
+    }
+    rows = {int(r.attrs["data-node-id"]): r for r in root.find_all("tr", **{"data-role": "table-item"})}
+    for node_id, label in expected.items():
+        parent_cell = rows[node_id].find("td", **{"class": "edit-table__parent"})
+        assert parent_cell.text().strip() == label, node_id
+    assert rows[below].find("td", **{"class": "edit-table__parent"}).text().startswith("親不在の二次")
+    assert rows[root_id].find("td", **{"class": "edit-table__parent"}).text() == "（頂上事象）"
+    parent_cells = [r.find("td", **{"class": "edit-table__parent"}).text() for r in rows.values()]
+    assert parent_cells.count("（頂上事象）") == 1  # only the consistent 一次要因 (C-09)
+
+    # The group at the end of the navigation, the tree and the work list.
+    for role, container in (("nav", root.find("nav", id="edit-nav")), ("tree", root.find(id="edit-panel-tree")),
+                            ("work", root.find(**{"data-region": "work-anomalies"}))):
+        group = container.find("section", **{"class": "edit-anomalies" if role == "work" else f"edit-anomalies edit-anomalies--{role}"})
+        assert "親子関係に不整合がある要因（7件）" in group.text()
+        ids = {int(e.attrs["data-node-id"]) for e in group.find_all(**{"data-role": f"{role}-item"})}
+        assert ids == {missing, foreign, self_ref, p, q, skipped, below}, role
+        text = group.text()
+        for label in expected.values():
+            assert label in text, (role, label)
+        assert "上位に不整合あり" in text
+    # None of them below the top event in the outlines.
+    top_tree = root.find("nav", id="edit-nav").find("li", **{"class": "edit-outline__item edit-outline__item--top"})
+    assert {int(e.attrs["data-node-id"]) for e in top_tree.find_all(**{"data-role": "nav-item"})} == {root_id}
+
+
+def test_T04_tags_step_counts_and_generation_targets(client):
+    analysis_id = _create(client, "件数とタグ", top_event="頂上")
+    a = _raw_node(client, analysis_id, 1, title="一次A", judgement="yes", direct="likely", memo="メモ", ai=True)
+    b = _raw_node(client, analysis_id, 1, title="一次B", judgement="no")
+    _raw_node(client, analysis_id, 2, a, title="二次A1", warning="要因名が長すぎる")
+    _raw_node(client, analysis_id, 2, a, title="二次A2", judgement="yes")
+    broken = _raw_node(client, analysis_id, 1, a, title="親のある一次", judgement="yes")  # level mismatch
+    html, root = _edit_page(client, analysis_id)
+
+    row_a = root.find("li", **{"data-role": "work-item", "data-node-id": str(a)})
+    tags = [t.text() for t in row_a.find_all(**{"class": "ui-tag ui-tag--direct"})]
+    assert tags == ["直接要因評価：可能性高"]  # J-14: with the item name
+    assert row_a.find(**{"class": "ui-tag ui-tag--memo"}).text() == "メモあり"
+    assert row_a.find(**{"class": "ui-tag ui-tag--ai"}).text() == "AI"
+    row_b = root.find("li", **{"data-role": "work-item", "data-node-id": str(b)})
+    assert row_b.find(**{"class": "ui-tag ui-tag--manual"}).text() == "手動"
+    assert not row_b.find_all(**{"class": "ui-tag ui-tag--memo"})
+    warn = root.find("button", **{"data-role": "work-warning"})
+    assert (warn.text(), warn.attrs["data-focus"]) == ("要確認", "warning")
+
+    statuses = {s.attrs["data-step-status"]: s.text() for s in root.find_all(**{"data-step-status": True})}
+    assert statuses == {"1": "頂上事象：入力済み", "2": "2件・未評価0", "3": "2件・未評価1", "4": "0件・未評価0"}
+    # Yes parents of the normal generation, and those left out as inconsistent (判断3).
+    assert root.find(**{"data-target-count": "2"}).text() == "1"
+    excluded = root.find(**{"data-target-excluded": "2"})
+    assert not excluded.is_hidden() and excluded.find(**{"data-target-excluded-count": True}).text() == "1"
+    assert root.find(**{"data-target-count": "3"}).text() == "1"
+    assert root.find(**{"data-target-excluded": "3"}).is_hidden()
+    assert broken not in {int(e.attrs["data-node-id"]) for e in root.find_all(**{"data-role": "group-item"})}

@@ -495,3 +495,180 @@ textarea.ui-input {
 .ui-table tbody tr:hover td {
   background: var(--color-surface-hover);
 }
+
+/* ----- Judgement toggle: Yes / No / 未 (role="group", aria-pressed) ----- */
+.ui-judgement {
+  display: inline-flex;
+  flex: none;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  font-family: var(--font-sans);
+}
+.ui-judgement__option {
+  min-width: 38px;
+  min-height: 30px;
+  padding: 2px 8px;
+  border: none;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  cursor: pointer;
+}
+.ui-judgement__option:last-child {
+  border-right: none;
+}
+.ui-judgement__option:hover {
+  background: var(--color-surface-muted);
+}
+.ui-judgement__option:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: -3px;
+}
+.ui-judgement__option--yes[aria-pressed="true"] {
+  background: var(--color-success);
+  color: var(--color-text-inverse);
+}
+.ui-judgement__option--no[aria-pressed="true"] {
+  background: var(--color-danger);
+  color: var(--color-text-inverse);
+}
+.ui-judgement__option--unknown[aria-pressed="true"] {
+  background: var(--color-text-muted);
+  color: var(--color-text-inverse);
+}
+.ui-judgement__option[data-pending="true"] {
+  box-shadow: inset 0 -3px 0 var(--color-focus);
+}
+.ui-judgement[aria-busy="true"] {
+  cursor: progress;
+}
+
+/* ----- Chip: the judgement as text (Yes / No / 未評価) ----- */
+.ui-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 0 7px;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.ui-chip--yes {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+.ui-chip--no {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+.ui-chip--unknown {
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+}
+
+/* ----- Tags of a factor (level, AI / 手動, 要確認, 直接要因評価, メモあり) ----- */
+.ui-tag {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 0 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.ui-tag--level {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+.ui-tag--ai {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+.ui-tag--manual {
+  background: var(--color-surface-muted);
+}
+.ui-tag--direct {
+  border-color: var(--color-text-muted);
+  color: var(--color-text);
+}
+.ui-tag--memo {
+  border-style: dashed;
+}
+.ui-tag--issue {
+  background: var(--color-danger-soft);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  white-space: normal;
+}
+button.ui-tag,
+.ui-tag--warning {
+  background: var(--color-warning-soft);
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+  cursor: pointer;
+}
+button.ui-tag:hover {
+  background: #ffe8bf;
+}
+button.ui-tag:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+/* A small text mark (e.g. in the structure navigation). */
+.ui-mark {
+  flex: none;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+.ui-mark--warning {
+  color: var(--color-warning);
+}
+
+/* ----- Tabs (WAI-ARIA tabs: role="tablist" / "tab", aria-selected) ----- */
+.ui-tabs {
+  display: flex;
+  gap: var(--space-1);
+  font-family: var(--font-sans);
+}
+.ui-tabs__tab {
+  min-height: 36px;
+  padding: 6px 16px;
+  border: 1px solid transparent;
+  border-bottom: 3px solid transparent;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  cursor: pointer;
+}
+.ui-tabs__tab:hover {
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+}
+.ui-tabs__tab[aria-selected="true"] {
+  border-bottom-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.ui-tabs__tab:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: -3px;
+}

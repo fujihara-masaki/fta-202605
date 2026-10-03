@@ -7,6 +7,7 @@ tests/conftest.py instead of breaking collection.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
 import re
@@ -36,7 +37,9 @@ class E2EServer:
         self.process = process
         self.log_path = log_path
         self.db_path = workdir / "fta_tool.db"
-        self.http = httpx.Client(base_url=url, timeout=30, follow_redirects=False)
+        # The test server is on this PC: never through a proxy of the
+        # environment or (on Windows) the system settings (trust_env=False).
+        self.http = httpx.Client(base_url=url, timeout=30, follow_redirects=False, trust_env=False)
 
     # ----- lifecycle -----------------------------------------------------
     def reset(self) -> None:
@@ -150,6 +153,50 @@ class E2EServer:
         with self._db() as conn:
             conn.execute("UPDATE analyses SET updated_at = ? WHERE id = ?", (value, analysis_id))
 
+    # ----- data the API cannot make (the test database only) -------------
+    def insert_node(self, analysis_id: int, level: int, parent_id: Optional[int] = None, *,
+                    title: Optional[str] = None, judgement: str = "unknown", description: str = "",
+                    ai_generated: bool = False, warning: str = "", memo: str = "") -> int:
+        """A factor written directly, e.g. with a parent link the API would
+        never create (J-25 checks). Only ever the temporary test database."""
+        import datetime as _dt
+
+        now = _dt.datetime.utcnow().isoformat(sep=" ")
+        with self._db() as conn:
+            cursor = conn.execute(
+                "INSERT INTO nodes (analysis_id, parent_id, level, title, description, ai_generated,"
+                " user_judgement, direct_cause_status, direct_cause_comment, evidence, prevention_idea,"
+                " display_order, memo, warning_flags, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, 'unknown', '', '', '', 0, ?, ?, ?, ?)",
+                (analysis_id, parent_id, level, title or f"要因（階層{level}）", description,
+                 1 if ai_generated else 0, judgement, memo, warning, now, now),
+            )
+            return cursor.lastrowid
+
+    def set_parent(self, node_id: int, parent_id: Optional[int]) -> None:
+        with self._db() as conn:
+            conn.execute("UPDATE nodes SET parent_id = ? WHERE id = ?", (parent_id, node_id))
+
+    def set_warning(self, node_id: int, text: str) -> None:
+        with self._db() as conn:
+            conn.execute("UPDATE nodes SET warning_flags = ? WHERE id = ?", (text, node_id))
+
+    def node_ids(self, analysis_id: Optional[int] = None) -> set[int]:
+        if analysis_id is None:
+            return {row[0] for row in self.query("SELECT id FROM nodes")}
+        return {row[0] for row in self.query("SELECT id FROM nodes WHERE analysis_id = ?", (analysis_id,))}
+
+    def judgement(self, node_id: int) -> Optional[str]:
+        rows = self.query("SELECT user_judgement FROM nodes WHERE id = ?", (node_id,))
+        return rows[0][0] if rows else None
+
+    def set_control(self, **fields) -> None:
+        """Merge settings into stub_control.json (stub mode, fault injection)."""
+        path = self.workdir / "stub_control.json"
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        data.update(fields)
+        path.write_text(json.dumps(data), encoding="utf-8")
+
 
 class _Closing:
     def __init__(self, conn: sqlite3.Connection):
@@ -162,10 +209,36 @@ class _Closing:
         self.conn.close()
 
 
+# pytest-playwright 0.7.1 keeps the screenshot and trace of a failed test in
+# <--output>/<the whole node id, slugified>/ (up to 122 characters here). Below
+# a deep --output on Windows that passes MAX_PATH (260) and the evidence is
+# lost, so there the folder is the test's name, shortened, with a hash of the
+# node id (still one folder per test).
+WINDOWS_EVIDENCE_NAME = 60
+
+
+def evidence_folder_name(nodeid: str, name: str, slugify, windows: bool) -> str:
+    if not windows:  # pytest-playwright's own name (its _truncate_file_name)
+        full = slugify(nodeid)
+        if len(full) < 256:
+            return full
+        return f"{full[:100]}-{hashlib.sha256(full.encode()).hexdigest()[:7]}-{full[-100:]}"
+    digest = hashlib.sha256(nodeid.encode("utf-8")).hexdigest()[:7]
+    return f"{slugify(name)[:WINDOWS_EVIDENCE_NAME]}-{digest}"
+
+
+# Ports of the user's own servers (the manual check uses 8001 and 8002,
+# uvicorn's default is 8000): a test server never takes one of them.
+RESERVED_PORTS = frozenset({8000, 8001, 8002})
+
+
 def free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+    while True:
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+        if port not in RESERVED_PORTS:
+            return port
 
 
 def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str, str]] = None) -> E2EServer:
@@ -191,7 +264,7 @@ def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str,
             log.close()
             raise RuntimeError(f"E2E server exited early:\n{log_path.read_text(encoding='utf-8', errors='replace')}")
         try:
-            if httpx.get(url + "/", timeout=2).status_code == 200:
+            if httpx.get(url + "/", timeout=2, trust_env=False).status_code == 200:
                 break
         except httpx.HTTPError:
             pass
@@ -203,24 +276,95 @@ def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str,
     return E2EServer(url, workdir, process, log_path)
 
 
+# The one console error a test lets through (the user's decision of
+# 2026-10-03: a narrowed check for a known issue, not a fix of it). Shown in a
+# window (headed, or as Chrome / Edge), the browser asks the server of a page
+# for /favicon.ico on its own; the app has no icon, so the browser logs a 404.
+# A console error is let through only when all of these hold, else it fails
+# the test as any other:
+#   * its text is FAVICON_404_TEXT and it came from exactly <the origin of
+#     the test's server>/favicon.ico (no query, other path, origin or status);
+#   * the browser's own log of it is there (CDP Log.entryAdded, source
+#     "network"): the n-th such console error is the n-th such log entry;
+#   * that entry's request got the response (CDP Network.responseReceived)
+#     of the same URL with status 404 and resource type "Other", the browser's
+#     own request (a fetch, an img or a script of the page is another type).
+# Without the browser's records (no CDP: not Chromium) nothing is let through.
+# Each one let through is listed in the report (tests/e2e/acceptance.py).
+# PR-7 adds the icon and removes this; tests/test_e2e_infrastructure.py fails
+# as soon as the app has an icon, so that it is not let through any longer.
+FAVICON_PATH = "/favicon.ico"
+FAVICON_404_TEXT = "Failed to load resource: the server responded with a status of 404 (Not Found)"
+FAVICON_RESOURCE_TYPE = "Other"
+
+
 class PageWatcher:
-    """Collects what must not happen on a page during a test."""
+    """Collects what must not happen on a page during a test: console errors
+    (except the known favicon 404 above), uncaught page errors and requests
+    to another origin."""
+
+    # Every watcher made during the current test: tests/e2e/conftest.py
+    # records what each one let through (once) and empties the list.
+    made: list["PageWatcher"] = []
+
+    START = (0, 0, 0)
 
     def __init__(self, page, origin: str):
         self.origin = origin.rstrip("/")
         self.console_errors: list[str] = []
+        self.console_error_urls: list[str] = []  # where each came from (e.g. the resource that failed)
         self.page_errors: list[str] = []
         self.requests: list[str] = []
         self.foreign_requests: list[str] = []
         self.dialogs: list[str] = []
         self._allowed: list[re.Pattern] = []
+        # The browser's own records (CDP), to tell the known favicon 404 apart.
+        self.network_log: list[dict] = []  # Log.entryAdded of source "network", level "error"
+        self.responses: dict[str, dict] = {}  # Network.responseReceived of <origin>/favicon.ico, by request id
+        self.known: dict[int, dict] = {}  # console error (index) -> the known exception it is
+        self._judged: dict[int, Optional[dict]] = {}
+        self.cdp_error = ""
+        self._page = page
         page.on("console", self._on_console)
         page.on("pageerror", lambda error: self.page_errors.append(str(error)))
         page.context.on("request", self._on_request)
+        self._cdp = self._open_cdp(page)
+        PageWatcher.made.append(self)
+
+    @classmethod
+    def take_made(cls) -> list["PageWatcher"]:
+        made, cls.made = cls.made, []
+        return made
+
+    def _open_cdp(self, page):
+        try:
+            session = page.context.new_cdp_session(page)
+            session.on("Log.entryAdded", self._on_log_entry)
+            session.on("Network.responseReceived", self._on_response)
+            session.send("Log.enable")
+            session.send("Network.enable")
+            return session
+        except Exception as error:  # noqa: BLE001 - e.g. not Chromium: then nothing is let through
+            text = str(error).strip()
+            self.cdp_error = text.splitlines()[0] if text else type(error).__name__
+            return None
 
     def _on_console(self, message) -> None:
         if message.type == "error":
             self.console_errors.append(message.text)
+            self.console_error_urls.append((message.location or {}).get("url") or "")
+
+    def _on_log_entry(self, event: dict) -> None:
+        entry = event.get("entry") or {}
+        if entry.get("source") == "network" and entry.get("level") == "error":
+            self.network_log.append({"text": entry.get("text") or "", "url": entry.get("url") or "",
+                                     "request_id": entry.get("networkRequestId") or ""})
+
+    def _on_response(self, event: dict) -> None:
+        response = event.get("response") or {}
+        if response.get("url") == self.origin + FAVICON_PATH:
+            self.responses[event.get("requestId") or ""] = {
+                "url": response.get("url"), "status": response.get("status"), "type": event.get("type")}
 
     def _on_request(self, request) -> None:
         url = request.url
@@ -233,15 +377,66 @@ class PageWatcher:
         """Expected console errors, e.g. the browser's log of a 500 the test forced."""
         self._allowed.append(re.compile(pattern))
 
-    def problems(self) -> list[str]:
-        unexpected = [text for text in self.console_errors if not any(p.search(text) for p in self._allowed)]
+    def _wait_for(self, ready) -> None:
+        """The browser's records (CDP) come on another connection than the
+        console messages: give them up to 2 seconds."""
+        for _ in range(20):
+            if ready() or self._cdp is None:
+                return
+            try:
+                self._page.wait_for_timeout(100)
+            except Exception:  # noqa: BLE001 - e.g. the page is closed: all it sent is in
+                return
+
+    def _known_favicon_404(self, index: int) -> Optional[dict]:
+        """The known exception that console error `index` is, or None (judged once)."""
+        if index in self._judged:
+            return self._judged[index]
+        text, url = self.console_errors[index], self.console_error_urls[index]
+        found = None
+        if text == FAVICON_404_TEXT and url == self.origin + FAVICON_PATH:
+            nth = sum(1 for i in range(index)
+                      if self.console_errors[i] == text and self.console_error_urls[i] == url)
+
+            def log_entry() -> Optional[dict]:
+                entries = [e for e in self.network_log if e["text"] == text and e["url"] == url]
+                return entries[nth] if len(entries) > nth else None
+
+            self._wait_for(lambda: log_entry() is not None and log_entry()["request_id"] in self.responses)
+            entry = log_entry()
+            response = self.responses.get(entry["request_id"]) if entry and entry["request_id"] else None
+            if (response and response["url"] == url and response["status"] == 404
+                    and response["type"] == FAVICON_RESOURCE_TYPE):
+                found = {"url": url, "text": text, "status": response["status"], "type": response["type"],
+                         "request_id": entry["request_id"]}
+                self.known[index] = found
+        self._judged[index] = found
+        return found
+
+    def mark(self) -> tuple[int, int, int]:
+        """How far the page has been checked (for problems() of what came after)."""
+        return (len(self.console_errors), len(self.page_errors), len(self.foreign_requests))
+
+    def problems(self, since: tuple[int, int, int] = START,
+                 until: Optional[tuple[int, int, int]] = None) -> list[str]:
+        """What came between `since` and `until` (default: up to now) and must not."""
+        console, page, foreign = since
+        console_end, page_end, foreign_end = until or self.mark()
+        unexpected = []
+        for index in range(console, console_end):
+            if self._known_favicon_404(index):
+                continue  # listed in the report; it never lets anything else through
+            text, url = self.console_errors[index], self.console_error_urls[index]
+            # The allowed patterns match the message only; its URL is shown, never matched.
+            if not any(p.search(text) for p in self._allowed):
+                unexpected.append(f"{text}（{url}）" if url else text)
         found = []
         if unexpected:
             found.append(f"コンソールのエラー: {unexpected}")
-        if self.page_errors:
-            found.append(f"ページのエラー（例外）: {self.page_errors}")
-        if self.foreign_requests:
-            found.append(f"外部へのリクエスト: {self.foreign_requests}")
+        if self.page_errors[page:page_end]:
+            found.append(f"ページのエラー（例外）: {self.page_errors[page:page_end]}")
+        if self.foreign_requests[foreign:foreign_end]:
+            found.append(f"外部へのリクエスト: {self.foreign_requests[foreign:foreign_end]}")
         return found
 
 

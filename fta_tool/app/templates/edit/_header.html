@@ -1,0 +1,20 @@
+{#- Header of the edit screen. Moved as it was (plan 8.3): the title is the
+    legacy contenteditable saved on blur / Enter by app.js, the export links
+    and 一覧へ are unchanged. PR-4 rebuilds the title editing and the export
+    menu. -#}
+<div class="edit-header">
+  <div class="edit-header__title">
+    <h1 class="analysis-title" id="analysisTitle"
+        contenteditable="true"
+        onblur="saveAnalysisTitle({{ analysis.id }}, this.textContent)"
+        title="クリックしてタイトルを編集">{{ analysis.title }}</h1>
+    <span id="titleError" class="title-error" hidden></span>
+    <span class="ai-badge">AI: {{ ai_provider_name }}</span>
+  </div>
+  <div class="edit-header__actions">
+    <a href="/analyses/{{ analysis.id }}/export/json" class="btn btn-sm btn-outline">JSON出力</a>
+    <a href="/analyses/{{ analysis.id }}/export/csv" class="btn btn-sm btn-outline">CSV出力</a>
+    <a href="/analyses/{{ analysis.id }}/export/markdown" class="btn btn-sm btn-outline">MD出力</a>
+    <a href="/" class="btn btn-sm btn-outline">一覧へ</a>
+  </div>
+</div>
