@@ -23,6 +23,9 @@ ended, the browser channel asked for and what was actually started
 (tests/e2e/conftest.py), the code-side .env, the test server and where the
 evidence of failures goes. Every console error let through as the known
 favicon 404 (tests/e2e/support.py) is listed with its test, URL and message.
+For each failed test the files actually left in its evidence folder are
+listed (pytest-playwright's options say only what it tries to keep), with
+the page taken by tests/e2e/conftest.py or the reason it could not be taken.
 
 This module is imported by tests/conftest.py and must not import Playwright.
 """
@@ -143,6 +146,10 @@ class RunState:
     # and the pages whose browser records (CDP) could not be read.
     known_console: list[dict] = field(default_factory=list)
     cdp_unavailable: list[str] = field(default_factory=list)
+    # Per test: where pytest-playwright keeps its screenshot and trace
+    # ("folder") and the page of a failed test taken by the page fixture
+    # ("screenshot": the file, or why there is none).
+    evidence: dict[str, dict] = field(default_factory=dict)
 
 
 STATE_KEY = pytest.StashKey[RunState]()
@@ -298,8 +305,54 @@ def add_known_console(item: pytest.Item, watchers: list) -> None:
             run.cdp_unavailable.append(f"{item.nodeid}：{watcher.cdp_error}")
 
 
+def add_evidence_folder(item: pytest.Item, folder) -> None:
+    state(item.config).evidence.setdefault(item.nodeid, {})["folder"] = str(folder)
+
+
+def add_failure_screenshot(item: pytest.Item, result: dict) -> None:
+    state(item.config).evidence.setdefault(item.nodeid, {})["screenshot"] = result
+
+
 def _test_outcome(record: TestRecord) -> str:
     return record.outcome or "not_run"
+
+
+def failure_evidence(run: RunState) -> list[dict]:
+    """For each failed test: the files actually in its evidence folder now,
+    and the page taken by the page fixture (or why there is none)."""
+    found = []
+    for record in run.records.values():
+        if _test_outcome(record) != "failed":
+            continue
+        evidence = run.evidence.get(record.nodeid) or {}
+        folder = evidence.get("folder")
+        path = pathlib.Path(folder) if folder else None
+        exists = path is not None and path.is_dir()
+        files, error = [], ""
+        try:  # the record is written whatever the folder holds
+            if exists:
+                files = [(p.name, p.stat().st_size) for p in sorted(path.iterdir(), key=lambda p: p.name) if p.is_file()]
+        except OSError as problem:
+            error = str(problem).strip().splitlines()[0][:200] if str(problem).strip() else type(problem).__name__
+        found.append({
+            "nodeid": record.nodeid,
+            "folder": folder,
+            "folder_exists": exists,
+            "files": files,
+            "error": error,
+            "screenshot": evidence.get("screenshot"),
+        })
+    return found
+
+
+def _owner(name: str) -> str:
+    if name.startswith("trace") and name.endswith(".zip"):
+        return "pytest-playwright の trace"
+    if name.startswith("test-failed-") and name.endswith(".png"):
+        return "pytest-playwright の画面"
+    if name.endswith(".webm"):
+        return "pytest-playwright の動画"
+    return "この記録の画面" if name.endswith(".png") else "その他"
 
 
 def summarize(run: RunState) -> None:
@@ -451,20 +504,26 @@ def _environment_rows(config: pytest.Config, run: RunState) -> list[str]:
     server = run.server or {}
     server_text = ("AI: e2e-stub（tests/e2e/stub_server.py。実LLMの取得と外部への HTTP は遮断し、試みがあればテストを失敗にする）"
                    + (f"、{server['url']}、作業フォルダ（一時 DB）{server['workdir']}、ログ {server['log']}" if server else ""))
-    output = config.getoption("output", default=None)
-    if output:
-        output_path = pathlib.Path(output)
-        if not output_path.is_absolute():
-            output_path = pathlib.Path(config.invocation_params.dir) / output_path
+    output_path = _output_dir(config)
+    if output_path is not None:
         evidence = (f"スクリーンショット {config.getoption('screenshot', default='off')}、"
-                    f"trace {config.getoption('tracing', default='off')}、保存先 {output_path}")
+                    f"trace {config.getoption('tracing', default='off')}、保存先 {output_path}"
+                    "（設定です。実際に残ったファイルは下の「失敗したテストの証跡（実際にあるファイル）」）")
     else:
         evidence = "-"
     return [
         f"| コード側の .env | {_cell(env_text)} |",
         f"| テスト用サーバー | {_cell(server_text)} |",
-        f"| 失敗時の証跡（pytest-playwright） | {_cell(evidence)} |",
+        f"| 失敗時の証跡の設定（pytest-playwright） | {_cell(evidence)} |",
     ]
+
+
+def _output_dir(config: pytest.Config) -> Optional[pathlib.Path]:
+    output = config.getoption("output", default=None)
+    if not output:
+        return None
+    path = pathlib.Path(output)
+    return path if path.is_absolute() else pathlib.Path(config.invocation_params.dir) / path
 
 
 def render_markdown(config: pytest.Config, run: RunState) -> str:
@@ -516,11 +575,52 @@ def render_markdown(config: pytest.Config, run: RunState) -> str:
     for record in list(run.records.values()) + list(run.deselected.values()):
         reason = record.reason.replace("|", "／").replace("\n", " ")
         lines.append(f"| `{record.nodeid}` | {OUTCOME_LABELS[_test_outcome(record)]} | {reason} |")
+    lines += ["", *_evidence_lines(config, run)]
     lines += ["", *_known_console_lines(run)]
     if not run.playwright_available:
         lines += ["", f"注：{run.playwright_reason}"]
     lines.append("")
     return "\n".join(lines)
+
+
+def _evidence_lines(config: pytest.Config, run: RunState) -> list[str]:
+    lines = [
+        "### 失敗したテストの証跡（実際にあるファイル）",
+        "",
+        "「失敗時の証跡の設定」は、pytest-playwright に残させるものの設定で、ファイルが残ったことは示しません。"
+        "ここには、この記録を書いた時点で各テストの保存先に実際にあったファイルを書きます。"
+        "失敗したテストでは、この記録もページの終了処理の初めに画面を撮ります（page-at-failure.png。"
+        "撮れなかったときは理由を書きます。pytest-playwright の画面 test-failed-1.png は、撮れなかったときに理由を残しません）。",
+        "",
+    ]
+    evidence = failure_evidence(run)
+    if not evidence:
+        return lines + ["失敗したテストはありません。"]
+    output = _output_dir(config)
+    lines += ["| テスト | 保存先 | 実際にあるファイル | この記録の画面 |", "|---|---|---|---|"]
+    for item in evidence:
+        if not item["folder"]:
+            lines.append(f"| `{item['nodeid']}` | - | 保存先なし（pytest-playwright の画面・trace の対象外："
+                         "自分でブラウザを開くテストか、ページを作る前に失敗した） | - |")
+            continue
+        folder = pathlib.Path(item["folder"])
+        if output is not None and folder.is_relative_to(output):
+            folder = folder.relative_to(output)
+        if not item["folder_exists"]:
+            files = "なし（保存先のフォルダがない）"
+        elif item["error"]:
+            files = f"読めなかった（{item['error']}）"
+        else:
+            files = "、".join(f"{name}（{size} バイト、{_owner(name)}）" for name, size in item["files"]) or "なし"
+        shot = item["screenshot"]
+        if shot is None:
+            shot_text = "撮っていない（ページの終了処理まで進まなかった）"
+        elif shot.get("file"):
+            shot_text = f"{shot['file']}（{shot.get('bytes')} バイト）"
+        else:
+            shot_text = f"保存できなかった：{shot.get('reason')}"
+        lines.append(f"| `{item['nodeid']}` | {_cell(folder)} | {_cell(files)} | {_cell(shot_text)} |")
+    return lines
 
 
 def _known_console_lines(run: RunState) -> list[str]:
@@ -570,6 +670,13 @@ def terminal_summary(terminalreporter, config: pytest.Config) -> None:
     if run.preflight_missing:
         tr.line("見つからない準備確認のテスト: " + "、".join(run.preflight_missing), red=True)
     tr.line(f"既知の例外（favicon の 404。コンソールの確認から除いたもの）: {len(run.known_console)} 件")
+    evidence = failure_evidence(run)
+    if evidence:
+        traces = sum(1 for e in evidence if any(_owner(n) == "pytest-playwright の trace" for n, _ in e["files"]))
+        pictures = sum(1 for e in evidence if any(n.endswith(".png") for n, _ in e["files"]))
+        missing = sum(1 for e in evidence if e["screenshot"] is not None and not e["screenshot"].get("file"))
+        tr.line(f"失敗したテストの証跡（実際にあるファイル）: {len(evidence)} 件中、trace あり {traces} 件・画面あり {pictures} 件"
+                + (f"（画面を撮れなかったもの {missing} 件。理由は e2e-report.md）" if missing else ""))
     for acceptance_id, result in run.id_results.items():
         c = result["counts"]
         tr.line(

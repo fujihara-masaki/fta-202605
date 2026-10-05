@@ -227,6 +227,28 @@ def evidence_folder_name(nodeid: str, name: str, slugify, windows: bool) -> str:
     return f"{slugify(name)[:WINDOWS_EVIDENCE_NAME]}-{digest}"
 
 
+# A failed test's page, taken by the page fixture (tests/e2e/conftest.py)
+# into the same folder before pytest-playwright takes its own
+# (test-failed-1.png): pytest-playwright drops the error when its screenshot
+# cannot be taken, this one is recorded either way (tests/e2e/acceptance.py).
+FAILURE_SCREENSHOT = "page-at-failure.png"
+SCREENSHOT_TIMEOUT_MS = 5000  # as pytest-playwright's
+
+
+def save_screenshot(page, path: pathlib.Path, timeout_ms: int = SCREENSHOT_TIMEOUT_MS) -> dict:
+    """The page as it is: {"file", "bytes"}, or {"file": None, "reason"}."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(path), timeout=timeout_ms)
+    except Exception as error:  # noqa: BLE001 - the reason is what is recorded
+        text = str(error).strip()
+        detail = text.splitlines()[0][:300] if text else ""
+        return {"file": None, "reason": f"{type(error).__name__}: {detail}" if detail else type(error).__name__}
+    if not path.exists():
+        return {"file": None, "reason": "保存の呼び出しは終わったが、ファイルがない"}
+    return {"file": path.name, "bytes": path.stat().st_size}
+
+
 # Ports of the user's own servers (the manual check uses 8001 and 8002,
 # uvicorn's default is 8000): a test server never takes one of them.
 RESERVED_PORTS = frozenset({8000, 8001, 8002})

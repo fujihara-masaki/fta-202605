@@ -17,6 +17,9 @@ new record folder (run-info.md, the logs) and passes on pytest's exit code;
 the record names the environment (development / the user's, -Environment)
 with the actual OS, never "the user's Windows PC" for a run elsewhere, and
 says that leftover processes were not checked outside Windows (never "none").
+-Mode Diagnose runs tests/e2e/diagnose_navigation.py (never pytest) into a
+new record folder with the same checks, shows its summary and never a pass;
+it stops for -SlowMo and for code without the diagnosis.
 """
 
 from __future__ import annotations
@@ -142,10 +145,38 @@ def test_a_run_needs_the_code(run_script, tmp_path):
 
 
 FAKE_PYTHON = r"""#!/bin/sh
-# Stands in for the venv's python: the package versions, then "pytest",
-# which writes a record like tests/e2e/acceptance.py and fails.
+# Stands in for the venv's python: the package versions; the diagnosis,
+# which writes a report like tests/e2e/diagnose_navigation.py (or fails when
+# a file "fail-diagnose" lies next to this one); else "pytest", which writes
+# a record like tests/e2e/acceptance.py and fails.
 case "$1" in
   -c) echo "Python 3.11 / playwright 1.56.0 / pytest-playwright 0.7.1 / pytest 8.2.0"; exit 0 ;;
+  *diagnose_navigation.py)
+    printf '%s\n' "$@" > "$(dirname "$0")/diagnose-args.txt"
+    out=""; label=""; previous=""
+    for argument in "$@"; do
+      if [ "$previous" = "--out" ]; then out="$argument"; fi
+      if [ "$previous" = "--env-label" ]; then label="$argument"; fi
+      previous="$argument"
+    done
+    mkdir -p "$out"
+    echo "[診断] 2・3. ブラウザ（Playwright）を起動"
+    if [ -f "$(dirname "$0")/fail-diagnose" ]; then
+      printf '%s\n' '| 判定 | 診断（合否は判定しません） |' \
+        '| 診断を続けられなかった理由 | RuntimeError: E2E server did not start |' > "$out/diagnose-report.md"
+      exit 1
+    fi
+    printf '%s\n' '| 判定 | 診断（合否は判定しません） |' "| 実行環境の区分 | $label |" \
+      '| 起動したブラウザ | Microsoft Corporation 154.0.0.0 |' \
+      '| 要約（Python） | GET /analyses/1：200・80 ms・HTML あり |' \
+      '| 要約（ブラウザ・最初の読み込み） | 最小：commit に未到達（30 秒で未到達） |' \
+      '| 要約（サーバーへの到達・最初の読み込み） | 最小：受信なし |' \
+      '| 要約（Playwright を使わない起動） | 受信なし |' \
+      '| 見立て（記録からの分類。原因の確定ではありません） | 最小：要求がサーバーに届いていない |' \
+      '| 見立て（記録からの分類。原因の確定ではありません） | Playwright を使わない起動：ブラウザは要求したが、サーバーに届いていない |' \
+      > "$out/diagnose-report.md"
+    echo "[診断] 終わりました"
+    exit 0 ;;
 esac
 report=""; label=""; previous=""
 for argument in "$@"; do
@@ -183,6 +214,7 @@ def code_and_venv(tmp_path):
     source = repo / "fta_tool"
     (source / "tests" / "e2e").mkdir(parents=True)
     (source / "tests" / "e2e" / "conftest.py").write_text("", encoding="utf-8")
+    (source / "tests" / "e2e" / "diagnose_navigation.py").write_text("", encoding="utf-8")
     (source / "requirements-dev.txt").write_text("", encoding="utf-8")
     git = ["git", "-C", str(repo), "-c", "user.name=test", "-c", "user.email=test@example.invalid"]
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
@@ -250,3 +282,57 @@ def test_the_environment_is_recorded_as_given(run_script, code_and_venv, short_d
     assert result.returncode == 1, result.stdout + result.stderr
     info = (next(out.iterdir()) / "run-info.md").read_text(encoding="utf-8")
     assert re.search(r"^\| 実行環境の区分 \| 利用者環境（.+、Microsoft Edge、headed）（-Environment User） \|$", info, re.M), info
+
+
+def test_diagnose_writes_its_own_record_and_never_a_pass(run_script, code_and_venv, short_dir):
+    source, venv, sha = code_and_venv
+    out = short_dir / "out"
+    result = run_script("-Mode", "Diagnose", "-Venv", str(venv), "-OutRoot", str(out), "-Source", str(source),
+                        "-Channel", "msedge", "-ExpectedSha", sha[:7])
+    assert result.returncode == 0, result.stdout + result.stderr  # the diagnosis ran: not a pass
+    run = next(out.iterdir())
+    assert run.name.startswith(sha[:7]) and run.name.endswith("-msedge-diagnose")
+    arguments = (venv / "bin" / "diagnose-args.txt").read_text(encoding="utf-8").splitlines()
+    assert arguments[0] == str(source / "tests" / "e2e" / "diagnose_navigation.py")
+    assert arguments[1:5] == ["--out", str(run / "diagnose"), "--channel", "msedge"]
+    assert arguments[5] == "--env-label" and arguments[6].startswith("開発環境（")
+    assert not (run / "e2e-report.md").exists() and not (run / "pytest-tmp").exists()  # never pytest
+    info = (run / "run-info.md").read_text(encoding="utf-8")
+    assert "| 種類 | 最初の読み込みの診断（tests/e2e/diagnose_navigation.py。合否は判定しません） |" in info
+    assert "| 終了コード（診断） | 0（0 は診断を実行できたこと。合否ではありません） |" in info
+    assert "| 判定（diagnose-report.md） | 診断（合否は判定しません） |" in info
+    assert ("| 見立て（diagnose-report.md） | 最小：要求がサーバーに届いていない ／ "
+            "Playwright を使わない起動：ブラウザは要求したが、サーバーに届いていない |") in info
+    assert "| 起動したブラウザ | Microsoft Corporation 154.0.0.0 |" in info
+    assert "| 残っていたプロセス | 未確認（Windows 以外では、このスクリプトはプロセスを確認しません） |" in info
+    assert "[診断] 終わりました" in (run / "diagnose-output.log").read_text(encoding="utf-8")
+    assert "診断の結果（合否は判定しません）" in result.stdout
+    assert "要約（ブラウザ・最初の読み込み）: 最小：commit に未到達（30 秒で未到達）" in result.stdout
+    assert result.stdout.count("見立て（原因の確定ではありません）:") == 2
+    assert "合格" not in result.stdout and "成功" not in result.stdout
+
+
+def test_diagnose_reports_why_it_could_not_go_on(run_script, code_and_venv, short_dir):
+    source, venv, sha = code_and_venv
+    (venv / "bin" / "fail-diagnose").write_text("", encoding="utf-8")
+    result = run_script("-Mode", "Diagnose", "-Venv", str(venv), "-OutRoot", str(short_dir / "out"),
+                        "-Source", str(source), "-Channel", "msedge")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "続けられなかった理由: RuntimeError: E2E server did not start" in result.stdout
+
+
+def test_diagnose_stops_for_slowmo_or_code_without_the_diagnosis(run_script, code_and_venv, short_dir):
+    source, venv, sha = code_and_venv
+    out = short_dir / "out"
+    args = ("-Mode", "Diagnose", "-Venv", str(venv), "-OutRoot", str(out), "-Source", str(source), "-Channel", "msedge")
+    result = run_script(*args, "-SlowMo", "100")
+    assert result.returncode == ABORT and "-SlowMo は Diagnose では使えません" in result.stdout
+    result = run_script(*args, "-DryRun")
+    assert result.returncode == 0 and re.search(r'diagnose_navigation\.py"? --out ', result.stdout) and not out.exists()
+    repo = source.parent
+    git = ["git", "-C", str(repo), "-c", "user.name=test", "-c", "user.email=test@example.invalid"]
+    subprocess.run([*git, "rm", "-q", "fta_tool/tests/e2e/diagnose_navigation.py"], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "older code"], check=True)
+    result = run_script(*args)
+    assert result.returncode == ABORT and "診断（tests/e2e/diagnose_navigation.py）がありません" in result.stdout
+    assert not out.exists()

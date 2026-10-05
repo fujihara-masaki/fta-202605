@@ -12,6 +12,9 @@ the check in Google Chrome of 2026-10-03, see tests/e2e/README.md).
 * the test servers never take the ports of the user's own servers, and are
   reached without a proxy;
 * the evidence folder of a failed test stays short on Windows (MAX_PATH);
+* the record of a failed test's evidence lists the files actually left
+  (the options are only what pytest-playwright tries to keep) and says why
+  the page could not be taken, which pytest-playwright does not;
 * the known favicon 404 (the user's decision of 2026-10-03, PR-7 removes
   it): only the browser's own 404 for /favicon.ico of the test's server,
   matched with the browser's records, is let through; the same message of
@@ -521,3 +524,102 @@ def test_the_favicon_exception_lasts_only_while_the_app_has_no_icon():
     assert declared == [] and status == 404, (
         "アプリに favicon ができました。tests/e2e/support.py の favicon の 404 の例外（FAVICON_404_TEXT など）と"
         f"この確認を削除してください（宣言：{declared}、/favicon.ico：{status}）")
+
+
+# ----- the evidence a failed test actually left -------------------------------------------
+
+class FakeShotPage:
+    """page.screenshot as the page fixture calls it: writes the file, raises, or does neither."""
+
+    def __init__(self, error: Exception | None = None, write: bool = True):
+        self.error, self.write, self.calls = error, write, []
+
+    def screenshot(self, path, timeout):
+        self.calls.append((path, timeout))
+        if self.error is not None:
+            raise self.error
+        if self.write:
+            pathlib.Path(path).write_bytes(b"\x89PNG fake")
+
+
+def test_the_failure_screenshot_is_saved_or_says_why(tmp_path):
+    page = FakeShotPage()
+    shot = support.save_screenshot(page, tmp_path / "folder" / support.FAILURE_SCREENSHOT)
+    assert shot == {"file": "page-at-failure.png", "bytes": 9}
+    assert page.calls[0][1] == 5000  # as pytest-playwright's own
+    error = TimeoutError("Page.screenshot: Timeout 5000ms exceeded.\nCall log:\n  - taking page screenshot")
+    shot = support.save_screenshot(FakeShotPage(error=error), tmp_path / "pending.png")
+    assert shot == {"file": None, "reason": "TimeoutError: Page.screenshot: Timeout 5000ms exceeded."}
+    shot = support.save_screenshot(FakeShotPage(write=False), tmp_path / "none.png")
+    assert shot == {"file": None, "reason": "保存の呼び出しは終わったが、ファイルがない"}
+
+
+def test_the_page_is_taken_when_the_test_failed_as_pytest_playwright_decides():
+    from tests.e2e.conftest import _test_failed
+
+    assert _test_failed(types.SimpleNamespace(rep_call=types.SimpleNamespace(failed=True)))
+    assert not _test_failed(types.SimpleNamespace(rep_call=types.SimpleNamespace(failed=False)))
+    assert _test_failed(types.SimpleNamespace())  # no call phase: as pytest-playwright, a failure
+
+
+class FakeTerminal:
+    def __init__(self):
+        self.lines: list[str] = []
+
+    def section(self, title):
+        self.lines.append(f"== {title}")
+
+    def line(self, text="", **markup):
+        self.lines.append(text)
+
+
+def test_the_record_lists_the_files_a_failed_test_actually_left(tmp_path):
+    output = tmp_path / "failures"
+    config = configured(e2e_preflight=True, output=str(output), screenshot="only-on-failure",
+                        tracing="retain-on-failure")
+    run = acceptance.state(config)
+    items = {name: FakeItem(f"tests/e2e/test_edit_page.py::test_{name}[1280x800]")
+             for name in ("loaded", "pending", "own_browser", "gone", "passed")}
+    for name, item in items.items():
+        item.config = config
+        run.records[item.nodeid] = acceptance.TestRecord(item.nodeid, ["E-E01"], "passed" if name == "passed" else "failed")
+        if name != "own_browser":  # a test that opens its own browser has no pytest-playwright folder
+            acceptance.add_evidence_folder(item, output / f"test-{name}")
+    loaded = output / "test-loaded"
+    loaded.mkdir(parents=True)
+    for name, data in (("trace.zip", b"PK1234"), ("test-failed-1.png", b"PNG1"), ("page-at-failure.png", b"PNG")):
+        (loaded / name).write_bytes(data)
+    acceptance.add_failure_screenshot(items["loaded"], {"file": "page-at-failure.png", "bytes": 3})
+    (output / "test-pending").mkdir()
+    (output / "test-pending" / "trace.zip").write_bytes(b"PK12")
+    acceptance.add_failure_screenshot(items["pending"], {
+        "file": None, "reason": "TimeoutError: Page.screenshot: Timeout 5000ms exceeded."})
+
+    text = acceptance.render_markdown(config, run)
+    assert ("| 失敗時の証跡の設定（pytest-playwright） | スクリーンショット only-on-failure、trace retain-on-failure、"
+            f"保存先 {output}（設定です。実際に残ったファイルは下の「失敗したテストの証跡（実際にあるファイル）」） |") in text
+    assert "| 失敗時の証跡（pytest-playwright） |" not in text
+    section = text.split("### 失敗したテストの証跡（実際にあるファイル）")[1].split("###")[0]
+    assert support.FAILURE_SCREENSHOT in section and "ファイルが残ったことは示しません" in section
+    assert ("| `tests/e2e/test_edit_page.py::test_loaded[1280x800]` | test-loaded | page-at-failure.png（3 バイト、"
+            "この記録の画面）、test-failed-1.png（4 バイト、pytest-playwright の画面）、trace.zip（6 バイト、"
+            "pytest-playwright の trace） | page-at-failure.png（3 バイト） |") in section
+    assert ("| `tests/e2e/test_edit_page.py::test_pending[1280x800]` | test-pending | trace.zip（4 バイト、"
+            "pytest-playwright の trace） | 保存できなかった：TimeoutError: Page.screenshot: Timeout 5000ms exceeded. |") in section
+    assert ("| `tests/e2e/test_edit_page.py::test_own_browser[1280x800]` | - | 保存先なし（pytest-playwright の画面・trace の対象外"
+            in section)
+    assert ("| `tests/e2e/test_edit_page.py::test_gone[1280x800]` | test-gone | なし（保存先のフォルダがない） "
+            "| 撮っていない（ページの終了処理まで進まなかった） |") in section
+    assert "test_passed" not in section
+
+    acceptance.summarize(run)
+    terminal = FakeTerminal()
+    acceptance.terminal_summary(terminal, config)
+    assert ("失敗したテストの証跡（実際にあるファイル）: 4 件中、trace あり 2 件・画面あり 1 件"
+            "（画面を撮れなかったもの 1 件。理由は e2e-report.md）") in terminal.lines
+
+
+def test_the_record_says_when_no_test_failed(tmp_path):
+    config = configured(e2e_required=True, output=str(tmp_path / "failures"))
+    text = acceptance.render_markdown(config, acceptance.state(config))
+    assert "### 失敗したテストの証跡（実際にあるファイル）" in text and "失敗したテストはありません。" in text

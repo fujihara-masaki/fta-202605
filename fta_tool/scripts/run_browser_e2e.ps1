@@ -13,12 +13,17 @@
       Preflight  準備確認。編集画面を開く少数の既存テストだけを実行する
                  （pytest --e2e-preflight）。全必須 E2E の合格ではない。
       Full       全必須 E2E（pytest -m e2e --e2e-required）。
+      Diagnose   最初の読み込みの診断（tests/e2e/diagnose_navigation.py）。
+                 新しい一時サーバーの同じ URL を、Python（httpx）からの GET、
+                 ブラウザ（最小の構成とテストの構成）、Playwright を使わない
+                 起動で開き、どこまで進むか・サーバーに届いたかを記録する。
+                 合否は判定しない（テストの構成を外した実行は受入ではない）。
 
-    Preflight・Full は、実行のたびに -OutRoot の下へ新しい記録フォルダを作り、
-    既存の記録には書きません。テスト用サーバーと DB は pytest が記録フォルダの
-    中の一時領域（pytest-tmp）に作ります。普段の DB、手動確認の DB、
-    ポート 8000〜8002 は使いません。実LLMは呼びません（テスト用サーバーの
-    スタブ。AI: e2e-stub）。
+    Preflight・Full・Diagnose は、実行のたびに -OutRoot の下へ新しい記録
+    フォルダを作り、既存の記録には書きません。テスト用サーバーと DB は
+    記録フォルダの中の一時領域（pytest-tmp、Diagnose では diagnose\server）に
+    作ります。普段の DB、手動確認の DB、ポート 8000〜8002 は使いません。
+    実LLMは呼びません（テスト用サーバーのスタブ。AI: e2e-stub）。
 
     ブラウザは --browser-channel で指定したインストール済みのもの（通常の
     プロフィールは使わない一時プロフィール）を、画面を表示して（--headed）
@@ -26,7 +31,7 @@
     Playwright 同梱の Chromium には切り替えません。
 
 .PARAMETER Mode
-    Setup / Preflight / Full。
+    Setup / Preflight / Full / Diagnose。
 
 .PARAMETER Venv
     自動確認専用の venv のフォルダ。コードのフォルダの外で、通常の .venv とは
@@ -41,7 +46,7 @@
     fta_tool。
 
 .PARAMETER OutRoot
-    記録フォルダを作る場所（Preflight・Full で必須。コードのフォルダの外）。
+    記録フォルダを作る場所（Preflight・Full・Diagnose で必須。コードのフォルダの外）。
 
 .PARAMETER Channel
     chrome（既定）または msedge。
@@ -55,7 +60,8 @@
     区分」と run-info.md）には、この区分と実際の OS を書きます。
 
 .PARAMETER SlowMo
-    失敗の調査用。操作ごとに待つミリ秒（既定 0。正式な確認では使わない）。
+    失敗の調査用。操作ごとに待つミリ秒（既定 0。正式な確認では使わない。
+    Diagnose では使えない）。
 
 .PARAMETER DryRun
     確認だけを行い、実行するコマンドを表示して終わる（venv・記録フォルダを
@@ -64,9 +70,14 @@
 .EXAMPLE
     & "$src\scripts\run_browser_e2e.ps1" -Mode Preflight -Venv $venv -OutRoot $out -ExpectedSha $sha
 
+.EXAMPLE
+    & "$src\scripts\run_browser_e2e.ps1" -Mode Diagnose -Venv $venv -OutRoot $out -ExpectedSha $sha
+
 .NOTES
     - 終了コード：0 成功（準備確認の成功・全必須 E2E の合格）、1〜5 pytest の
       結果（1 は失敗・不合格）、9 実行前の確認で中止（テストは実行していない）。
+      Diagnose は 0 診断を実行した（結果は diagnose-report.md。合否ではない）、
+      1 診断を続けられなかった・中断された、2 引数の誤り、9 実行前の確認で中止。
     - 実行ポリシー、ブラウザのポリシー、プロキシ・TLS の設定は変更しません。
       止められた場合は、そのまま報告してください。
     - 終わったときに、この実行で起動して残っているプロセス（pytest の子孫で、
@@ -79,7 +90,7 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][ValidateSet("Setup", "Preflight", "Full")][string]$Mode,
+    [Parameter(Mandatory = $true)][ValidateSet("Setup", "Preflight", "Full", "Diagnose")][string]$Mode,
     [Parameter(Mandatory = $true)][string]$Venv,
     [string]$BasePython = "",
     [string]$Source = "",
@@ -273,13 +284,21 @@ function Read-SharedText([string]$Path) {
     }
 }
 
-function Get-ReportValue([string]$Report, [string]$Label) {
-    if (-not (Test-Path -LiteralPath $Report)) { return $null }
+function Get-ReportValues([string]$Report, [string]$Label) {
+    # Every row of the report with this label (the diagnosis has several).
+    $values = @()
+    if (-not (Test-Path -LiteralPath $Report)) { return $values }
     foreach ($line in [System.IO.File]::ReadAllLines($Report, $Utf8NoBom)) {
         if ($line.StartsWith("| $Label |")) {
-            return $line.Substring($Label.Length + 4).TrimEnd(" ", "|").Trim()
+            $values += $line.Substring($Label.Length + 4).TrimEnd(" ", "|").Trim()
         }
     }
+    return $values
+}
+
+function Get-ReportValue([string]$Report, [string]$Label) {
+    $values = @(Get-ReportValues $Report $Label)
+    if ($values.Count -gt 0) { return $values[0] }
     return $null
 }
 
@@ -354,7 +373,7 @@ function Invoke-Setup([hashtable]$S) {
     return 0
 }
 
-# --- Preflight / Full -------------------------------------------------------------------
+# --- Preflight / Full / Diagnose ---------------------------------------------------------
 
 function Invoke-Run([hashtable]$S) {
     if ($Environment -and @("User", "Dev") -notcontains $Environment) {
@@ -363,6 +382,8 @@ function Invoke-Run([hashtable]$S) {
     if (-not (Test-Path -LiteralPath $S.Python -PathType Leaf)) {
         Stop-Run "自動確認専用の venv がありません：$($S.Python)。先に -Mode Setup を実行してください"
     }
+    $diagnose = $Mode -eq "Diagnose"
+    if ($diagnose -and $SlowMo -gt 0) { Stop-Run "-SlowMo は Diagnose では使えません（診断は時間の上限を自分で決めています）" }
     if (-not $OutRoot) { Stop-Run "-OutRoot（記録フォルダを作る場所）を指定してください" }
     $outRootPath = Resolve-UserPath $OutRoot
     if (Test-Inside $outRootPath $S.Repo) { Stop-Run "記録はコードのフォルダの外に作ってください：$outRootPath" }
@@ -377,6 +398,10 @@ function Invoke-Run([hashtable]$S) {
     if ($ExpectedSha) {
         $expected = $ExpectedSha.Trim().ToLowerInvariant()
         if ($expected.Length -lt 7 -or -not $head.StartsWith($expected)) { Stop-Run "コードの HEAD（$head）が -ExpectedSha（$ExpectedSha）と一致しません" }
+    }
+    $diagnoseScript = Join-Parts $S.Source @("tests", "e2e", "diagnose_navigation.py")
+    if ($diagnose -and -not (Test-Path -LiteralPath $diagnoseScript -PathType Leaf)) {
+        Stop-Run "このコード（$head）には診断（tests/e2e/diagnose_navigation.py）がありません。診断を含む SHA の worktree で実行してください"
     }
     $envFile = Join-Path $S.Source ".env"
     if (Test-Path -LiteralPath $envFile) {
@@ -401,31 +426,48 @@ function Invoke-Run([hashtable]$S) {
         Stop-Run "記録フォルダのパスが長すぎます（$($runDir.Length) 文字。$MaxRunDirLength 文字まで）：$runDir。-OutRoot を短い場所にしてください"
     }
     if (Test-Path -LiteralPath $runDir) { Stop-Run "記録フォルダが既にあります：$runDir" }
-    $paths = @{
-        Report = Join-Path $runDir "e2e-report.md"
-        Info = Join-Path $runDir "run-info.md"
-        Output = Join-Path $runDir "pytest-output.log"
-        Errors = Join-Path $runDir "pytest-stderr.log"
-        Temp = Join-Path $runDir "pytest-tmp"
-        Evidence = Join-Path $runDir "failures"
+    if ($diagnose) {
+        $diagnoseDir = Join-Path $runDir "diagnose"
+        $paths = @{
+            Report = Join-Path $diagnoseDir "diagnose-report.md"
+            Info = Join-Path $runDir "run-info.md"
+            Output = Join-Path $runDir "diagnose-output.log"
+            Errors = Join-Path $runDir "diagnose-stderr.log"
+            Diagnose = $diagnoseDir
+        }
+        $kind = "最初の読み込みの診断（tests/e2e/diagnose_navigation.py。合否は判定しません）"
+    } else {
+        $paths = @{
+            Report = Join-Path $runDir "e2e-report.md"
+            Info = Join-Path $runDir "run-info.md"
+            Output = Join-Path $runDir "pytest-output.log"
+            Errors = Join-Path $runDir "pytest-stderr.log"
+            Temp = Join-Path $runDir "pytest-tmp"
+            Evidence = Join-Path $runDir "failures"
+        }
+        $kind = if ($Mode -eq "Full") { "全必須 E2E（--e2e-required）" } else { "準備確認（--e2e-preflight。全必須 E2E の合格ではありません）" }
     }
-    $kind = if ($Mode -eq "Full") { "全必須 E2E（--e2e-required）" } else { "準備確認（--e2e-preflight。全必須 E2E の合格ではありません）" }
     # Where it runs: the user's environment or the development one, with the actual OS.
     $envKind = if ($Environment) { $Environment } elseif ($OnWindows) { "User" } else { "Dev" }
     $envHow = if ($Environment) { "-Environment $Environment" } else { "-Environment 未指定のため OS から判断" }
     $osText = Get-OsText
     $label = "{0}（{1}、{2}、headed）" -f $EnvironmentNames[$envKind], $osText, $ChannelNames[$Channel]
-    $pytestArgs = @("-m", "pytest", (Join-Path $S.Source "tests"), "-m", "e2e")
-    $pytestArgs += $(if ($Mode -eq "Full") { "--e2e-required" } else { "--e2e-preflight" })
-    $pytestArgs += @("--browser", "chromium", "--browser-channel", $Channel, "--headed",
-        "--e2e-env", $label, "--e2e-report", $paths.Report,
-        "--basetemp", $paths.Temp, "--output", $paths.Evidence,
-        "--screenshot", "only-on-failure", "--tracing", "retain-on-failure",
-        "-p", "no:cacheprovider", "-v", "-rfE")
-    if ($SlowMo -gt 0) { $pytestArgs += @("--slowmo", "$SlowMo") }
-    $commandLine = ($pytestArgs | ForEach-Object { ConvertTo-Argument $_ }) -join " "
+    if ($diagnose) {
+        # The diagnosis starts its own server and browser (headed); it never runs the tests.
+        $runArgs = @($diagnoseScript, "--out", $paths.Diagnose, "--channel", $Channel, "--env-label", $label)
+    } else {
+        $runArgs = @("-m", "pytest", (Join-Path $S.Source "tests"), "-m", "e2e")
+        $runArgs += $(if ($Mode -eq "Full") { "--e2e-required" } else { "--e2e-preflight" })
+        $runArgs += @("--browser", "chromium", "--browser-channel", $Channel, "--headed",
+            "--e2e-env", $label, "--e2e-report", $paths.Report,
+            "--basetemp", $paths.Temp, "--output", $paths.Evidence,
+            "--screenshot", "only-on-failure", "--tracing", "retain-on-failure",
+            "-p", "no:cacheprovider", "-v", "-rfE")
+        if ($SlowMo -gt 0) { $runArgs += @("--slowmo", "$SlowMo") }
+    }
+    $commandLine = ($runArgs | ForEach-Object { ConvertTo-Argument $_ }) -join " "
 
-    Write-Host ("== 実ブラウザテスト（E2E）：{0} ==" -f $kind)
+    Write-Host ("== {0}：{1} ==" -f $(if ($diagnose) { "実ブラウザの最初の読み込み" } else { "実ブラウザテスト（E2E）" }), $kind)
     Write-Host ("  実行環境の区分   : {0}（{1}）" -f $label, $envHow)
     Write-Host ("  コード（Source） : {0}" -f $S.Source)
     Write-Host ("  対象 SHA         : {0}（未コミットの変更なし{1}）" -f $head, $(if ($ExpectedSha) { "、-ExpectedSha と一致" } else { "、-ExpectedSha 未指定" }))
@@ -452,7 +494,7 @@ function Invoke-Run([hashtable]$S) {
         "Python（自動確認専用の venv）" = "$($S.Python)（$($versions.Text)）"
         "ブラウザの channel" = $Channel
         "ブラウザの実行ファイル" = $browserText
-        "表示" = $(if ($SlowMo -gt 0) { "headed、slowmo $SlowMo ms（調査用）" } else { "headed、slowmo なし" })
+        "表示" = $(if ($diagnose) { "headed（診断が起動）" } elseif ($SlowMo -gt 0) { "headed、slowmo $SlowMo ms（調査用）" } else { "headed、slowmo なし" })
         "OS" = $osText
         "PowerShell" = $PSVersionTable.PSVersion.ToString()
         "実行コマンド" = "$($S.Python) $commandLine"
@@ -486,9 +528,15 @@ function Invoke-Run([hashtable]$S) {
             if ($OnWindows -and ($ticks -eq 1 -or $ticks % 5 -eq 0)) { Watch-Descendants $process $seen }
             if ($ticks % 15 -eq 0) {
                 $text = Read-SharedText $paths.Output
-                $done = ([regex]::Matches($text, ' (PASSED|FAILED|ERROR|SKIPPED)\s+\[')).Count
-                $bad = ([regex]::Matches($text, ' (FAILED|ERROR)\s+\[')).Count
-                Write-Host ("  実行中… 経過 {0}、結果 {1} 件（失敗・エラー {2}）" -f (Format-Duration ((Get-Date) - $started)), $done, $bad)
+                if ($diagnose) {
+                    $steps = @($text -split "`n" | Where-Object { $_.StartsWith("[診断]") })
+                    $step = if ($steps.Count -gt 0) { $steps[$steps.Count - 1].Trim() } else { "開始の準備中" }
+                    Write-Host ("  実行中… 経過 {0}、{1}" -f (Format-Duration ((Get-Date) - $started)), $step)
+                } else {
+                    $done = ([regex]::Matches($text, ' (PASSED|FAILED|ERROR|SKIPPED)\s+\[')).Count
+                    $bad = ([regex]::Matches($text, ' (FAILED|ERROR)\s+\[')).Count
+                    Write-Host ("  実行中… 経過 {0}、結果 {1} 件（失敗・エラー {2}）" -f (Format-Duration ((Get-Date) - $started)), $done, $bad)
+                }
             }
         }
         $process.WaitForExit()
@@ -505,18 +553,28 @@ function Invoke-Run([hashtable]$S) {
         foreach ($name in $savedEnv.Keys) { [System.Environment]::SetEnvironmentVariable($name, $savedEnv[$name], "Process") }
         $finished = Get-Date
         $verdict = Get-ReportValue $paths.Report "判定"
+        $reportName = Split-Path -Leaf $paths.Report
         $info["終了"] = $finished.ToString("yyyy-MM-dd HH:mm:ss zzz")
         $info["所要時間"] = Format-Duration ($finished - $started)
         $info["状態"] = $state
-        $info["終了コード（pytest）"] = $(if ($null -ne $exitCode) { "$exitCode" } else { "-" })
-        $info["判定（e2e-report.md）"] = $(if ($verdict) { $verdict } else { "（e2e-report.md がありません）" })
-        $info["結果（テスト単位）"] = $(Get-ReportValue $paths.Report "結果（テスト単位）")
-        $knownText = Get-ReportValue $paths.Report "既知の例外（favicon の 404）"
-        $info["既知の例外（favicon の 404）"] = $(if ($knownText -and $knownText -match '^(\d+) 件') { "{0} 件（e2e-report.md の「既知の例外として除いたコンソールのエラー」）" -f $Matches[1] } else { $knownText })
+        if ($diagnose) {
+            $info["終了コード（診断）"] = $(if ($null -ne $exitCode) { "$exitCode（0 は診断を実行できたこと。合否ではありません）" } else { "-" })
+            $info["判定（diagnose-report.md）"] = $(if ($verdict) { $verdict } else { "（diagnose-report.md がありません）" })
+            $hints = @(Get-ReportValues $paths.Report "見立て（記録からの分類。原因の確定ではありません）")
+            $info["見立て（diagnose-report.md）"] = $(if ($hints.Count -gt 0) { $hints -join " ／ " } else { "-" })
+        } else {
+            $info["終了コード（pytest）"] = $(if ($null -ne $exitCode) { "$exitCode" } else { "-" })
+            $info["判定（e2e-report.md）"] = $(if ($verdict) { $verdict } else { "（e2e-report.md がありません）" })
+            $info["結果（テスト単位）"] = $(Get-ReportValue $paths.Report "結果（テスト単位）")
+            $knownText = Get-ReportValue $paths.Report "既知の例外（favicon の 404）"
+            $info["既知の例外（favicon の 404）"] = $(if ($knownText -and $knownText -match '^(\d+) 件') { "{0} 件（e2e-report.md の「既知の例外として除いたコンソールのエラー」）" -f $Matches[1] } else { $knownText })
+        }
         $info["起動したブラウザ"] = $(Get-ReportValue $paths.Report "起動したブラウザ")
         $info["残っていたプロセス"] = Get-LeftoverText $leftovers $seen.Count
         Save-RunInfo $paths.Info $info
     }
+
+    if ($diagnose) { return (Show-DiagnoseResult $paths $info $runDir $exitCode $reportName) }
 
     $verdict = $info["判定（e2e-report.md）"]
     $browser = $info["起動したブラウザ"]
@@ -538,11 +596,42 @@ function Invoke-Run([hashtable]$S) {
     Write-Host  "    pytest-output.log   pytest の出力（pytest-stderr.log もあわせて）"
     Write-Host  "    pytest-tmp          テスト用サーバーの一時 DB とログ（e2e-server0\server.log）"
     if (Test-Path -LiteralPath $paths.Evidence) {
-        Write-Host  "    failures            失敗したテストの画面（png）と trace（trace.zip）"
+        Write-Host  "    failures            失敗したテストの trace（trace.zip）と画面（png。撮れたときだけ。実際にあるファイルと"
+        Write-Host  "                        撮れなかった理由は e2e-report.md の「失敗したテストの証跡（実際にあるファイル）」）"
     }
     Write-Host ("  残っていたプロセス: {0}" -f $info["残っていたプロセス"])
     if ($null -eq $exitCode) { return 2 }
     return [int]$exitCode
+}
+
+function Show-DiagnoseResult([hashtable]$Paths, $Info, [string]$RunDir, $ExitCode, [string]$ReportName) {
+    Write-Host ""
+    Write-Host "== 診断の結果（合否は判定しません） =="
+    Write-Host ("  終了コード       : {0}" -f $(if ($null -ne $ExitCode) { "$ExitCode（0 は診断を実行できたこと。合否ではありません）" } else { "-（中断されました）" }))
+    $fatal = Get-ReportValue $Paths.Report "診断を続けられなかった理由"
+    if ($fatal) { Write-Host ("  続けられなかった理由: {0}" -f $fatal) -ForegroundColor Red }
+    if (-not (Test-Path -LiteralPath $Paths.Report)) {
+        Write-Host ("  {0} がありません。diagnose-output.log と diagnose-stderr.log を確認してください" -f $ReportName) -ForegroundColor Red
+    }
+    foreach ($label in @("要約（Python）", "要約（ブラウザ・最初の読み込み）", "要約（サーバーへの到達・最初の読み込み）", "要約（Playwright を使わない起動）")) {
+        $value = Get-ReportValue $Paths.Report $label
+        if ($value) { Write-Host ("  {0}: {1}" -f $label, $value) }
+    }
+    foreach ($value in @(Get-ReportValues $Paths.Report "見立て（記録からの分類。原因の確定ではありません）")) {
+        Write-Host ("  見立て（原因の確定ではありません）: {0}" -f $value)
+    }
+    Write-Host ("  起動したブラウザ : {0}" -f $Info["起動したブラウザ"])
+    Write-Host ("  所要時間         : {0}" -f $Info["所要時間"])
+    Write-Host ("  記録フォルダ     : {0}" -f $RunDir)
+    Write-Host  "    diagnose\diagnose-report.md    診断の記録（これを送ってください）"
+    Write-Host  "    diagnose\diagnose.json         同じ内容（機械で読む形）"
+    Write-Host  "    diagnose\server-access.jsonl   テスト用サーバーの受信・応答の記録（ヘッダー・本文なし）"
+    Write-Host  "    diagnose\screen-*.png、trace-tests.zip   読み込みの終わりの画面と trace"
+    Write-Host  "    diagnose\netlog-raw            ブラウザの通信の記録の原本（ほかのサイトの URL やプロキシの設定を含むため、依頼があるときだけ送る）"
+    Write-Host  "    run-info.md、diagnose-output.log、diagnose-stderr.log   この実行の条件と出力"
+    Write-Host ("  残っていたプロセス: {0}" -f $Info["残っていたプロセス"])
+    if ($null -eq $ExitCode) { return 1 }
+    return [int]$ExitCode
 }
 
 function Save-RunInfo([string]$Path, $Info) {

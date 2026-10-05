@@ -28,7 +28,14 @@ import sys
 import pytest
 
 from tests.e2e import acceptance
-from tests.e2e.support import PageWatcher, evidence_folder_name, free_port, start_server
+from tests.e2e.support import (
+    FAILURE_SCREENSHOT,
+    PageWatcher,
+    evidence_folder_name,
+    free_port,
+    save_screenshot,
+    start_server,
+)
 
 VIEWPORTS = [(1280, 800), (1440, 900)]
 
@@ -128,6 +135,7 @@ def output_path(pytestconfig, request) -> str:
 
     output_dir = pathlib.Path(pytestconfig.getoption("--output")).absolute()
     name = evidence_folder_name(request.node.nodeid, request.node.name, slugify, sys.platform == "win32")
+    acceptance.add_evidence_folder(request.node, output_dir / name)  # the report lists what is there
     return str(output_dir / name)
 
 
@@ -153,14 +161,25 @@ def browser_context_args(browser_context_args, viewport, e2e_server):
     }
 
 
+def _test_failed(node) -> bool:
+    """As pytest-playwright decides whether to keep a test's evidence."""
+    report = getattr(node, "rep_call", None)
+    return report is None or report.failed
+
+
 @pytest.fixture
-def page(page, viewport, e2e_server, request):
+def page(page, viewport, e2e_server, request, output_path):
     # `viewport` is requested here (not only through browser_context_args) so
     # that pytest sees the parametrized fixture when it collects the test.
     watcher = PageWatcher(page, e2e_server.url)
     request.node.stash[WATCHER_KEY] = watcher
     page.set_default_timeout(10000)
     yield page
+    if _test_failed(request.node):
+        # pytest-playwright's own screenshot (test-failed-1.png) leaves no
+        # reason when it cannot be taken; this one says why (the report).
+        acceptance.add_failure_screenshot(
+            request.node, save_screenshot(page, pathlib.Path(output_path) / FAILURE_SCREENSHOT))
     # What came after the check at the end of the test (pytest_runtest_call).
     problems = watcher.problems(request.node.stash.get(CHECKED_KEY, PageWatcher.START))
     assert not problems, " / ".join(problems)
