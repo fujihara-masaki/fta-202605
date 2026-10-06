@@ -61,14 +61,17 @@ def test_E_X01_no_request_leaves_the_app(page, page_watch, e2e_server):
 
     page.goto(f"/analyses/{analysis_id}")
     expect(page.locator("#analysisTitle")).to_have_text("外部通信の確認")
-    page.locator("#ftaTreeDetails > summary").click()
-    page.locator("#ftaTableDetails > summary").click()
+    page.locator('[data-action="select"][data-role="nav"]').last.click()  # inspector reads the details
+    page.locator('[data-view-tab="tree"]').click()
+    page.locator('[data-view-tab="table"]').click()
+    page.fill("#edit-filter-text", "二次")
     page.wait_for_load_state("networkidle")
 
     paths = {url.removeprefix(e2e_server.url) for url in page_watch.requests}
     for expected in ("/", "/analyses/new", f"/analyses/{analysis_id}",
                      "/static/css/tokens.css", "/static/js/common/boot.js", "/static/js/pages/list.js",
                      "/static/css/new.css", "/static/js/pages/new.js",
+                     "/static/css/edit.css", "/static/js/pages/edit.js", "/static/js/pages/edit/model.js",
                      "/static/style.css", "/static/app.js"):
         assert expected in paths, f"{expected} was not requested: {sorted(paths)}"
     assert page_watch.foreign_requests == []

@@ -4,8 +4,8 @@ Runs against the real app (stub AI provider, temporary database) in
 Chromium at 1280x800 and 1440x900.
 
 * E-N01  two columns; create: the four fields are saved in the same shape as
-         before (POST /analyses, 303) and the edit screen opens. That it opens
-         on ① is checked once PR-3 is merged.
+         before (POST /analyses, 303) and the edit screen opens on
+         「① 頂上事象・参考情報」 with the top event selected (added in PR-3).
 * E-N02  title check: blank / 256 characters give an error in the page and
          the focus, and nothing is sent; code points, trimmed (J-22).
 * E-N03  sample: preview, transfer, 「サンプルを転記済み・未保存」, demo_points
@@ -147,6 +147,12 @@ def test_E_N01_two_columns_and_create(page, e2e_server):
     submit_button(page).click()
     analysis_id = created_id(page)
     expect(page.locator("#analysisTitle")).to_have_text("E-N01 の分析")  # the edit screen
+    # It opens on ① with the top event (plan 5.5; the redirect is unchanged).
+    expect(page.locator('.edit-steps [data-step="1"]')).to_have_attribute("aria-current", "step")
+    expect(page.locator('[data-step-panel="1"]')).to_be_visible()
+    expect(page.locator("#topEventInput")).to_have_value("E-N01 の頂上事象")
+    expect(page.locator('#edit-nav [data-select="top"]')).to_have_attribute("aria-current", "true")
+    expect(page.locator("[data-inspector-title]")).to_have_text("頂上事象")
     assert dialogs == []
 
     # The same POST /analyses as before: field names, 303 to the edit screen.

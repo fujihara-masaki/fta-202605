@@ -24,6 +24,20 @@ stub_control.json in the working directory ({"mode": ..., "delay_seconds": ...})
   no_candidates  return no factor
   error          raise RuntimeError (the API answers success=false)
 Every call is appended to stub_calls.jsonl.
+
+Faults of the edit screen's parent-link checks (PR-3, J-25), per test from
+the same file (the functions are wrapped, the data is never changed):
+  "integrity": "lookup_error"   crud.get_cross_analysis_links fails, as if
+                                the lookups could not be made
+  "integrity_scope_limit": N    the deletion walk of
+                                detail_view.build_detail_view gives up after
+                                N factors, as if it could not be completed
+
+Diagnosis only (tests/e2e/diagnose_navigation.py), when FTA_E2E_ACCESS_LOG
+names a file: every request is written to it as JSON lines when it arrives,
+when its response starts (status) and ends (bytes), or when the client went
+away first. Method, path, the kind of client (from its User-Agent), its port
+and times only: no query, no header, no body. The E2E tests do not set it.
 """
 
 from __future__ import annotations
@@ -160,6 +174,90 @@ def install_guards(main_module, workdir: pathlib.Path) -> None:
     httpx.AsyncClient.send = blocked_async_send
 
 
+def install_integrity_faults(main_module, workdir: pathlib.Path) -> None:
+    """Wrap the lookups and the view of the edit screen for fault injection."""
+    crud = main_module.crud
+    detail_view = main_module.detail_view
+    original_links = crud.get_cross_analysis_links
+    original_build = detail_view.build_detail_view
+
+    def control() -> dict:
+        path = workdir / "stub_control.json"
+        try:
+            return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except (ValueError, OSError):
+            return {}
+
+    def links(db, analysis_id):
+        if control().get("integrity") == "lookup_error":
+            raise RuntimeError("E2Eスタブ：親子関係の確認に必要な情報を取得できません（検証用）")
+        return original_links(db, analysis_id)
+
+    def build(analysis, nodes, links, **kwargs):
+        limit = control().get("integrity_scope_limit")
+        if limit is not None:
+            kwargs["scope_limit"] = int(limit)
+        return original_build(analysis, nodes, links, **kwargs)
+
+    crud.get_cross_analysis_links = links
+    detail_view.build_detail_view = build
+
+
+class AccessLog:
+    """ASGI wrapper of the app for the diagnosis (FTA_E2E_ACCESS_LOG): when a
+    request arrives, when its response starts and ends, or that the client
+    went away first. It never changes a request or a response."""
+
+    def __init__(self, app, path: pathlib.Path):
+        self.app = app
+        self.path = path
+        self._numbers = itertools.count(1)
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        started = time.monotonic()
+        agent = dict(scope.get("headers") or []).get(b"user-agent", b"").decode("latin-1")
+        record = {
+            "n": next(self._numbers),
+            "method": scope.get("method"),
+            "path": scope.get("path"),
+            "client": ("python-httpx" if agent.startswith("python-httpx")
+                       else "browser" if agent.startswith("Mozilla/") else "other" if agent else "none"),
+            "client_port": (scope.get("client") or (None, None))[1],
+        }
+
+        def write(event: str, **fields) -> None:
+            _append_jsonl(self.path, {"event": event, "time": time.time(),
+                                      "ms": round((time.monotonic() - started) * 1000, 1), **record, **fields})
+
+        write("received")
+        sent = {"bytes": 0, "ended": False}
+
+        async def logged_send(message):
+            if message["type"] == "http.response.start":
+                write("response_start", status=message.get("status"))
+            elif message["type"] == "http.response.body":
+                sent["bytes"] += len(message.get("body") or b"")
+            await send(message)
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                sent["ended"] = True
+                write("response_end", bytes=sent["bytes"])
+
+        async def logged_receive():
+            message = await receive()
+            if message["type"] == "http.disconnect" and not sent["ended"]:
+                write("client_disconnected")
+            return message
+
+        try:
+            await self.app(scope, logged_receive, logged_send)
+        except Exception as error:
+            write("error", error=type(error).__name__)
+            raise
+
+
 def _check_working_directory() -> pathlib.Path:
     workdir = pathlib.Path(os.environ["FTA_E2E_WORKDIR"]).resolve()
     cwd = pathlib.Path.cwd().resolve()
@@ -183,10 +281,15 @@ def main() -> None:
 
     os.environ.update(PINNED_ENV)
     install_guards(main_module, workdir)
+    install_integrity_faults(main_module, workdir)
 
     import uvicorn
 
-    uvicorn.run(main_module.app, host=args.host, port=args.port, log_level="warning")
+    app = main_module.app
+    access_log = os.environ.get("FTA_E2E_ACCESS_LOG")
+    if access_log:  # the diagnosis only
+        app = AccessLog(app, pathlib.Path(access_log))
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 
 if __name__ == "__main__":

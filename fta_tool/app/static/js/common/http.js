@@ -19,6 +19,43 @@ export function reasonFromBody(data) {
   return '';
 }
 
+// A page of the app as text (the edit screen's partial update fetches its
+// own URL again): { ok: true, status, text } or { ok: false, status, kind,
+// reason } with the same kinds as requestJson ('network' / 'http').
+export async function requestText(url) {
+  let response;
+  try {
+    response = await fetch(url, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { Accept: 'text/html' },
+    });
+  } catch {
+    return { ok: false, status: 0, kind: 'network', reason: NETWORK_ERROR_REASON };
+  }
+  let text = '';
+  try {
+    text = await response.text();
+  } catch {
+    return { ok: false, status: response.status, kind: 'network', reason: NETWORK_ERROR_REASON };
+  }
+  if (!response.ok) {
+    let data = null;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = null;
+    }
+    return {
+      ok: false,
+      status: response.status,
+      kind: 'http',
+      reason: reasonFromBody(data) || `サーバーでエラーが発生しました（HTTP ${response.status}）`,
+    };
+  }
+  return { ok: true, status: response.status, text };
+}
+
 export async function requestJson(url, { method = 'GET', body } = {}) {
   const init = {
     method,
