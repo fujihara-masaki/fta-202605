@@ -20,6 +20,8 @@ from typing import Optional
 
 import httpx
 
+from tests.e2e.acceptance import VIEWPORT_EXACT, VIEWPORT_REFUSED, VIEWPORT_TOLERATED, css_px
+
 try:  # development dependency (requirements-dev.txt)
     from playwright.sync_api import expect
 except ImportError:  # pragma: no cover - the tests are skipped in this case
@@ -475,3 +477,97 @@ def record_dialogs(page, action: str = "dismiss") -> list:
 
     page.on("dialog", handler)
     return seen
+
+
+# ----- The display area of PR3-LAYOUT ---------------------------------------------
+
+# What the browser reports about its display area, in CSS px: the root's
+# clientWidth x clientHeight (whole numbers, the quantity measured on the
+# user's PC), innerWidth x innerHeight, devicePixelRatio, the visual viewport
+# (fractional) and the page's scroll size. On about:blank (quirks mode) the
+# root's client size is the display area as well.
+VIEWPORT_METRICS = """() => {
+  const root = document.documentElement, vv = window.visualViewport;
+  return {
+    client: [root.clientWidth, root.clientHeight],
+    inner: [window.innerWidth, window.innerHeight],
+    devicePixelRatio: window.devicePixelRatio,
+    visualViewport: vv ? [vv.width, vv.height, vv.scale] : null,
+    scroll: [root.scrollWidth, root.scrollHeight],
+  };
+}"""
+
+
+def measure_viewport(page) -> dict:
+    return page.evaluate(VIEWPORT_METRICS)
+
+
+# Display-area sizes (CSS px) at which the edit page's layout changes, from
+# its stylesheets (tokens.css, base.css, components.css, edit.css,
+# style.css; their rules that depend on the display area are pinned by
+# tests/test_e2e_infrastructure.py, so a changed or new one makes this list
+# be revisited). Widths: 1280 (PR-3's base, J-20); 1100 (.edit-page
+# min-width, narrower pages scroll); the pane columns
+# clamp(240px, 17vw, 320px) and clamp(340px, 23vw, 440px) stop at 240/0.17,
+# 320/0.17, 340/0.23 and 440/0.23; the notifications beside a legacy
+# dialog, clamp(220px, (100vw - 560px) / 2 - 32px, 360px), at 1064 and
+# 1344; the dialogs, min(520px | 560px, 100vw - 32px), at 552 and 592; the
+# menu panel (340px, at most 100vw - 16px) at 356. Heights: none (the page is
+# 100vh less the header; the dialogs' max-height depends on their content).
+LAYOUT_BOUNDARIES = {
+    "width": (356, 552, 592, 1064, 1100, 1280, 1344, 240 / 0.17, 340 / 0.23, 320 / 0.17, 440 / 0.23),
+    "height": (),
+}
+
+
+def judge_viewport(requested, before: Optional[dict], after: dict, allowed: int,
+                   boundaries: dict = LAYOUT_BOUNDARIES) -> dict:
+    """The display area PR3-LAYOUT checks the page against, and why.
+
+    The measured clientWidth x clientHeight is the requested size: exact.
+    Otherwise the difference is tolerated only where the case allows it
+    (`allowed` CSS px; 0 for every case but chrome-1905x945, the user's
+    instruction of 2026-10-06) and only when all of these hold; the checks
+    are then made against the measured size:
+    * the browser had the same size before the app was shown (about:blank),
+      so the difference does not come from the page;
+    * on each axis the measured size is the requested one or larger by at
+      most `allowed` (a browser that cannot show the requested size exactly
+      rounds its display area up; seen in Chromium with a display scale of
+      1.25, where 1905 CSS px would be 2381.25 device px);
+    * no size of `boundaries` lies between the requested and the measured
+      sizes (the fractional visual viewport included), or on either.
+    """
+    req = tuple(requested)
+    got = tuple(after["client"])
+    if got == req:
+        return {"size": got, "verdict": VIEWPORT_EXACT, "reason": ""}
+    problems = []
+    if not allowed:
+        problems.append("この寸法では差を許容しない")
+    else:
+        if before is None:
+            problems.append("アプリの表示前に測っていない")
+        elif tuple(before["client"]) != got:
+            problems.append(f"アプリの表示後に寸法が変わった（表示前 {before['client'][0]}×{before['client'][1]}）")
+        for index, axis in enumerate(("width", "height")):
+            name = "幅" if axis == "width" else "高さ"
+            difference = got[index] - req[index]
+            if not 0 <= difference <= allowed:
+                problems.append(f"{name}の差 {difference:+d} が許容（0〜+{allowed} CSS px）の外")
+            sizes = [req[index], got[index]]
+            for measured in (before, after):
+                if measured is not None:
+                    sizes.append(measured["client"][index])
+                    if measured.get("visualViewport"):
+                        sizes.append(measured["visualViewport"][index])
+            low, high = min(sizes), max(sizes)
+            crossed = [b for b in boundaries.get(axis, ()) if low <= b <= high]
+            if crossed:
+                problems.append(f"要求と実測の間にレイアウトの境界がある（{name} "
+                                + "、".join(f"{css_px(float(b))} px" for b in crossed) + "）")
+    if problems:
+        return {"size": got, "verdict": VIEWPORT_REFUSED, "reason": "；".join(problems)}
+    return {"size": got, "verdict": VIEWPORT_TOLERATED,
+            "reason": (f"幅 {got[0] - req[0]:+d}・高さ {got[1] - req[1]:+d} CSS px。アプリの表示前（about:blank）から同じで、"
+                       "レイアウトの境界を跨がない")}

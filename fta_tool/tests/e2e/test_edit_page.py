@@ -26,8 +26,15 @@ viewports (plan 5.9.4, 利用者環境の実測値).
          1920x1080, 100 %; document.documentElement.clientWidth x
          clientHeight: Chrome 1905x945, Edge 1912x914): side by side, no
          horizontal scroll of the page, the main controls visible and not
-         covered. Narrower widths, zoom 125 %/150 % and low heights are PR-7
-         (E-V01〜E-V03).
+         covered. The display area is measured before and after the app is
+         shown and recorded; only chrome-1905x945 may differ, by up to +1
+         CSS px on each axis, when the browser had that size before the app
+         and no layout boundary lies between (the user's instruction of
+         2026-10-06), and then the checks use the measured size. The checks
+         are shown to catch differences they must not tolerate, a pane out
+         of the display area, a page that scrolls sideways and a hidden or
+         covered control. Narrower widths, zoom 125 %/150 % and low heights
+         are PR-7 (E-V01〜E-V03).
 """
 
 from __future__ import annotations
@@ -37,6 +44,7 @@ import re
 
 import pytest
 
+from tests.e2e import acceptance
 from tests.e2e.edit_helpers import (
     chip,
     expect_selected,
@@ -55,7 +63,7 @@ from tests.e2e.edit_helpers import (
     top_button,
     update_requests,
 )
-from tests.e2e.support import expect
+from tests.e2e.support import VIEWPORT_REFUSED, expect, judge_viewport, measure_viewport
 
 pytestmark = pytest.mark.e2e
 
@@ -474,10 +482,17 @@ def test_E_E09_demo_points_hidden_and_markup_stays_text(page, e2e_server):
 # (Windows 11, 1920x1080, display scale 100 %, browser zoom 100 %), as
 # document.documentElement.clientWidth x document.documentElement.clientHeight
 # with window.devicePixelRatio 1 (Chrome, Edge; plan 5.9.4 利用者環境の実測値):
-# not assumed sizes. The test sets the browser's viewport to these sizes; the
-# edit page has no page scrollbar, so its clientWidth / clientHeight are then
-# the measured values (checked in the test).
+# not assumed sizes. The test asks the browser for a display area of this
+# size and measures what it got, before the app (about:blank) and after it
+# (the edit page has no page scrollbar). A browser that cannot show the size
+# exactly rounds its display area up: in Chromium with a display scale of
+# 1.25, 1905x945 becomes 1905.6x945.6 (clientWidth x clientHeight 1906x946)
+# on about:blank already, as in the Windows Chrome preflight of 2026-10-06.
+# Only that case may differ (acceptance.VIEWPORT_ALLOWED, the user's
+# instruction of 2026-10-06; support.judge_viewport); the others must match.
 MEASURED_VIEWPORTS = [(1905, 945), (1912, 914)]
+LAYOUT_CASES = {"1280x800": (1280, 800), "chrome-1905x945": MEASURED_VIEWPORTS[0],
+                "edge-1912x914": MEASURED_VIEWPORTS[1]}
 
 
 def covered(page, locator) -> bool:
@@ -490,16 +505,43 @@ def covered(page, locator) -> bool:
     }""")
 
 
-@pytest.mark.acceptance("PR3-LAYOUT")
-@pytest.mark.parametrize("viewport", [(1280, 800), *MEASURED_VIEWPORTS], indirect=True,
-                         ids=["1280x800", "chrome-1905x945", "edge-1912x914"])
-def test_three_panes_fit_at_the_base_and_the_measured_sizes(page, e2e_server, viewport):
-    analysis_id, a, b, c, d = build_tree(e2e_server)
-    open_edit(page, analysis_id)
+def display_area(page, viewport, allowed: int, show_app, node=None) -> tuple[int, int]:
+    """Measure the browser's display area before the app (about:blank) and
+    after show_app(), record both with the requested size (e2e-report.md,
+    when `node` is given) and return the size the layout is checked against:
+    the measured one, after support.judge_viewport accepted it."""
+    requested = (viewport["width"], viewport["height"])
+    before = measure_viewport(page)
+    if node is not None:
+        acceptance.record_viewport(node, requested=requested, allowed=allowed, before=before)
+    show_app()
+    after = measure_viewport(page)
+    result = judge_viewport(requested, before, after, allowed)
+    if node is not None:
+        acceptance.record_viewport(node, after=after, **result)
+    assert result["verdict"] != VIEWPORT_REFUSED, (
+        f"表示領域が要求と違い、{VIEWPORT_REFUSED}です：要求 {requested[0]}×{requested[1]}、"
+        f"表示前（about:blank）{before['client'][0]}×{before['client'][1]}、"
+        f"表示後 {after['client'][0]}×{after['client'][1]}（{result['reason']}）")
+    return result["size"]
 
-    width, height = page.evaluate(
-        "() => [document.documentElement.clientWidth, document.documentElement.clientHeight]")
-    assert (width, height) == (viewport["width"], viewport["height"])  # the measured quantities
+
+def main_controls(page, factor: int) -> list:
+    controls = [step_button(page, n) for n in range(1, 6)]
+    controls += [tab(page, view) for view in ("work", "tree", "table")]
+    controls += [page.locator("#edit-filter-text"), select_button(page, "nav", factor),
+                 select_button(page, "work", factor),
+                 judgement_button(item(page, "work", factor), factor, "yes"),
+                 inspector(page).get_by_role("button", name="詳細を編集"),
+                 inspector(page).get_by_role("button", name="この要因を削除"),
+                 page.locator(".edit-header").get_by_role("link", name="一覧へ")]
+    return controls
+
+
+def check_layout(page, width: int, height: int, controls: list, timeout=None) -> None:
+    """The three panes side by side within the display area width x height
+    (CSS px), no horizontal scroll of the page, the panes scroll inside and
+    every control is visible and not covered."""
     assert page.evaluate("() => document.documentElement.scrollWidth") <= width
     nav = page.locator("#edit-nav").bounding_box()
     center = page.locator("#edit-work-area").bounding_box()
@@ -507,16 +549,74 @@ def test_three_panes_fit_at_the_base_and_the_measured_sizes(page, e2e_server, vi
     assert nav["x"] >= 0 and nav["x"] + nav["width"] <= center["x"] + 1
     assert center["x"] + center["width"] <= side["x"] + 1 and side["x"] + side["width"] <= width + 1
     for box in (nav, center, side):  # the panes scroll inside; the page does not
-        assert box["height"] > 200 and box["y"] + box["height"] <= viewport["height"] + 1
+        assert box["height"] > 200 and box["y"] + box["height"] <= height + 1
     assert page.evaluate("() => document.documentElement.scrollHeight <= document.documentElement.clientHeight + 1")
-
-    controls = [step_button(page, n) for n in range(1, 6)]
-    controls += [tab(page, view) for view in ("work", "tree", "table")]
-    controls += [page.locator("#edit-filter-text"), select_button(page, "nav", a), select_button(page, "work", a),
-                 judgement_button(item(page, "work", a), a, "yes"),
-                 inspector(page).get_by_role("button", name="詳細を編集"),
-                 inspector(page).get_by_role("button", name="この要因を削除"),
-                 page.locator(".edit-header").get_by_role("link", name="一覧へ")]
     for control in controls:
-        expect(control).to_be_visible()
+        expect(control).to_be_visible(timeout=timeout)
         assert not covered(page, control), control
+
+
+@pytest.mark.acceptance("PR3-LAYOUT")
+@pytest.mark.parametrize("viewport, allowed",
+                         [(size, acceptance.VIEWPORT_ALLOWED.get(case, 0)) for case, size in LAYOUT_CASES.items()],
+                         indirect=["viewport"], ids=list(LAYOUT_CASES))
+def test_three_panes_fit_at_the_base_and_the_measured_sizes(page, e2e_server, viewport, allowed, request):
+    analysis_id, a, b, c, d = build_tree(e2e_server)
+    width, height = display_area(page, viewport, allowed, lambda: open_edit(page, analysis_id), request.node)
+    check_layout(page, width, height, main_controls(page, a))
+
+
+# What the size check must not tolerate, in the browser: the display area it
+# is set to (exact at the display scales 100〜175 %: multiples of 4 CSS px),
+# what is requested, the difference allowed and part of the reason.
+SIZE_FAULTS = {
+    "changed-after-the-app": ((1904, 944), (1908, 948), (1907, 947), 1, "アプリの表示後に寸法が変わった"),
+    "over-the-tolerance": ((1908, 948), None, (1906, 946), 1, "幅の差 +2 が許容"),
+    "across-1280": ((1280, 800), None, (1279, 800), 1, "レイアウトの境界がある（幅 1280 px）"),
+    "a-case-without-tolerance": ((1908, 948), None, (1907, 947), 0, "この寸法では差を許容しない"),
+}
+
+
+@pytest.mark.acceptance("PR3-LAYOUT")
+@pytest.mark.parametrize("viewport", [(1280, 800)], indirect=True, ids=["1280x800"])
+@pytest.mark.parametrize("fault", list(SIZE_FAULTS))
+def test_the_size_check_refuses_what_it_must_not_tolerate(page, e2e_server, viewport, fault):
+    shown, after_app, requested, allowed, reason = SIZE_FAULTS[fault]
+    analysis_id = build_tree(e2e_server)[0]
+    page.set_viewport_size({"width": shown[0], "height": shown[1]})
+
+    def show_app():
+        if after_app:
+            page.set_viewport_size({"width": after_app[0], "height": after_app[1]})
+        open_edit(page, analysis_id)
+
+    with pytest.raises(AssertionError, match=re.escape(reason)):
+        display_area(page, {"width": requested[0], "height": requested[1]}, allowed, show_app)
+
+
+# Content that does not fit, with the tolerated display area of the Windows
+# Chrome preflight (requested 1905x945, measured 1906x946).
+LAYOUT_FAULTS = {
+    "inspector-past-the-right-edge": "#edit-inspector { margin-right: -40px; }",
+    "inspector-2px-past-the-right-edge": "#edit-inspector { margin-right: -2px; }",
+    "page-scrolls-sideways": ("body::before { content: ''; position: absolute; top: 0; left: 0; "
+                              "width: 2400px; height: 1px; }"),
+    "panes-below-the-bottom": ".edit-layout { flex: none; height: 1400px; }",
+    "control-covered": "body::after { content: ''; position: fixed; inset: 0; z-index: 2147483647; }",
+    "control-hidden": "#edit-filter-text { visibility: hidden; }",
+}
+
+
+@pytest.mark.acceptance("PR3-LAYOUT")
+@pytest.mark.parametrize("viewport", [(1280, 800)], indirect=True, ids=["1280x800"])
+@pytest.mark.parametrize("fault", list(LAYOUT_FAULTS))
+def test_the_layout_check_catches_what_does_not_fit(page, e2e_server, viewport, fault):
+    analysis_id, a, b, c, d = build_tree(e2e_server)
+    page.set_viewport_size({"width": 1906, "height": 946})
+    size = display_area(page, {"width": 1905, "height": 945}, 1, lambda: open_edit(page, analysis_id))
+    assert size == (1906, 946)
+    controls = main_controls(page, a)
+    check_layout(page, *size, controls)  # as it is, it fits
+    page.add_style_tag(content=LAYOUT_FAULTS[fault])
+    with pytest.raises(AssertionError):
+        check_layout(page, *size, controls, timeout=1000)

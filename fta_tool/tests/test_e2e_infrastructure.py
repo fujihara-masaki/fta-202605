@@ -20,7 +20,14 @@ the check in Google Chrome of 2026-10-03, see tests/e2e/README.md).
   matched with the browser's records, is let through; the same message of
   another resource, origin, status, type or without its origin or records
   fails; another error next to it fails the test; each one is recorded
-  once; and the exception ends as soon as the app has an icon.
+  once; and the exception ends as soon as the app has an icon;
+* PR3-LAYOUT's display area (the user's instruction of 2026-10-06): a
+  difference from the requested size is tolerated only for chrome-1905x945,
+  up to +1 CSS px on each axis, when the browser had it before the app and
+  no layout boundary lies between; a difference that appears after the app,
+  a larger or smaller one, one across a boundary (1280px, where a pane stops
+  growing) or one in another case is not; the requested and measured sizes
+  are recorded; and the boundaries follow the edit page's stylesheets.
 """
 
 from __future__ import annotations
@@ -623,3 +630,167 @@ def test_the_record_says_when_no_test_failed(tmp_path):
     config = configured(e2e_required=True, output=str(tmp_path / "failures"))
     text = acceptance.render_markdown(config, acceptance.state(config))
     assert "### 失敗したテストの証跡（実際にあるファイル）" in text and "失敗したテストはありません。" in text
+
+
+# ----- PR3-LAYOUT: the display area ----------------------------------------------
+
+def measured(client, visual=None, ratio=1) -> dict:
+    """What support.measure_viewport returns."""
+    return {"client": list(client), "inner": list(client), "devicePixelRatio": ratio,
+            "visualViewport": [*(visual or client), 1], "scroll": list(client)}
+
+
+# What the Windows Chrome preflight of 2026-10-06 measured for 1905x945
+# (about:blank and the edit page alike), as Chromium does at a display scale
+# of 1.25 (reproduced on Linux with --force-device-scale-factor=1.25).
+WINDOWS_CHROME = measured((1906, 946), (1905.5999755859375, 945.5999755859375), 1.0000000149011612)
+
+
+def test_the_measured_size_is_used_only_where_the_difference_may_be_tolerated():
+    assert acceptance.VIEWPORT_ALLOWED == {"chrome-1905x945": 1}  # the one case (2026-10-06)
+    result = support.judge_viewport((1905, 945), WINDOWS_CHROME, WINDOWS_CHROME, 1)
+    assert result == {"size": (1906, 946), "verdict": "許容した差",
+                      "reason": "幅 +1・高さ +1 CSS px。アプリの表示前（about:blank）から同じで、レイアウトの境界を跨がない"}
+    exact = measured((1905, 945))
+    assert support.judge_viewport((1905, 945), exact, exact, 1) == {"size": (1905, 945), "verdict": "一致", "reason": ""}
+    # Only the width or only the height differs.
+    assert support.judge_viewport((1905, 945), measured((1906, 945)), measured((1906, 945)), 1)["verdict"] == "許容した差"
+    assert support.judge_viewport((1905, 945), measured((1905, 946)), measured((1905, 946)), 1)["verdict"] == "許容した差"
+    # The same difference where the case does not allow it (1280x800, edge-1912x914).
+    assert support.judge_viewport((1905, 945), WINDOWS_CHROME, WINDOWS_CHROME, 0) == {
+        "size": (1906, 946), "verdict": "許容しない差", "reason": "この寸法では差を許容しない"}
+
+
+@pytest.mark.parametrize("requested, before, after, reason", [
+    # A difference that appears with the app, or changes with it.
+    ((1905, 945), measured((1905, 945)), measured((1906, 946)), "アプリの表示後に寸法が変わった（表示前 1905×945）"),
+    ((1905, 945), measured((1906, 946)), measured((1906, 945)), "アプリの表示後に寸法が変わった（表示前 1906×946）"),
+    ((1905, 945), None, measured((1906, 946)), "アプリの表示前に測っていない"),
+    # Larger than +1, or smaller.
+    ((1905, 945), measured((1907, 946)), measured((1907, 946)), "幅の差 +2 が許容（0〜+1 CSS px）の外"),
+    ((1905, 945), measured((1906, 947)), measured((1906, 947)), "高さの差 +2 が許容（0〜+1 CSS px）の外"),
+    ((1905, 945), measured((1904, 945)), measured((1904, 945)), "幅の差 -1 が許容（0〜+1 CSS px）の外"),
+    ((1905, 945), measured((1905, 944)), measured((1905, 944)), "高さの差 -1 が許容（0〜+1 CSS px）の外"),
+    ((1905, 945), measured((1890, 945)), measured((1890, 945)), "幅の差 -15 が許容（0〜+1 CSS px）の外"),
+    # Across a layout boundary, or on one: PR-3's base and where the
+    # inspector column stops growing (440px at 23vw).
+    ((1280, 800), measured((1281, 800)), measured((1281, 800)), "要求と実測の間にレイアウトの境界がある（幅 1280 px）"),
+    ((1279, 800), measured((1280, 800)), measured((1280, 800)), "要求と実測の間にレイアウトの境界がある（幅 1280 px）"),
+    ((1913, 914), measured((1914, 914)), measured((1914, 914)), "要求と実測の間にレイアウトの境界がある（幅 1913.0435 px）"),
+    # The fractional display area past the boundary, the whole number not.
+    ((1912, 914), measured((1913, 914), (1913.2, 914)), measured((1913, 914), (1913.2, 914)), "（幅 1913.0435 px）"),
+])
+def test_differences_that_are_not_tolerated(requested, before, after, reason):
+    result = support.judge_viewport(requested, before, after, 1)
+    assert result["verdict"] == "許容しない差"
+    assert reason in result["reason"]
+    assert result["size"] == tuple(after["client"])  # recorded as measured
+
+
+def test_a_boundary_of_the_height_is_not_crossed_either():
+    boundaries = {"width": (), "height": (945.5,)}
+    result = support.judge_viewport((1905, 945), WINDOWS_CHROME, WINDOWS_CHROME, 1, boundaries)
+    assert result["verdict"] == "許容しない差" and "（高さ 945.5 px）" in result["reason"]
+    assert support.judge_viewport((1905, 945), WINDOWS_CHROME, WINDOWS_CHROME, 1,
+                                  {"width": (1907,), "height": (944.9,)})["verdict"] == "許容した差"
+
+
+# The edit page's stylesheets (base.html and analysis_detail.html) and their
+# rules that depend on the display area, from which
+# support.LAYOUT_BOUNDARIES was derived.
+EDIT_PAGE_TEMPLATES = ("base.html", "analysis_detail.html")
+VIEWPORT_RULES = {
+    "components.css": ("width: min(520px, calc(100vw - 32px))", "max-height: calc(100vh - 32px)",
+                       "max-width: calc(100vw - 16px)", "width: min(560px, calc(100vw - 32px))"),
+    "edit.css": ("height: calc(100vh - var(--header-height))",
+                 "grid-template-columns: clamp(240px, 17vw, 320px) minmax(0, 1fr) clamp(340px, 23vw, 440px)",
+                 "width: clamp(220px, calc((100vw - 560px) / 2 - 2 * var(--space-4)), 360px)"),
+    "style.css": ("max-height: 85vh",),
+}
+VIEWPORT_UNIT = re.compile(r"[\w-]+\s*:[^;{}]*\b\d*\.?\d+(?:[dsl])?v(?:w|h|min|max|i|b)\b[^;{}]*")
+
+
+def test_the_layout_boundaries_follow_the_edit_pages_stylesheets():
+    app = pathlib.Path(acceptance.FTA_TOOL_DIR) / "app"
+    sheets = sorted({name for template in EDIT_PAGE_TEMPLATES
+                     for name in re.findall(r'href="/static/([^"]+\.css)"',
+                                            (app / "templates" / template).read_text(encoding="utf-8"))})
+    assert sheets == ["css/base.css", "css/components.css", "css/edit.css", "css/tokens.css", "style.css"]
+    found = {}
+    for sheet in sheets:
+        text = re.sub(r"/\*.*?\*/", "", (app / "static" / sheet).read_text(encoding="utf-8"), flags=re.S)
+        assert not re.search(r"@(media|container)\b", text), f"{sheet}：表示領域の条件が加わった（LAYOUT_BOUNDARIES を見直す）"
+        rules = tuple(" ".join(rule.split()) for rule in VIEWPORT_UNIT.findall(text))
+        if rules:
+            found[pathlib.Path(sheet).name] = rules
+        if sheet == "css/edit.css":
+            assert re.search(r"\.edit-page\s*\{[^}]*min-width:\s*1100px", text)
+    assert found == VIEWPORT_RULES, "表示領域に依存する規則が変わった：support.LAYOUT_BOUNDARIES を見直す"
+    assert set(support.LAYOUT_BOUNDARIES["width"]) == {
+        1280, 1100, 240 / 0.17, 320 / 0.17, 340 / 0.23, 440 / 0.23, 560 + 2 * (220 + 32), 560 + 2 * (360 + 32),
+        520 + 32, 560 + 32, 340 + 16}
+    assert support.LAYOUT_BOUNDARIES["height"] == ()
+    # chrome-1905x945 and its measured 1906x946 are between two of them.
+    assert not [b for b in support.LAYOUT_BOUNDARIES["width"] if 1905 <= b <= 1906]
+
+
+def viewport_run(tmp_path):
+    config = configured(e2e_preflight=True, output=str(tmp_path / "failures"))
+    run = acceptance.state(config)
+    cases = {"1280x800": ((1280, 800), 0, measured((1280, 800)), measured((1280, 800))),
+             "chrome-1905x945": ((1905, 945), 1, WINDOWS_CHROME, WINDOWS_CHROME),
+             "edge-1912x914": ((1912, 914), 0, measured((1912, 914)), None)}
+    for case, (requested, allowed, before, after) in cases.items():
+        item = FakeItem(f"tests/e2e/test_edit_page.py::test_three_panes_fit_at_the_base_and_the_measured_sizes[{case}]",
+                        ids=("PR3-LAYOUT",))
+        item.config = config
+        run.records[item.nodeid] = acceptance.TestRecord(item.nodeid, ["PR3-LAYOUT"], "passed" if after else "failed")
+        acceptance.record_viewport(item, requested=requested, allowed=allowed, before=before)
+        if after:  # edge-1912x914 ends before the edit page is shown
+            acceptance.record_viewport(item, after=after, **support.judge_viewport(requested, before, after, allowed))
+    return config, run
+
+
+def test_the_record_lists_the_requested_and_the_measured_display_area(tmp_path):
+    config, run = viewport_run(tmp_path)
+    text = acceptance.render_markdown(config, run)
+    assert ("| 画面寸法の要求と実測（PR3-LAYOUT） | 一致 1・許容した差 1・許容しない差 0・判定前に終了 1"
+            "（下の「画面寸法の要求と実測（PR3-LAYOUT）」） |") in text
+    section = text.split("### 画面寸法の要求と実測（PR3-LAYOUT）")[1].split("###")[0]
+    assert "chrome-1905x945（各軸 +1 CSS px まで）だけ" in section and "検証条件の限定変更" in section
+    assert "実測の寸法を基準に最後まで行います" in section and "1280×800 と edge-1912x914）は一致が必要" in section
+    windows = ("client 1906×946、inner 1906×946、visualViewport 1905.6×945.6（scale 1）、"
+               "devicePixelRatio 1.0000000149011612、scroll 1906×946")
+    assert (f"| `tests/e2e/test_edit_page.py::test_three_panes_fit_at_the_base_and_the_measured_sizes[chrome-1905x945]` "
+            f"| 1905×945（差の許容 +1） | {windows} | {windows} | 許容した差：幅 +1・高さ +1 CSS px。"
+            "アプリの表示前（about:blank）から同じで、レイアウトの境界を跨がない。後続の検査は 1906×946 を基準に実施 |") in section
+    assert ("| `tests/e2e/test_edit_page.py::test_three_panes_fit_at_the_base_and_the_measured_sizes[1280x800]` "
+            "| 1280×800 | client 1280×800、inner 1280×800、visualViewport 1280×800（scale 1）、devicePixelRatio 1、"
+            "scroll 1280×800 | client 1280×800、inner 1280×800、visualViewport 1280×800（scale 1）、devicePixelRatio 1、"
+            "scroll 1280×800 | 一致 |") in section
+    assert "| 測っていない | 判定前に終了（編集画面の表示か測定の前に失敗） |" in section
+
+    acceptance.summarize(run)
+    terminal = FakeTerminal()
+    acceptance.terminal_summary(terminal, config)
+    assert ("画面寸法の要求と実測（PR3-LAYOUT）: 一致 1 件・許容した差 1 件・許容しない差 0 件"
+            "（chrome-1905x945：要求 1905×945 → 実測 1906×946）") in terminal.lines
+
+
+def test_a_refused_difference_is_recorded_as_such(tmp_path):
+    config = configured(e2e_preflight=True)
+    run = acceptance.state(config)
+    item = FakeItem("tests/e2e/test_edit_page.py::test_three_panes_fit_at_the_base_and_the_measured_sizes[chrome-1905x945]")
+    item.config = config
+    before, after = measured((1905, 945)), measured((1906, 946))
+    acceptance.record_viewport(item, requested=(1905, 945), allowed=1, before=before)
+    acceptance.record_viewport(item, after=after, **support.judge_viewport((1905, 945), before, after, 1))
+    text = acceptance.render_markdown(config, run)
+    assert "| 許容しない差：アプリの表示後に寸法が変わった（表示前 1905×945） |" in text
+    assert "一致 0・許容した差 0・許容しない差 1（" in text
+
+
+def test_the_record_has_no_display_area_section_without_pr3_layout(tmp_path):
+    config = configured(e2e_preflight=True)
+    text = acceptance.render_markdown(config, acceptance.state(config))
+    assert "画面寸法の要求と実測" not in text

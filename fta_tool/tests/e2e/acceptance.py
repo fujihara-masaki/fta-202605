@@ -26,6 +26,10 @@ favicon 404 (tests/e2e/support.py) is listed with its test, URL and message.
 For each failed test the files actually left in its evidence folder are
 listed (pytest-playwright's options say only what it tries to keep), with
 the page taken by tests/e2e/conftest.py or the reason it could not be taken.
+PR3-LAYOUT records the display area it asked for and what the browser
+measured before and after the app was shown, with the judgement
+(tests/e2e/support.py judge_viewport: exact, a tolerated difference, or one
+that is not tolerated).
 
 This module is imported by tests/conftest.py and must not import Playwright.
 """
@@ -96,7 +100,7 @@ REQUIRED_IDS: dict[str, str] = {
     "E-E08": "編集：不正な親子関係の区分ごとの表示、走査が止まる、頂上事象として出ない、削除・追加・生成の可否と理由（すべての区分で追加生成・手動追加が無効になり、理由が見える）",
     "E-E09": "編集：demo_points を表示しない、マークアップを含む要因の文字列がそのまま文字として出る",
     "E-E19": "編集：部分更新の古い応答で表示が巻き戻らない（評価・頂上事象の保存の前に発行した取得、確定済みの評価と食い違う応答）、続けて保存される評価の間も取得しない。別のタブで後から評価が変わっても、以後の部分更新は止まらない（実際の2つのタブでも確認）",
-    "PR3-LAYOUT": "編集：暫定の3ペイン（1280px 以上）が 1280×800 と利用者環境の実測値（clientWidth×clientHeight：Chrome 1905×945・Edge 1912×914）で横に並び、ページ全体の横スクロールがなく、主要な操作が見えて隠れない。1280×800・1440×900 で各ペインが個別にスクロールする（最終確認は PR-7 の E-V01〜E-V03）",
+    "PR3-LAYOUT": "編集：暫定の3ペイン（1280px 以上）が 1280×800 と利用者環境の実測値（clientWidth×clientHeight：Chrome 1905×945・Edge 1912×914）で横に並び、ページ全体の横スクロールがなく、主要な操作が見えて隠れない。1280×800・1440×900 で各ペインが個別にスクロールする（最終確認は PR-7 の E-V01〜E-V03）。表示領域は要求と実測を記録し、Chrome 1905×945 だけはアプリの表示前からある各軸 +1 CSS px までの差（レイアウトの境界を跨がないもの）を許容して実測の寸法で検査する（2026-10-06）",
     "PR3-DELETE-SCOPE": "編集：別分析の要因が子孫にある要因とその祖先・走査を完了できない・確認用の情報を取得できない場合は削除できず、削除要求が送られない。親不在・上位に不整合ありはその部分木（階層不一致の子孫を含む）だけが消え、階層不一致の要因そのものは削除できない（判断2とその追加判断）",
     "PR3-GEN-PARENTS": "編集：生成・追加生成・手動追加の親に不整合のある要因を使わない。対象0件なら要求を送らない、親指定なしの要求を送らない、対象件数と除外件数の表示（判断3）",
     "PR3-LEGACY-NOTIFY": "編集：旧処理の通知（保存・生成・ダイアログ・削除・通信エラー）が共通の通知に同じ文言・種別で1回ずつ出る、エラーは閉じるまで残る、旧 #toast がない（判断4）。旧ダイアログを開いている間は通知がダイアログのどの部分にも重ならず、閉じると通常の位置に戻る",
@@ -109,6 +113,15 @@ OUTCOME_LABELS = {
     "skipped": "スキップ",
     "not_run": "未実施",
 }
+
+# PR3-LAYOUT's judgement of the measured display area (tests/e2e/support.py).
+VIEWPORT_EXACT = "一致"
+VIEWPORT_TOLERATED = "許容した差"
+VIEWPORT_REFUSED = "許容しない差"
+VIEWPORT_VERDICTS = (VIEWPORT_EXACT, VIEWPORT_TOLERATED, VIEWPORT_REFUSED)
+# The cases whose difference may be tolerated, with the CSS px allowed per
+# axis (the user's instruction of 2026-10-06): chrome-1905x945 only.
+VIEWPORT_ALLOWED = {"chrome-1905x945": 1}
 
 
 @dataclass
@@ -150,6 +163,9 @@ class RunState:
     # ("folder") and the page of a failed test taken by the page fixture
     # ("screenshot": the file, or why there is none).
     evidence: dict[str, dict] = field(default_factory=dict)
+    # PR3-LAYOUT, per test: the requested display area, the browser's
+    # measurements before and after the app was shown and the judgement.
+    viewport_checks: dict[str, dict] = field(default_factory=dict)
 
 
 STATE_KEY = pytest.StashKey[RunState]()
@@ -311,6 +327,22 @@ def add_evidence_folder(item: pytest.Item, folder) -> None:
 
 def add_failure_screenshot(item: pytest.Item, result: dict) -> None:
     state(item.config).evidence.setdefault(item.nodeid, {})["screenshot"] = result
+
+
+def record_viewport(item: pytest.Item, **values) -> None:
+    state(item.config).viewport_checks.setdefault(item.nodeid, {}).update(values)
+
+
+def css_px(value) -> str:
+    return f"{value:.4f}".rstrip("0").rstrip(".") if isinstance(value, float) else str(value)
+
+
+def viewport_counts(run: RunState) -> dict[str, int]:
+    counts = {verdict: 0 for verdict in VIEWPORT_VERDICTS}
+    for check in run.viewport_checks.values():
+        if check.get("verdict") in counts:
+            counts[check["verdict"]] += 1
+    return counts
 
 
 def _test_outcome(record: TestRecord) -> str:
@@ -556,6 +588,7 @@ def render_markdown(config: pytest.Config, run: RunState) -> str:
         f"| 必須受入検証として実行 | {_kind_of_run(run)} |",
         *_environment_rows(config, run),
         f"| 画面寸法（CSS ピクセル） | {'、'.join(run.viewports) or '-'} |",
+        *_viewport_summary_rows(run),
         f"| 結果（テスト単位） | 成功 {counts['passed']}・失敗 {counts['failed']}・スキップ {counts['skipped']}・未実施 {counts['not_run']} |",
         f"| 既知の例外（favicon の 404） | {len(run.known_console)} 件（コンソールの確認から除いたもの。下の「既知の例外として除いたコンソールのエラー」） |",
         f"| 判定 | {_verdict_text(run)} |",
@@ -576,6 +609,8 @@ def render_markdown(config: pytest.Config, run: RunState) -> str:
         reason = record.reason.replace("|", "／").replace("\n", " ")
         lines.append(f"| `{record.nodeid}` | {OUTCOME_LABELS[_test_outcome(record)]} | {reason} |")
     lines += ["", *_evidence_lines(config, run)]
+    if run.viewport_checks:
+        lines += ["", *_viewport_lines(run)]
     lines += ["", *_known_console_lines(run)]
     if not run.playwright_available:
         lines += ["", f"注：{run.playwright_reason}"]
@@ -620,6 +655,72 @@ def _evidence_lines(config: pytest.Config, run: RunState) -> list[str]:
         else:
             shot_text = f"保存できなかった：{shot.get('reason')}"
         lines.append(f"| `{item['nodeid']}` | {_cell(folder)} | {_cell(files)} | {_cell(shot_text)} |")
+    return lines
+
+
+def _viewport_summary_rows(run: RunState) -> list[str]:
+    if not run.viewport_checks:
+        return []
+    counts = viewport_counts(run)
+    undecided = len(run.viewport_checks) - sum(counts.values())
+    text = "・".join(f"{verdict} {count}" for verdict, count in counts.items())
+    if undecided:
+        text += f"・判定前に終了 {undecided}"
+    return [f"| 画面寸法の要求と実測（PR3-LAYOUT） | {text}（下の「画面寸法の要求と実測（PR3-LAYOUT）」） |"]
+
+
+def _measured(values: Optional[dict]) -> str:
+    if not values:
+        return "測っていない"
+    client, inner, scroll = values.get("client"), values.get("inner"), values.get("scroll")
+    visual = values.get("visualViewport")
+    parts = [f"client {client[0]}×{client[1]}"]
+    if inner:
+        parts.append(f"inner {inner[0]}×{inner[1]}")
+    if visual:
+        parts.append(f"visualViewport {css_px(visual[0])}×{css_px(visual[1])}（scale {css_px(visual[2])}）")
+    else:
+        parts.append("visualViewport なし")
+    parts.append(f"devicePixelRatio {values.get('devicePixelRatio')!r}")
+    if scroll:
+        parts.append(f"scroll {scroll[0]}×{scroll[1]}")
+    return "、".join(parts)
+
+
+def _viewport_lines(run: RunState) -> list[str]:
+    allowed = "、".join(f"{case}（各軸 +{px} CSS px まで）" for case, px in VIEWPORT_ALLOWED.items())
+    lines = [
+        "### 画面寸法の要求と実測（PR3-LAYOUT）",
+        "",
+        "要求した表示領域（Playwright の viewport、CSS ピクセル）と、ブラウザで測った値です。アプリの表示前（about:blank）と、"
+        "編集画面の表示後に測ります。client は `document.documentElement.clientWidth`×`clientHeight`（整数。利用者の PC で測った量）、"
+        "visualViewport は小数の値です。",
+        "",
+        f"差を許容するのは {allowed}だけです（検証条件の限定変更。2026-10-06 の利用者の指示）。実測が要求と同じか各軸 +1 CSS ピクセルまで大きく、"
+        "その差がアプリの表示前からあって表示後も同じで、要求と実測の間（両端を含む）にレイアウトの境界（1280px、ペインの幅の変化が止まる幅など。"
+        "`tests/e2e/support.py` の LAYOUT_BOUNDARIES）がない場合に限ります。そのときも、ページ全体の横スクロール、ペインの収まり、"
+        "主要な操作の表示と被覆の検査は、実測の寸法を基準に最後まで行います。ほかのケース（1280×800 と edge-1912x914）は一致が必要です。",
+        "",
+        "| テスト | 要求 | 表示前（about:blank） | 表示後（編集画面） | 判定 |",
+        "|---|---|---|---|---|",
+    ]
+    for nodeid, check in run.viewport_checks.items():
+        requested = check.get("requested")
+        asked = f"{requested[0]}×{requested[1]}" if requested else "-"
+        if check.get("allowed"):
+            asked += f"（差の許容 +{check['allowed']}）"
+        verdict = check.get("verdict")
+        if verdict is None:
+            judged = "判定前に終了（編集画面の表示か測定の前に失敗）"
+        elif verdict == VIEWPORT_EXACT:
+            judged = verdict
+        else:
+            size = check.get("size")
+            judged = f"{verdict}：{check.get('reason', '')}"
+            if verdict == VIEWPORT_TOLERATED and size:
+                judged += f"。後続の検査は {size[0]}×{size[1]} を基準に実施"
+        lines.append(f"| `{nodeid}` | {asked} | {_cell(_measured(check.get('before')))} "
+                     f"| {_cell(_measured(check.get('after')))} | {_cell(judged)} |")
     return lines
 
 
@@ -670,6 +771,13 @@ def terminal_summary(terminalreporter, config: pytest.Config) -> None:
     if run.preflight_missing:
         tr.line("見つからない準備確認のテスト: " + "、".join(run.preflight_missing), red=True)
     tr.line(f"既知の例外（favicon の 404。コンソールの確認から除いたもの）: {len(run.known_console)} 件")
+    if run.viewport_checks:
+        counts = viewport_counts(run)
+        tr.line("画面寸法の要求と実測（PR3-LAYOUT）: " + "・".join(f"{v} {n} 件" for v, n in counts.items())
+                + "".join(f"（{nodeid.rsplit('[', 1)[-1].rstrip(']')}：要求 {c['requested'][0]}×{c['requested'][1]}"
+                          f" → 実測 {c['size'][0]}×{c['size'][1]}）"
+                          for nodeid, c in run.viewport_checks.items()
+                          if c.get("verdict") in (VIEWPORT_TOLERATED, VIEWPORT_REFUSED) and c.get("size")))
     evidence = failure_evidence(run)
     if evidence:
         traces = sum(1 for e in evidence if any(_owner(n) == "pytest-playwright の trace" for n, _ in e["files"]))
