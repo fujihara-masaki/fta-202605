@@ -3,7 +3,7 @@
 // table and the inspector carry data-node-id, and one function per concern
 // updates all of them — selection, work step, view tab, judgement, counts.
 
-import { generationTargets, getNode, judgementLabel, stepCounts } from './model.js';
+import { generationTargets, getNode, judgementLabel, stepCounts, SUMMARY_COLUMNS, summaryCounts } from './model.js';
 
 const ITEM_SELECTOR = '[data-role$="-item"]';
 
@@ -58,9 +58,10 @@ export function applyView(app) {
   });
 }
 
-// Step statuses (②〜④) and the targets of the normal generation (③・④),
-// counted from the embedded data.
+// Step statuses (②〜④), the targets of the normal generation (③・④) and
+// the counts of ⑤, counted from the embedded data.
 export function applyCounts(app) {
+  applySummary(app);
   for (const level of [1, 2, 3]) {
     const status = document.querySelector(`[data-step-status="${level + 1}"]`);
     if (status) {
@@ -81,6 +82,21 @@ export function applyCounts(app) {
   }
 }
 
+export function applySummary(app) {
+  const rows = summaryCounts(app.model);
+  for (const [key, counts] of Object.entries(rows)) {
+    const row = document.querySelector(`[data-summary-row="${key}"]`);
+    if (!row) continue;
+    for (const column of SUMMARY_COLUMNS) {
+      const cell = row.querySelector(`[data-summary-cell="${column}"]`);
+      if (cell) cell.textContent = String(counts[column]);
+    }
+    if (key === 'anomaly') row.hidden = counts.total === 0;
+  }
+  const note = document.querySelector('[data-summary-anomaly-note]');
+  if (note) note.hidden = rows.anomaly.total === 0;
+}
+
 export function applyJudgement(nodeId, value) {
   document.querySelectorAll(`${ITEM_SELECTOR}[data-node-id="${nodeId}"]`).forEach((element) => {
     element.dataset.judgement = value;
@@ -94,12 +110,21 @@ export function applyJudgement(nodeId, value) {
   });
 }
 
-export function applyTopEvent(saved) {
+export function applyTopEvent(saved, { unsaved = false } = {}) {
   const text = String(saved ?? '').trim();
   const status = document.querySelector('[data-step-status="1"]');
-  if (status) status.textContent = text ? '頂上事象：入力済み' : '頂上事象：未入力';
+  if (status) {
+    status.textContent = `${text ? '頂上事象：入力済み' : '頂上事象：未入力'}${unsaved ? '・未保存あり' : ''}`;
+  }
   document.querySelectorAll('[data-action="select"][data-select="top"] .edit-outline__title').forEach((title) => {
     title.textContent = text ? saved : '（頂上事象が未設定です）';
+  });
+}
+
+// ③・④: an unsaved top event is not used by their generation (J-09).
+export function applyTopEventNotes(topEventUnsaved) {
+  document.querySelectorAll('[data-top-event-unsaved-note]').forEach((note) => {
+    note.hidden = !topEventUnsaved;
   });
 }
 

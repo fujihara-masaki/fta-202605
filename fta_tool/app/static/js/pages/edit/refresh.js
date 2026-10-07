@@ -25,15 +25,20 @@
 //   so a judgement changed later elsewhere (another tab) does not refuse
 //   every update after it;
 // - nothing is fetched while a generation runs; one fetch follows its end.
-// 404: the analysis is gone — the page says so and stops the operations.
+// 404: the analysis is gone — the page says so and stops the operations
+// (since PR-4 also the header title's editing and ①'s saving).
 // Another failure: the page is reloaded when nothing is being typed (the
 // state comes back from the hash and sessionStorage), otherwise
-// 「最新の表示に更新できませんでした」 is shown and the input stays.
+// 「最新の表示に更新できませんでした」 is shown and the input stays. Typed input
+// is what the shared save coordinator counts as unsaved or being saved (①,
+// the header title: PR-4), the open title editor and an open legacy dialog.
+// whenIdle() resolves when no update runs or waits (the end of a
+// generation, edit/generation.js).
 
 import { el } from '../../common/dom.js';
 import { requestText } from '../../common/http.js';
 import { notify } from '../../common/notify.js';
-import { isSameText } from '../../common/text.js';
+import { hasUnsaved, isSaving } from '../../common/unsaved.js';
 import { renderInspector } from './inspector.js';
 import { getNode, readModel, stepForNode } from './model.js';
 import { writeHash } from './state.js';
@@ -117,15 +122,12 @@ function restoreFocus(app, focus, previousModel) {
   if (isShown(heading)) heading.focus({ preventScroll: true });
 }
 
-// Typed input that a reload would lose (step ①, the title being edited, an
-// open legacy dialog).
+// Typed input that a reload would lose (step ① and the header title as the
+// save coordinator sees them, the open title editor, an open legacy dialog).
 function hasTypedInput() {
-  for (const id of ['topEventInput', 'systemContextInput', 'incidentContextInput']) {
-    const field = document.getElementById(id);
-    if (field && !isSameText(field.value, field.dataset.saved ?? '')) return true;
-  }
-  const title = document.getElementById('analysisTitle');
-  if (title && document.activeElement === title) return true;
+  if (hasUnsaved() || isSaving()) return true;
+  const titleEditor = document.querySelector('[data-title-editor]');
+  if (titleEditor && !titleEditor.hidden) return true;
   for (const id of ['nodeDetailModal', 'addNodeModal']) {
     const dialog = document.getElementById(id);
     if (dialog && !dialog.classList.contains('hidden')) return true;
@@ -156,6 +158,14 @@ export function createRefresher(app, { scrollers }) {
   let running = false;
   let pending = null;
   let sequence = 0;
+  let idleWaiters = [];
+
+  function settle() {
+    if (running || (pending && !app.gone)) return;
+    const ready = idleWaiters;
+    idleWaiters = [];
+    ready.forEach((resolve) => resolve());
+  }
 
   function stopOperations() {
     app.gone = true;
@@ -171,8 +181,9 @@ export function createRefresher(app, { scrollers }) {
     page.querySelectorAll('[data-step-panel="1"] button').forEach((button) => {
       button.disabled = true;
     });
-    const title = document.getElementById('analysisTitle');
-    if (title) title.setAttribute('contenteditable', 'false');
+    // The header title: ✎ off; an open editor keeps its input (read-only)
+    // and saves nothing more (edit/title.js).
+    if (app.title) app.title.stop();
     notify('分析が見つかりません（削除された可能性があります）', { type: 'error' });
   }
 
@@ -251,6 +262,7 @@ export function createRefresher(app, { scrollers }) {
     applySelection(app);
     applyCounts(app);
     applyFilter(app);
+    if (app.applyStep1State) app.applyStep1State(); // the step status and ③・④'s notes were replaced
     writeHash(app.state);
     renderInspector(app);
     if (scrollers.nav) scrollers.nav.scrollTop = scroll.nav;
@@ -336,6 +348,8 @@ export function createRefresher(app, { scrollers }) {
         const next = pending;
         pending = null;
         run(next);
+      } else {
+        settle();
       }
     }
   }
@@ -362,6 +376,10 @@ export function createRefresher(app, { scrollers }) {
     // For app.js's dialogs: where the focus is when one opens, and back
     // there when it closes — to the same control, or to what replaced it
     // when an update ran meanwhile (plan 5.7).
+    whenIdle() {
+      if (!running && (!pending || app.gone)) return Promise.resolve();
+      return new Promise((resolve) => idleWaiters.push(resolve));
+    },
     describeFocus: () => describeFocus(),
     restoreFocus: (focus) => restoreFocus(app, focus, app.model),
   };

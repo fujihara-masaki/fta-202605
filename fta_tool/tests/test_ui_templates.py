@@ -516,7 +516,7 @@ def test_javascript_is_served_with_a_javascript_mime_type(client):
 # Analysis edit (B), PR-3 skeleton: regions, the embedded summary, data-node-id
 # on every representation, broken parent links (J-25), tags (J-14), counts.
 
-EDIT_REGIONS = {"steps", "nav", "work-2", "work-3", "work-4", "work-anomalies", "tree", "table"}
+EDIT_REGIONS = {"steps", "nav", "work-2", "work-3", "work-4", "work-anomalies", "tree", "table", "summary"}
 SUMMARY_KEYS = {
     "id", "parentId", "level", "title", "description", "judgement", "directCause", "ai", "warning", "memo",
     "kind", "label", "notes", "anomalyRoot", "canParent", "parentReason", "delete",
@@ -577,16 +577,41 @@ def test_T04_edit_regions_steps_tabs_and_moved_inputs(client):
     skip = {a.text(): a.attrs["href"] for a in root.find_all("a", **{"class": "skip-link"})}
     assert skip == {"本文へ移動": "#main", "作業リストへ": "#edit-work-area", "インスペクタへ": "#edit-inspector"}
 
-    # Step ① and the header keep the ids and save functions of the old screen (PR-4 rebuilds them).
+    # Step ① (PR-4): the same ids and saved values, a save status per input
+    # (保存済み when the page opens), save buttons wired by the module (no
+    # inline handlers), and the explanation of the automatic save (J-09).
     top = root.find("textarea", id="topEventInput")
     assert (top.text(), top.attrs["data-saved"]) == ("頂上事象", "頂上事象")
     assert root.find("textarea", id="systemContextInput").attrs["data-saved"] == "構成"
     assert root.find("textarea", id="incidentContextInput").attrs["data-saved"] == "状況"
     assert "filled" in root.find(id="analysisContextStatus").attrs["class"].split()
-    title = root.find("h1", id="analysisTitle")
-    assert title.attrs["contenteditable"] == "true" and title.text() == "編集画面の構造"
-    header_links = [a.attrs["href"] for a in root.find(**{"class": "edit-header"}).find_all("a")]
-    assert header_links == [f"/analyses/{analysis_id}/export/{fmt}" for fmt in ("json", "csv", "markdown")] + ["/"]
+    for field_id in ("topEventInput", "systemContextInput", "incidentContextInput"):
+        status = root.find(**{"data-save-status": field_id})
+        assert (status.attrs["data-state"], status.text()) == ("saved", "保存済み")
+    step1 = root.find("section", **{"data-step-panel": "1"})
+    assert [b.text() for b in step1.find_all("button", **{"data-save-button": True})] == ["頂上事象を保存", "参考情報を保存"]
+    assert not [b for b in step1.find_all("button") if "onclick" in b.attrs]
+    note = step1.find(**{"data-autosave-note": True}).text()
+    assert "一次要因の生成（通常・追加）の前に、入力中の頂上事象と参考情報を自動で保存します" in note
+    assert "頂上事象は保存済みの値を使います（入力中の頂上事象は使われません）" in note
+
+    # Header (PR-4): the title as text with ✎ and an inline editor (hidden),
+    # the list's export menu and 一覧へ; no updated time (J-15).
+    header = root.find(**{"class": "edit-header"})
+    title = header.find("h1", id="analysisTitle")
+    assert title.text() == "編集画面の構造" and "contenteditable" not in title.attrs
+    assert header.find("button", **{"data-title-edit": True}).attrs["aria-label"] == "分析タイトルを変更：編集画面の構造"
+    editor = header.find(**{"data-title-editor": True})
+    assert "hidden" in editor.attrs
+    title_input = editor.find("input", id="analysisTitleInput")
+    assert (title_input.attrs["value"], title_input.attrs["data-saved"]) == ("編集画面の構造", "編集画面の構造")
+    assert [b.text() for b in editor.find_all("button")] == ["保存", "取消"]
+    assert not [e for e in header.find_all() if "onclick" in e.attrs or "onblur" in e.attrs]
+    menu = header.find(**{"data-ui-menu": True})
+    assert menu.find("button", **{"data-ui-menu-button": True}).attrs["aria-expanded"] == "false"
+    header_links = [(a.attrs["href"], "download" in a.attrs) for a in header.find_all("a")]
+    assert header_links == [(f"/analyses/{analysis_id}/export/{fmt}", True) for fmt in ("json", "csv", "markdown")] + [("/", False)]
+    assert "更新" not in header.find(**{"class": "edit-header__title"}).text()
     step5 = [a for a in root.find("section", **{"data-step-panel": "5"}).find_all("a")]
     assert [(a.attrs["href"], "download" in a.attrs) for a in step5] == [
         (f"/analyses/{analysis_id}/export/{fmt}", True) for fmt in ("json", "csv", "markdown")]
@@ -751,3 +776,151 @@ def test_T04_tags_step_counts_and_generation_targets(client):
     assert root.find(**{"data-target-count": "3"}).text() == "1"
     assert root.find(**{"data-target-excluded": "3"}).is_hidden()
     assert broken not in {int(e.attrs["data-node-id"]) for e in root.find_all(**{"data-role": "group-item"})}
+
+
+# ----- T-06 -------------------------------------------------------------------
+# ⑤'s table of what each export format contains (PR-4, plan section 4 UI-04
+# note) is checked against the real exports (services/export_service.py),
+# never the other way round: every row and every cell of the table is
+# probed in the JSON, CSV and Markdown the export URLs return.
+
+def _t06_analysis(client):
+    context = json.dumps({"system_context": "T06構成の印", "incident_context": "T06状況の印",
+                          "demo_points": "T06デモ観点の印"}, ensure_ascii=False)
+    analysis_id = _create(client, "T06分析タイトルの印", top_event="T06頂上事象の印", context=context)
+    first = _raw_node(client, analysis_id, 1, title="T06一次要因の印", judgement="yes", description="T06説明の印",
+                      ai=True, warning="T06品質警告の印", memo="T06メモの印", direct="direct")
+    with client.engine.begin() as conn:
+        conn.execute(models.Node.__table__.update().where(models.Node.id == first).values(
+            direct_cause_comment="T06評価コメントの印", evidence="T06根拠の印", prevention_idea="T06再発防止策の印"))
+    second = _raw_node(client, analysis_id, 2, first, title="T06二次要因の印", judgement="no")
+    orphan = _raw_node(client, analysis_id, 2, 999999, title="T06親不在の印")
+    return analysis_id, {"first": first, "second": second, "orphan": orphan}
+
+
+def _t06_exports(client, analysis_id):
+    out = {}
+    for fmt in ("json", "csv", "markdown"):
+        response = client.get(f"/analyses/{analysis_id}/export/{fmt}")
+        assert response.status_code == 200
+        out[fmt] = response.content.decode("utf-8-sig")
+    return out
+
+
+DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _t06_probes(exports, ids):
+    """For each row of the table: is the item in each format (as written)?"""
+    data = json.loads(exports["json"])
+    nodes = {n["id"]: n for n in data["nodes"]}
+    csv_text, md = exports["csv"], exports["markdown"]
+    header = csv_text.splitlines()[0].split(",")
+    first = nodes[ids["first"]]
+    md_lines = md.splitlines()
+
+    def in_all(text):
+        return {"json": text in exports["json"], "csv": text in csv_text, "markdown": text in md}
+
+    return {
+        "title": {"json": data["title"] == "T06分析タイトルの印", "csv": "T06分析タイトルの印" in csv_text,
+                  "markdown": "T06分析タイトルの印" in md},
+        "top_event": {"json": data["top_event"] == "T06頂上事象の印", "csv": "T06頂上事象の印" in csv_text,
+                      "markdown": "T06頂上事象の印" in md},
+        "context": {fmt: all(mark in text for mark in ("T06構成の印", "T06状況の印", "T06デモ観点の印"))
+                    for fmt, text in (("json", exports["json"]), ("csv", csv_text), ("markdown", md))},
+        "timestamps": {"json": bool(data["created_at"]) and bool(data["updated_at"]),
+                       "csv": bool(DATE.search(csv_text)), "markdown": bool(DATE.search(md))},
+        "structure": {
+            "json": (first["level"], nodes[ids["second"]]["parent_id"]) == (1, ids["first"]),
+            "csv": header[:6] == ["ID", "レベル", "タイトル", "説明", "親ID", "親要因"]
+            and f"{ids['second']},二次要因,T06二次要因の印,,{ids['first']},T06一次要因の印" in csv_text,
+            "markdown": any(line.startswith("  - 一次要因: T06一次要因の印") for line in md_lines)
+            and any(line.startswith("    - 二次要因: T06二次要因の印") for line in md_lines),
+        },
+        "factor_title": in_all("T06二次要因の印"),
+        "description": in_all("T06説明の印"),
+        "origin": {"json": first["ai_generated"] is True and nodes[ids["second"]]["ai_generated"] is False,
+                   "csv": "AI生成" in csv_text and ",手動," in csv_text,
+                   "markdown": "AI生成" in md or "手動" in md},
+        "judgement": {"json": (first["user_judgement"], nodes[ids["second"]]["user_judgement"]) == ("yes", "no"),
+                      "csv": ",Yes," in csv_text and ",No," in csv_text,
+                      "markdown": "T06一次要因の印 [Yes]" in md and "T06二次要因の印 [No]" in md},
+        "direct_cause": {"json": first["direct_cause_status"] == "direct" and "T06評価コメントの印" in exports["json"],
+                         "csv": ",直接要因,T06評価コメントの印," in csv_text,
+                         "markdown": "直接要因評価: 直接要因" in md and "T06評価コメントの印" in md
+                         and "直接要因評価: 未評価" not in md},
+        "evidence": in_all("T06根拠の印"),
+        "prevention": in_all("T06再発防止策の印"),
+        "memo": in_all("T06メモの印"),
+        "warning": {"json": first["warning_flags"] == "T06品質警告の印",
+                    "csv": ",要確認,T06品質警告の印,警告のみ" in csv_text, "markdown": "T06品質警告の印" in md},
+        "anomaly": {"json": ids["orphan"] in nodes, "csv": "T06親不在の印" in csv_text,
+                    # partial: the factor in place is written, the one whose parent cannot be followed is not
+                    "markdown": "partial" if ("T06二次要因の印" in md and "T06親不在の印" not in md) else "T06親不在の印" in md},
+    }
+
+
+def test_T06_the_export_table_of_step_5_matches_the_real_exports(client):
+    analysis_id, ids = _t06_analysis(client)
+    _, root = _edit_page(client, analysis_id)
+    table = root.find(**{"data-export-table": True})
+    rows = {row.attrs["data-export-item"]: row for row in table.find_all("tr", **{"data-export-item": True})}
+    probes = _t06_probes(_t06_exports(client, analysis_id), ids)
+    assert set(rows) == set(probes)  # every row is checked, nothing is left out
+    for key, row in rows.items():
+        for cell in row.find_all("td"):
+            fmt, claimed = cell.attrs["data-format"], cell.attrs["data-included"]
+            found = probes[key][fmt]
+            expected = {"yes": True, "no": False, "partial": "partial"}[claimed]
+            assert found == expected, f"{key} / {fmt}：表は「{cell.text()}」、出力は {found}"
+        assert [c.attrs["data-format"] for c in row.find_all("td")] == ["json", "csv", "markdown"]
+
+
+def test_T06_the_differences_the_screen_must_state(client):
+    """The differences the user named for PR-4, stated in ⑤ and true of the exports."""
+    analysis_id, ids = _t06_analysis(client)
+    _, root = _edit_page(client, analysis_id)
+    cells = {(row.attrs["data-export-item"], td.attrs["data-format"]): td.attrs["data-included"]
+             for row in root.find(**{"data-export-table": True}).find_all("tr", **{"data-export-item": True})
+             for td in row.find_all("td")}
+    exports = _t06_exports(client, analysis_id)
+    # CSV: no analysis title, top event or reference information.
+    for item, mark in (("title", "T06分析タイトルの印"), ("top_event", "T06頂上事象の印"), ("context", "T06構成の印")):
+        assert cells[(item, "csv")] == "no" and mark not in exports["csv"]
+    # Markdown: no analysis title, description, AI／手動, evidence, memo, quality warning.
+    for item, mark in (("title", "T06分析タイトルの印"), ("description", "T06説明の印"), ("evidence", "T06根拠の印"),
+                       ("memo", "T06メモの印"), ("warning", "T06品質警告の印")):
+        assert cells[(item, "markdown")] == "no" and mark not in exports["markdown"]
+    assert cells[("origin", "markdown")] == "no" and "AI生成" not in exports["markdown"]
+    assert exports["markdown"].startswith("# FTA分析結果")
+    # The three formats keep different items.
+    columns = {fmt: {item for (item, f), v in cells.items() if f == fmt and v == "yes"} for fmt in ("json", "csv", "markdown")}
+    assert columns["json"] > columns["csv"] and columns["json"] > columns["markdown"]
+    assert columns["csv"] - columns["markdown"] and columns["markdown"] - columns["csv"]
+
+
+def test_step_5_counts_per_level_and_for_inconsistent_factors(client):
+    analysis_id = _create(client, "⑤の件数", top_event="頂上")
+    a = _raw_node(client, analysis_id, 1, title="一次A", judgement="yes", direct="direct", warning="警告")
+    _raw_node(client, analysis_id, 1, title="一次B", judgement="no", direct="likely")
+    _raw_node(client, analysis_id, 2, a, title="二次C")
+    _raw_node(client, analysis_id, 2, 999999, title="二次（親不在）", judgement="yes", direct="direct")
+    _, root = _edit_page(client, analysis_id)
+    table = root.find(**{"data-summary-table": True})
+    values = {row.attrs["data-summary-row"]: [td.text() for td in row.find_all("td")]
+              for row in table.find_all("tr", **{"data-summary-row": True})}
+    # 件数, Yes, No, 未評価, 要確認, 直接要因 (直接要因評価「直接要因」 only, not 可能性高)
+    assert values == {
+        "1": ["2", "1", "1", "0", "1", "1"],
+        "2": ["1", "0", "0", "1", "0", "0"],
+        "3": ["0", "0", "0", "0", "0", "0"],
+        "anomaly": ["1", "1", "0", "0", "0", "1"],
+        "all": ["4", "2", "1", "1", "1", "2"],
+    }
+    assert "hidden" not in table.find("tr", **{"data-summary-row": "anomaly"}).attrs
+    # Without inconsistent factors the row and its note are hidden.
+    other = _create(client, "⑤の件数（不整合なし）")
+    _, root = _edit_page(client, other)
+    assert "hidden" in root.find("tr", **{"data-summary-row": "anomaly"}).attrs
+    assert "hidden" in root.find(**{"data-summary-anomaly-note": True}).attrs

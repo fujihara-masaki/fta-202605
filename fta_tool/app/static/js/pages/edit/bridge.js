@@ -16,11 +16,18 @@
 //   notify(message, type)   app.js's messages in the shared notifications
 //                           (J-24, moved forward to PR-3 by 判断4): the same
 //                           text and kind ('success' | 'warning' | 'error')
-//   beginWrite()            a save the page shows at once (the top event of
-//                           ①) starts; call the function it returns when it
-//                           has ended. Tracked like a judgement: no update
-//                           is fetched meanwhile, and one fetched before it
-//                           is not applied (plan 3.4-5, P-3)
+//   beginWrite()            a save the page shows at once starts; call the
+//                           function it returns when it has ended. Tracked
+//                           like a judgement: no update is fetched
+//                           meanwhile, and one fetched before it is not
+//                           applied (plan 3.4-5, P-3). ① uses it itself
+//                           since PR-4 (edit/step1.js)
+//   beginGeneration(level)  PR-4: before a generation sends anything —
+//                           waits for saves in flight and saves ① as the
+//                           level needs (edit/generation.js). Resolves to
+//                           null (nothing may be generated; the reason was
+//                           shown) or {end()}, to call once the generation
+//                           and its result are completely done
 //   rememberFocus()         where the focus is (before a dialog opens) …
 //   restoreFocus(focus)     … and back there when it closes, or to the
 //                           control that replaced it after an update (5.7)
@@ -76,15 +83,8 @@ export function installBridge(app) {
     notify: (message, type) => {
       notify(message, { type: LEGACY_TYPES.has(type) ? type : 'success' });
     },
-    beginWrite: () => {
-      const write = app.writes.begin();
-      let ended = false;
-      return () => {
-        if (ended) return;
-        ended = true;
-        app.writes.end(write, null);
-      };
-    },
+    beginWrite: () => app.beginWrite(),
+    beginGeneration: (level) => app.beginGeneration(Number(level)),
     rememberFocus: () => app.describeFocus(),
     restoreFocus: (focus) => app.restoreFocus(focus),
   };

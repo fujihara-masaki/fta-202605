@@ -23,7 +23,7 @@
   overflow: hidden;
 }
 
-/* ----- Header (legacy title editing and export links, moved as they were) ----- */
+/* ----- Header: the analysis title edited inline, export menu, 一覧へ (PR-4) ----- */
 .edit-header {
   display: flex;
   flex: none;
@@ -40,13 +40,44 @@
   gap: var(--space-3);
   min-width: 0;
 }
-.edit-header__title .analysis-title {
-  overflow-wrap: anywhere;
-}
 .edit-header__actions {
   display: flex;
   flex: none;
+  align-items: center;
   gap: var(--space-2);
+}
+.edit-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.edit-title__text {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.edit-title-editor {
+  display: grid;
+  grid-template-columns: minmax(240px, 560px) auto;
+  align-items: center;
+  column-gap: var(--space-2);
+  row-gap: 2px;
+  min-width: 0;
+}
+.edit-title-editor__input {
+  min-width: 0;
+}
+.edit-title-editor__actions {
+  display: flex;
+  gap: var(--space-1);
+}
+.edit-title-editor__help,
+.edit-title-editor__error {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 /* ----- Work steps ①〜⑤ ----- */
@@ -160,7 +191,10 @@
   padding: var(--space-2) var(--space-2) var(--space-5);
 }
 .edit-center .edit-pane__scroll {
-  padding: var(--space-4) var(--space-5) var(--space-6);
+  /* Room below the last controls (①'s save buttons, ⑤'s export links), so
+     they can be scrolled above the shared notifications at the bottom
+     centre, where an error stays until it is closed (J-24; PR-4). */
+  padding: var(--space-4) var(--space-5) 128px;
 }
 .edit-inspector .edit-pane__scroll {
   padding: var(--space-3) var(--space-4) var(--space-6);
@@ -497,7 +531,32 @@
   margin-top: var(--space-5);
 }
 
-/* ① top event and the reference information (inputs moved as they were) */
+/* ① top event and the reference information, with the save status (PR-4) */
+.edit-step1__autosave {
+  margin-bottom: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-soft);
+  font-size: var(--font-size-sm);
+}
+.edit-step1__autosave p {
+  margin: 0;
+}
+.edit-step1__label-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.edit-step1__message {
+  flex: 1 1 auto;
+  margin: 0;
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
 .edit-step1 {
   display: grid;
   gap: var(--space-4);
@@ -525,7 +584,14 @@
 }
 .edit-step1__actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: var(--space-3);
+}
+.edit-opbar__warn {
+  display: block;
+  color: var(--color-warning);
+  font-weight: 700;
 }
 .context-status {
   padding: 0 7px;
@@ -543,15 +609,42 @@
   color: var(--color-text-muted);
 }
 
-/* ⑤ export links (provisional) */
-.edit-step5__lead {
+/* ⑤ counts, what each export format contains, export links (PR-4) */
+.edit-summary,
+.edit-step5__export {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+}
+.edit-step5__title {
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-weight: 700;
+}
+.edit-step5__lead,
+.edit-step5__note {
+  margin: 0;
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
 }
+.edit-summary__table td,
+.edit-summary__table th[scope="col"] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.edit-summary__table th[scope="col"]:first-child {
+  text-align: left;
+}
+.edit-export-table td[data-included="no"] {
+  color: var(--color-text-muted);
+}
+.edit-export-table td[data-included="partial"] {
+  color: var(--color-warning);
+}
 .edit-step5__links {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-2);
-  margin-top: var(--space-3);
 }
 
 /* ----- Table view ----- */

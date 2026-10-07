@@ -127,3 +127,30 @@ export function stepForNode(node) {
   if (!node) return 1;
   return Math.min(Math.max(Number(node.level) + 1, 2), 4);
 }
+
+// Counts of ⑤ (PR-4), as app/detail_view.py summary_counts: per level the
+// factors in place, the factors with an inconsistent parent link or ancestor
+// in a row of their own, and every factor. Always from the data, never from
+// what the page shows.
+export const SUMMARY_COLUMNS = ['total', 'yes', 'no', 'unknown', 'warning', 'direct'];
+
+function countRow(items) {
+  return {
+    total: items.length,
+    yes: items.filter((node) => node.judgement === 'yes').length,
+    no: items.filter((node) => node.judgement === 'no').length,
+    unknown: items.filter((node) => node.judgement !== 'yes' && node.judgement !== 'no').length,
+    warning: items.filter((node) => node.warning).length,
+    direct: items.filter((node) => node.directCause === 'direct').length,
+  };
+}
+
+export function summaryCounts(model) {
+  const rows = {};
+  for (const level of [1, 2, 3]) {
+    rows[String(level)] = countRow(model.nodes.filter((node) => node.kind === 'ok' && node.level === level));
+  }
+  rows.anomaly = countRow(model.nodes.filter((node) => node.kind !== 'ok'));
+  rows.all = countRow(model.nodes);
+  return rows;
+}

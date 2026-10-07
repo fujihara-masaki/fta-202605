@@ -137,6 +137,9 @@ class DetailView:
     targets: dict[int, dict[str, int]]  # generated level -> Yes parents usable / excluded
     lookups_ok: bool
     data: dict
+    # ⑤ counts (PR-4): "1"〜"3" consistent factors per level, "anomaly" the
+    # factors with an inconsistent link or ancestor, "all" every factor.
+    summary: dict = field(default_factory=dict)
 
 
 # ----- parent-link categories ------------------------------------------------
@@ -306,6 +309,28 @@ def _place_for_display(ordered: list[NodeView], views: dict[int, NodeView]) -> t
     return roots, entries
 
 
+def _count_row(items: list[NodeView]) -> dict[str, int]:
+    return {
+        "total": len(items),
+        "yes": sum(1 for v in items if v.judgement == "yes"),
+        "no": sum(1 for v in items if v.judgement == "no"),
+        "unknown": sum(1 for v in items if v.judgement not in ("yes", "no")),
+        "warning": sum(1 for v in items if v.warning_text),
+        "direct": sum(1 for v in items if v.direct_cause == "direct"),
+    }
+
+
+def summary_counts(ordered: list[NodeView]) -> dict[str, dict[str, int]]:
+    """Counts of ⑤ (PR-4). Per level the factors in place (kind ok, as the
+    step statuses); factors with an inconsistent parent link or ancestor in a
+    row of their own; "all" is every factor (what JSON and CSV export).
+    js/pages/edit/model.js summaryCounts counts the same from the embedded data."""
+    rows = {str(level): _count_row([v for v in ordered if v.kind == OK and v.level == level]) for level in (1, 2, 3)}
+    rows["anomaly"] = _count_row([v for v in ordered if v.kind != OK])
+    rows["all"] = _count_row(ordered)
+    return rows
+
+
 def build_detail_view(analysis, nodes: list, links: Optional[CrossAnalysisLinks], *,
                       factor_counts: dict[str, int], scope_limit: Optional[int] = None) -> DetailView:
     """Everything the edit screen shows about the factors.
@@ -423,6 +448,7 @@ def build_detail_view(analysis, nodes: list, links: Optional[CrossAnalysisLinks]
     }
 
     return DetailView(
+        summary=summary_counts(ordered),
         nodes=ordered,
         by_id=views,
         roots=roots,
