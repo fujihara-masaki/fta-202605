@@ -4,7 +4,10 @@
 // and the returned end() when it is completely done:
 //
 //   preparing  generation buttons off at once (no second start); saves in
-//              flight (title, ①, judgements) are awaited; if the title being
+//              flight (title, ①, judgements) are awaited until none is left —
+//              a judgement queued for the same factor starts when the one
+//              before it ends, so the parents are fixed only after the last
+//              one was saved; if the title being
 //              edited could not be saved, nothing is generated; then the
 //              automatic save through the same saveSource() as the save
 //              buttons: 一次 (normal and additional) — the top event (empty:
@@ -12,7 +15,10 @@
 //              — the reference information only, the saved top event is used
 //              (J-09). A failed save: nothing is generated, the input stays.
 //   running    the requests (app.generating: no partial update meanwhile).
-//   finishing  the partial update that shows the result; then idle.
+//   finishing  the partial update that shows the result, until it has
+//              succeeded or failed (no time limit: a phase that ended before
+//              the update would let 保存して移動 run while the page is still
+//              being changed); then idle.
 // In every phase but idle the coordinator refuses 保存して移動 (5.9.3-1).
 // The phase is never stored: a reload starts idle.
 //
@@ -25,19 +31,12 @@ import { notify } from '../../common/notify.js';
 import { normalizeText } from '../../common/text.js';
 import {
   getGenerationPhase,
+  isSaving,
   lastFailure,
   saveSource,
   setGenerationPhase,
   whenAllIdle,
 } from '../../common/unsaved.js';
-
-const FINISH_LIMIT_MS = 15000;
-
-function delay(ms) {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
-}
 
 export function createGeneration(app, { step1, title }) {
   function fail(reason) {
@@ -51,9 +50,20 @@ export function createGeneration(app, { step1, title }) {
     setGenerationPhase('finishing');
     app.setGenerating(false); // the update held back during the requests runs now
     try {
-      await Promise.race([app.whenRefreshed(), delay(FINISH_LIMIT_MS)]);
+      await app.whenRefreshed(); // resolves once the update has been applied or has failed
     } finally {
       setGenerationPhase('idle');
+    }
+  }
+
+  // Saves in flight (save sources and the page's writes: judgements, the
+  // top event), again and again until none is left.
+  async function waitForSaves() {
+    for (;;) {
+      await whenAllIdle();
+      while (app.writes.inFlight > 0) await app.writes.whenIdle();
+      await Promise.resolve(); // let a write that starts when another ends begin
+      if (!isSaving() && app.writes.inFlight === 0) return;
     }
   }
 
@@ -66,8 +76,7 @@ export function createGeneration(app, { step1, title }) {
     setGenerationPhase('preparing');
     app.setGenerating(true);
     try {
-      await whenAllIdle();
-      await app.writes.whenIdle();
+      await waitForSaves();
       if (title && title.source.isDirty()) {
         const failure = lastFailure(title.source);
         return fail(`分析タイトルの保存に失敗したため、生成を開始しませんでした：${failure ? failure.reason : '保存していない変更があります'}`);

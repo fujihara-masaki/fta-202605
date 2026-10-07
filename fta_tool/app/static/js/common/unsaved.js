@@ -46,6 +46,10 @@
 //      (setGenerationPhase; J-01) — the input stays;
 //   2. saves in flight are awaited (after 10 s the dialog says that the
 //      server may be busy with something else; requests are never cancelled);
+//      after every wait the generation state and the saves in flight are
+//      checked again, and again right before discarding, saving or leaving
+//      (a generation started meanwhile saves ① itself: nothing is then
+//      asked, discarded or left);
 //   3. 'auto' sources are saved; one that fails or is invalid stops the move
 //      and shows its reason (no dialog);
 //   4. other unsaved sources: 保存して移動 / 破棄して移動 / 編集を続ける.
@@ -85,6 +89,7 @@ export const SOURCE_ORDER = {
 export const GENERATION_PHASES = ['idle', 'preparing', 'running', 'finishing'];
 export const SLOW_WAIT_MS = 10000;
 export const GENERATING_REASON = '生成の準備中・生成中・結果の反映中は保存できません。生成が終わるまでお待ちください（入力中の内容は保持されています）。';
+const SAVING_REASON = '送信中の保存があります。保存が終わってから選んでください（送信した保存は取り消しません）。';
 const UNEXPECTED_REASON = '保存中に予期しないエラーが発生しました';
 const SLOW_MESSAGE = 'サーバーが別の処理（生成など）を実行中の可能性があります。保存が終わるまで待っています（送信した保存は取り消しません）。';
 
@@ -312,6 +317,17 @@ function waitUntilIdle(invoker) {
   }).then((outcome) => outcome.done);
 }
 
+// What must not happen now: a generation is prepared, runs or is finished
+// (J-01), or a save is in flight — discarding or leaving would contradict a
+// request already sent (e.g. the reference information a generation that
+// started meanwhile is saving). Checked again after every wait and right
+// before discarding, saving or leaving.
+function blockedReason() {
+  if (generationPhase !== 'idle') return GENERATING_REASON;
+  if (isSaving()) return SAVING_REASON;
+  return null;
+}
+
 // ----- 保存して移動 ----------------------------------------------------------
 
 const RESULT_TEXT = {
@@ -361,6 +377,10 @@ async function saveAll(dialog, results) {
     window.clearTimeout(slowTimer);
     if (!dialog.isOpen()) return;
     dialog.setBusy(false);
+    if (generationPhase !== 'idle') {
+      dialog.setError(GENERATING_REASON);
+      return;
+    }
   }
   const targets = dirtySources().filter((source) => !isAuto(source) && typeof source.save === 'function');
   const invalid = targets
@@ -395,7 +415,7 @@ async function saveAll(dialog, results) {
   dialog.setBusy(false);
 
   const unsaved = [...results.values()].filter((entry) => entry.state !== 'saved');
-  if (!unsaved.length && !hasUnsavedToAsk()) {
+  if (!unsaved.length && !hasUnsavedToAsk() && !blockedReason()) {
     dialog.close('saved', { restoreFocus: false });
     return;
   }
@@ -439,6 +459,11 @@ function askToDiscard(invoker, pending, prompt = {}) {
     cancelAction: 'continue',
     onAction: (actionId, controller) => {
       if (actionId === 'discard') {
+        const blocked = blockedReason();
+        if (blocked) {
+          controller.setError(blocked);
+          return;
+        }
         discardAll();
         controller.close('discarded', { restoreFocus: false });
       } else {
@@ -472,6 +497,11 @@ function askAboutUnsaved(invoker) {
       if (actionId === 'continue') {
         controller.close('continue');
       } else if (actionId === 'discard') {
+        const blocked = blockedReason();
+        if (blocked) {
+          controller.setError(blocked);
+          return;
+        }
         discardAll();
         controller.close('discarded', { restoreFocus: false });
       } else if (actionId === 'save') {
@@ -508,19 +538,36 @@ async function saveAutoSources(invoker) {
   return true;
 }
 
+function refusedWhileGenerating() {
+  if (generationPhase === 'idle') return false;
+  notify(GENERATING_REASON, { type: 'warning' });
+  return true;
+}
+
+// The state is checked again after every wait: a generation can start
+// while a save is awaited (its preparation then saves ① itself), and a save
+// can start meanwhile. Nothing is asked, discarded, saved or left while
+// either holds.
 async function runGuarded({ invoker, proceed }) {
   if (guardActive) return false;
-  if (generationPhase !== 'idle') {
-    notify(`${GENERATING_REASON}`, { type: 'warning' });
-    return false;
-  }
+  if (refusedWhileGenerating()) return false;
   guardActive = true;
   try {
-    if (isSaving() && !(await waitUntilIdle(invoker))) return false;
-    if (!(await saveAutoSources(invoker))) return false;
+    for (;;) {
+      if (isSaving() && !(await waitUntilIdle(invoker))) return false;
+      if (refusedWhileGenerating()) return false;
+      if (!(await saveAutoSources(invoker))) return false;
+      if (refusedWhileGenerating()) return false;
+      if (!isSaving()) break;
+    }
     if (hasUnsavedToAsk()) {
       const choice = await askAboutUnsaved(invoker);
       if (choice !== 'saved' && choice !== 'discarded') return false;
+    }
+    const blocked = blockedReason();
+    if (blocked) {
+      notify(`移動していません：${blocked}`, { type: 'warning' });
+      return false;
     }
     refresh();
     proceed();
