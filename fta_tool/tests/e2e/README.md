@@ -30,7 +30,7 @@ Claude Code のリモート実行環境（Linux）では、このブラウザが
 | インストール済みの Chrome での必須受入検証 | 上の `--e2e-preflight` を `--e2e-required` に替える | **失敗** |
 
 - `--e2e-required` の代わりに環境変数 `FTA_E2E_REQUIRED=1` でも必須受入検証になります。`--e2e-env` の代わりに `FTA_E2E_ENV` も使えます。
-- 必須受入検証では、`acceptance.py` の `REQUIRED_IDS`（PR-4 時点の累積：E-L01〜E-L08、E-X01、E-N01〜E-N06、PR1-BASE-*、PR1-STUB、PR2-IME、PR2-NO-SAMPLES、E-E01〜E-E09、E-E19、PR3-LEGACY-OPS、PR3-LEGACY-NOTIFY、PR3-LAYOUT、PR3-DELETE-SCOPE、PR3-GEN-PARENTS、PR-4 で追加した E-E10〜E-E13・E-E20・PR4-LAYOUT）の各項目について、対応するテストがすべて実行されて成功することを求めます。スキップしたテストは失敗として報告し、`-k` などで実行しなかった項目は「未実施」として失敗にします。PR1-COMPAT-NEW（移行前の新規作成画面の互換確認）は PR-2 で E-N01〜E-N06 に、PR1-COMPAT-EDIT（移行前の分析編集画面の互換確認）は PR-3 で E-E01〜 と PR3-LEGACY-OPS に置き換えました。
+- 必須受入検証では、`acceptance.py` の `REQUIRED_IDS`（PR-5 時点の累積：E-L01〜E-L08、E-X01、E-N01〜E-N06、PR1-BASE-*、PR1-STUB、PR2-IME、PR2-NO-SAMPLES、E-E01〜E-E09、E-E19、PR3-LEGACY-OPS、PR3-LEGACY-NOTIFY、PR3-LAYOUT、PR3-DELETE-SCOPE、PR3-GEN-PARENTS、PR-4 で追加した E-E10〜E-E13・E-E20・PR4-LAYOUT、PR-5 で追加した E-E14〜E-E18・PR5-LAYOUT。計 48 項目）の各項目について、対応するテストがすべて実行されて成功することを求めます。スキップしたテストは失敗として報告し、`-k` などで実行しなかった項目は「未実施」として失敗にします。PR1-COMPAT-NEW（移行前の新規作成画面の互換確認）は PR-2 で E-N01〜E-N06 に、PR1-COMPAT-EDIT（移行前の分析編集画面の互換確認）は PR-3 で E-E01〜 と PR3-LEGACY-OPS に置き換えました。
 - テンプレートの構造テスト（T-01〜T-04、`tests/test_ui_templates.py`）と不正な親子関係の区分・削除範囲のテスト（T-07、`tests/test_node_integrity.py`。テストごとの一時 DB）は通常の pytest で実行します。必須受入検証では、通常の pytest と E2E の両方の結果を記録してください。
 - 失敗の調査には pytest-playwright のオプションが使えます：`--headed`（画面を表示）、`--slowmo 200`、`--screenshot only-on-failure --tracing retain-on-failure --output <絶対パス>`。
 - **`--output` には、新しいフォルダを指定してください。** pytest-playwright 0.7.1 は、開始時に `--output`（既定は実行したフォルダの `test-results`）を削除します。pytest の `--basetemp` も、開始時に中身を消します。どちらにも、過去の記録や手動確認のフォルダを指定しないでください。
@@ -46,7 +46,7 @@ Claude Code のリモート実行環境（Linux）では、このブラウザが
 ## インストール済みの Google Chrome・Microsoft Edge で実行する（2026-10-03）
 
 **2026-10-06 の利用者の方針**：2026-10-06 の利用者の方針により、PR-4 以降は Windows の Chrome・Edge とも、可能な範囲を自動 E2E で確認し、自動化で確認できない変更箇所だけを実操作・目視で確認する。
-同じテストを `--browser-channel chrome`（Chrome Stable）と `--browser-channel msedge`（Edge Stable）で順に実行します（Windows では `scripts/run_browser_e2e.ps1 -Channel chrome` / `-Channel msedge`）。ブラウザごとに、準備確認（`-Mode Preflight`）が成功してから全必須 E2E（`-Mode Full`）へ進みます。準備確認の成功と診断（`-Mode Diagnose`）は、全必須 E2E の合格ではありません。記録には、指定した channel と実際に起動したブラウザ（作成元・版・実行ファイル）を、画面寸法のケース名（例：edge-1912x914。寸法の名前で、ブラウザとは別）と分けて書きます。PR-4 の手順と、実操作・目視に残す項目は [manual-check-pr4.md](../../docs/manual-check-pr4.md) です。PR-3 の Edge の手動確認・Chrome の自動確認の記録は、その時点の結果として残します。
+同じテストを `--browser-channel chrome`（Chrome Stable）と `--browser-channel msedge`（Edge Stable）で順に実行します（Windows では `scripts/run_browser_e2e.ps1 -Channel chrome` / `-Channel msedge`）。ブラウザごとに、準備確認（`-Mode Preflight`）が成功してから全必須 E2E（`-Mode Full`）へ進みます。準備確認の成功と診断（`-Mode Diagnose`）は、全必須 E2E の合格ではありません。記録には、指定した channel と実際に起動したブラウザ（作成元・版・実行ファイル）を、画面寸法のケース名（例：edge-1912x914。寸法の名前で、ブラウザとは別）と分けて書きます。PR-4 の手順と、実操作・目視に残す項目は [manual-check-pr4.md](../../docs/manual-check-pr4.md)、PR-5 は [manual-check-pr5.md](../../docs/manual-check-pr5.md) です（PR-5 の旧ダイアログ前提のテストは、新しいインスペクタ・ダイアログの操作に書き換え、保証していた内容を引き継いだ。対応は計画書 第14.5節）。PR-3 の Edge の手動確認・Chrome の自動確認の記録は、その時点の結果として残します。
 
 `--browser chromium --browser-channel chrome`（Edge は `msedge`）で、Playwright 同梱の Chromium ではなく、インストール済みのブラウザを使います。
 `playwright install chrome` などは使いません（Playwright の文書のとおり、既存のインストールを上書きするため）。
