@@ -175,6 +175,15 @@ class E2EServer:
             )
             return cursor.lastrowid
 
+    def set_analysis_fields(self, analysis_id: int, **fields) -> None:
+        """Values written directly (e.g. CRLF or surrounding spaces the screen
+        would never send, PR-4 E-E10). Only ever the temporary test database."""
+        allowed = {"title", "top_event", "analysis_context"}
+        assert set(fields) <= allowed, fields
+        with self._db() as conn:
+            for key, value in fields.items():
+                conn.execute(f"UPDATE analyses SET {key} = ? WHERE id = ?", (value, analysis_id))
+
     def set_parent(self, node_id: int, parent_id: Optional[int]) -> None:
         with self._db() as conn:
             conn.execute("UPDATE nodes SET parent_id = ? WHERE id = ?", (parent_id, node_id))

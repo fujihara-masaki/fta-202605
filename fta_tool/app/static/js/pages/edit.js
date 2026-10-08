@@ -12,7 +12,12 @@
 // - state in the URL hash and sessionStorage (plan 5.5), restored on reload;
 // - the bridge the legacy app.js uses for detail editing, manual add,
 //   delete and generation (still the old processing in PR-3), whose results
-//   are shown by a partial update instead of a reload (edit/refresh.js).
+//   are shown by a partial update instead of a reload (edit/refresh.js);
+// - PR-4: ① with its save status (edit/step1.js), the header title edited
+//   inline (edit/title.js), ⑤'s counts (view.js applySummary) and the
+//   generation's connection to the shared save coordinator
+//   (edit/generation.js, js/common/unsaved.js), which also guards leaving
+//   the page.
 // Text from the user or the LLM is only ever inserted as text.
 
 import { el } from '../common/dom.js';
@@ -22,6 +27,9 @@ import { applyFilter, clearFilter, currentFilter, initFilter } from './edit/filt
 import { renderInspector, updateTopEventText } from './edit/inspector.js';
 import { requestJudgement } from './edit/judgement.js';
 import { createRefresher } from './edit/refresh.js';
+import { createStep1 } from './edit/step1.js';
+import { createTitleEditor } from './edit/title.js';
+import { createGeneration } from './edit/generation.js';
 import { getNode, readModel, stepForNode } from './edit/model.js';
 import { loadSession, saveSession, stateFromHash, VIEWS, writeHash } from './edit/state.js';
 import {
@@ -29,6 +37,7 @@ import {
   applySelection,
   applyStep,
   applyTopEvent,
+  applyTopEventNotes,
   applyView,
   revealSelection,
 } from './edit/view.js';
@@ -147,6 +156,7 @@ function start(root, model) {
   // {deleted}) by a partial update; none while a generation runs, one after.
   const refresher = createRefresher(app, { scrollers });
   app.refresh = (options = {}) => refresher.request(options);
+  app.whenRefreshed = () => refresher.whenIdle();
   app.describeFocus = refresher.describeFocus;
   app.restoreFocus = refresher.restoreFocus;
 
@@ -158,12 +168,42 @@ function start(root, model) {
     if (!on) refresher.flush();
   };
 
+  // A save the page shows at once (a judgement, the top event of ①): no
+  // partial update is fetched meanwhile, and one fetched before is not
+  // applied (plan 3.4-5, P-3). Call the returned function when it has ended.
+  app.beginWrite = () => {
+    const write = app.writes.begin();
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      app.writes.end(write, null);
+    };
+  };
+
+  // ① (PR-4): the step status says when something is unsaved; ③・④ say that
+  // an unsaved top event is not used (J-09). Again after a partial update,
+  // which replaces those parts.
+  let step1 = null;
+  app.applyStep1State = () => {
+    const top = document.getElementById('topEventInput');
+    const unsaved = Boolean(step1 && step1.anyDirty());
+    applyTopEvent(top ? top.dataset.saved : '', { unsaved });
+    applyTopEventNotes(Boolean(step1 && step1.topEvent.isDirty()));
+  };
+  step1 = createStep1(app);
+  const title = createTitleEditor(app);
+  app.title = title;
+  const generation = createGeneration(app, { step1, title });
+  app.beginGeneration = (level) => generation.begin(level);
+
   installBridge(app);
   initFilter(app, session.filter);
   applyView(app);
   applyStep(app);
   applySelection(app);
   applyCounts(app);
+  app.applyStep1State();
   renderInspector(app);
 
   if (savedScroll) {
@@ -259,12 +299,12 @@ function start(root, model) {
 
   window.addEventListener('pagehide', () => app.saveSession());
 
-  // The legacy saveTopEvent updates data-saved; the step status, the top
-  // event in the outlines and the inspector follow it.
+  // Saving the top event updates data-saved (edit/step1.js); the step
+  // status, the top event in the outlines and the inspector follow it.
   const topInput = document.getElementById('topEventInput');
   if (topInput) {
     new MutationObserver(() => {
-      applyTopEvent(topInput.dataset.saved);
+      app.applyStep1State();
       updateTopEventText(topInput.dataset.saved);
     }).observe(topInput, { attributes: true, attributeFilter: ['data-saved'] });
   }

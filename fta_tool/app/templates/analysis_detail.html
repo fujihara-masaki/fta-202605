@@ -1,13 +1,16 @@
 {% extends "base.html" %}
 {% block title %}{{ analysis.title }} - FTA編集{% endblock %}
-{#- Analysis edit (B), PR-3 skeleton (plan 7.2, 8.3): three panes (structure
-    navigation / work area with the 作業・ツリー・一覧表 tabs / inspector),
-    work steps ①〜⑤, selection kept in step on every representation,
-    judgement, filter, state in the URL hash and sessionStorage, and the
-    groups of plan 5.9.5 for broken parent links. The server renders the
-    structure (app/detail_view.py); js/pages/edit keeps the screen state.
+{#- Analysis edit (B): PR-3 skeleton (plan 7.2, 8.3) and PR-4 (plan 8.4).
+    Three panes (structure navigation / work area with the 作業・ツリー・一覧表
+    tabs / inspector), work steps ①〜⑤, selection kept in step on every
+    representation, judgement, filter, state in the URL hash and
+    sessionStorage, and the groups of plan 5.9.5 for broken parent links. The
+    server renders the structure (app/detail_view.py); js/pages/edit keeps the
+    screen state. PR-4: the header title edited inline and the export menu,
+    ① with its save status, ⑤'s counts and export table, and leaving the
+    page through the shared save coordinator (js/common/unsaved.js).
     Detail editing, manual add, delete and generation still run through the
-    legacy app.js with its dialogs (replaced in PR-4〜PR-6); style.css keeps
+    legacy app.js with its dialogs (replaced in PR-5・PR-6); style.css keeps
     only what those legacy parts use. -#}
 {% block screen_styles %}<link rel="stylesheet" href="/static/css/edit.css"><link rel="stylesheet" href="/static/style.css">{% endblock %}
 {% block body_class %}ui-page edit-body{% endblock %}

@@ -143,3 +143,37 @@
 </section>
 {%- endif %}
 {%- endmacro %}
+
+
+{#- ⑤ counts (PR-4): per level for the factors in place (as the step
+    statuses), the factors with an inconsistent parent link or ancestor in a
+    row of their own (J-25), and every factor of the analysis (what JSON and
+    CSV contain). 直接要因 counts 直接要因評価「直接要因」, a value separate from
+    the judgement Yes. js/pages/edit counts again from the embedded data
+    after a judgement or a partial update. -#}
+{% macro summary(view) -%}
+{%- set columns = (("total", "件数"), ("yes", "Yes"), ("no", "No"), ("unknown", "未評価"), ("warning", "要確認"), ("direct", "直接要因")) %}
+<section class="edit-summary" aria-labelledby="step5-summary-title" data-summary>
+  <h3 class="edit-step5__title" id="step5-summary-title">要因の件数</h3>
+  <p class="edit-step5__lead">「直接要因」は直接要因評価が「直接要因」の要因の数で、評価の Yes とは別の値です。「未評価」は Yes・No のどちらでもない要因です。</p>
+  <div class="ui-table-wrap">
+    <table class="ui-table edit-summary__table" data-summary-table>
+      <thead>
+        <tr><th scope="col">区分</th>{% for key, label in columns %}<th scope="col">{{ label }}</th>{% endfor %}</tr>
+      </thead>
+      <tbody>
+        {%- for key, label in (("1", "一次要因"), ("2", "二次要因"), ("3", "三次要因"), ("anomaly", "親子関係に不整合がある要因"), ("all", "合計（すべての要因）")) %}
+        {%- set row = view.summary[key] %}
+        <tr data-summary-row="{{ key }}"{% if key == "anomaly" and not row.total %} hidden{% endif %}>
+          <th scope="row">{{ label }}</th>
+          {%- for column, _ in columns %}
+          <td data-summary-cell="{{ column }}">{{ row[column] }}</td>
+          {%- endfor %}
+        </tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="edit-step5__note" data-summary-anomaly-note{% if not view.summary["anomaly"].total %} hidden{% endif %}>親子関係に不整合がある要因（上位に不整合がある要因を含む）は、階層ごとの行には含めず、別の行に数えています。合計にはすべての要因が入ります。</p>
+</section>
+{%- endmacro %}

@@ -123,3 +123,60 @@ def update_requests(page, node_id=None):
 
     page.on("request", record)
     return sent
+
+
+# ----- PR-4: the header title, ①, leaving the page ----------------------------
+
+LEAVE_DIALOG = "保存していない変更があります"
+
+
+def title_input(page):
+    return page.locator("#analysisTitleInput")
+
+
+def title_editor(page):
+    return page.locator("[data-title-editor]")
+
+
+def open_title_editor(page):
+    page.locator("[data-title-edit]").click()
+    expect(title_input(page)).to_be_focused()
+    return title_input(page)
+
+
+def edit_title(page, text: str, key: str = "Enter"):
+    """✎, replace the title, then `key` (None: leave the input as it is)."""
+    field = open_title_editor(page)
+    field.fill(text)
+    if key:
+        field.press(key)
+    return field
+
+
+def save_status(page, field_id: str):
+    return page.locator(f'[data-save-status="{field_id}"]')
+
+
+def save_button(page, kind: str):
+    """kind: 'top-event' (頂上事象を保存) | 'context' (参考情報を保存)."""
+    return page.locator(f'[data-save-button="{kind}"]')
+
+
+def leave_dialog(page):
+    return page.get_by_role("dialog", name=LEAVE_DIALOG)
+
+
+def leave_link(page):
+    return page.locator(".edit-header").get_by_role("link", name="一覧へ")
+
+
+def post_paths(page) -> list[str]:
+    """Paths of the POST requests the page sends from now on, in order."""
+    sent: list[str] = []
+
+    def record(request):
+        if request.method == "POST":
+            sent.append("/" + request.url.split("/", 3)[3])
+
+    page.on("request", record)
+    return sent

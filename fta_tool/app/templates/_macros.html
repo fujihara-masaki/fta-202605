@@ -59,3 +59,45 @@
   </div>
 </div>
 {%- endmacro %}
+
+
+{#- What each export format contains (plan section 4, UI-04 note), from what
+    services/export_service.py writes. T-06 (tests/test_ui_templates.py)
+    checks every cell against real exports; the exports are never changed
+    to match this table. data-included: yes / no / partial. -#}
+{% macro export_contents_table() -%}
+{%- set rows = [
+  ("title", "分析タイトル", ("yes", "あり"), ("no", "なし"), ("no", "なし（見出しは固定の「FTA分析結果」）")),
+  ("top_event", "頂上事象", ("yes", "あり"), ("no", "なし"), ("yes", "あり")),
+  ("context", "参考情報（システム構成・障害発生時の状況・デモ観点）", ("yes", "あり"), ("no", "なし"), ("yes", "あり（「分析コンテキスト」の節）")),
+  ("timestamps", "分析の作成・更新日時", ("yes", "あり"), ("no", "なし"), ("no", "なし")),
+  ("structure", "要因の階層・親子", ("yes", "あり（ID・親ID・階層）"), ("yes", "あり（ID・レベル・親ID・親要因名）"), ("yes", "あり（入れ子のリスト）")),
+  ("factor_title", "要因名", ("yes", "あり"), ("yes", "あり"), ("yes", "あり")),
+  ("description", "説明", ("yes", "あり"), ("yes", "あり"), ("no", "なし")),
+  ("origin", "AI／手動", ("yes", "あり"), ("yes", "あり"), ("no", "なし")),
+  ("judgement", "評価（Yes／No／未評価）", ("yes", "あり"), ("yes", "あり"), ("yes", "あり")),
+  ("direct_cause", "直接要因評価・評価コメント", ("yes", "あり"), ("yes", "あり"), ("yes", "あり（直接要因評価が未評価なら出さない）")),
+  ("evidence", "根拠", ("yes", "あり"), ("yes", "あり"), ("no", "なし")),
+  ("prevention", "再発防止策", ("yes", "あり"), ("yes", "あり"), ("yes", "あり")),
+  ("memo", "メモ", ("yes", "あり"), ("yes", "あり"), ("no", "なし")),
+  ("warning", "品質警告", ("yes", "あり"), ("yes", "あり（要確認・警告理由・品質ステータス）"), ("no", "なし")),
+  ("anomaly", "親子関係に不整合がある要因", ("yes", "あり"), ("yes", "あり"), ("partial", "一部なし（一次要因から親をたどれない要因は出ない）")),
+] -%}
+<div class="ui-table-wrap">
+  <table class="ui-table edit-export-table" data-export-table aria-label="出力形式ごとに含まれる項目">
+    <thead>
+      <tr><th scope="col">項目</th><th scope="col">JSON</th><th scope="col">CSV</th><th scope="col">Markdown</th></tr>
+    </thead>
+    <tbody>
+      {%- for key, label, json, csv, md in rows %}
+      <tr data-export-item="{{ key }}">
+        <th scope="row">{{ label }}</th>
+        {%- for fmt, cell in (("json", json), ("csv", csv), ("markdown", md)) %}
+        <td data-format="{{ fmt }}" data-included="{{ cell[0] }}">{{ cell[1] }}</td>
+        {%- endfor %}
+      </tr>
+      {%- endfor %}
+    </tbody>
+  </table>
+</div>
+{%- endmacro %}

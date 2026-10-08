@@ -1,8 +1,9 @@
 // FTA Tool - app.js
 //
-// Legacy processing still used by the analysis edit screen in PR-3 (plan
-// 7.2): title / top event / context saving, generation, the detail modal,
-// manual add and delete. The new screen (js/pages/edit.js) owns selection,
+// Legacy processing still used by the analysis edit screen (plan 7.2):
+// generation, the detail modal, manual add and delete. The title, the top
+// event and the reference information are saved by the new screen since
+// PR-4 (js/pages/edit/title.js, step1.js, through js/common/unsaved.js). The new screen (js/pages/edit.js) owns selection,
 // judgement, filter and the views; the parts below that depended on the old
 // card columns reach it through window.ftaEditBridge (js/pages/edit/bridge.js).
 
@@ -40,143 +41,20 @@ function reloadPreservingScroll(delayMs = 0, options = {}) {
   setTimeout(() => location.reload(), delayMs);
 }
 
-// ===== Analysis Title =====
-function _showTitleError(msg) {
-  const span = document.getElementById('titleError');
-  if (!span) return;
-  span.textContent = msg;
-  span.hidden = false;
-}
-
-function _clearTitleError() {
-  const span = document.getElementById('titleError');
-  if (span) span.hidden = true;
-}
-
-async function saveAnalysisTitle(analysisId, newTitle) {
-  const trimmed = (newTitle || '').trim();
-  const el = document.getElementById('analysisTitle');
-
-  if (!trimmed) {
-    _showTitleError('タイトルは必須です');
-    showToast('タイトルは必須です', 'error');
-    if (el) el.focus();
-    return false;
-  }
-  if (trimmed.length > 255) {
-    _showTitleError('タイトルは255文字以内で入力してください');
-    showToast('タイトルは255文字以内で入力してください', 'error');
-    if (el) el.focus();
-    return false;
-  }
-
-  try {
-    const res = await fetch(`/analyses/${analysisId}/title`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: trimmed }),
-    });
-    const data = await res.json();
-    if (data.success) {
-      _clearTitleError();
-      document.title = data.title + ' - FTA編集';
-      showToast('タイトルを保存しました');
-      return true;
-    }
-    const errMsg = data.detail || '保存に失敗しました';
-    _showTitleError(errMsg);
-    showToast(errMsg, 'error');
-    if (el) el.focus();
-    return false;
-  } catch {
-    showToast('通信エラーが発生しました', 'error');
-    return false;
-  }
-}
-
-// The analysis list's inline rename and delete moved to js/pages/list.js
-// (PR-1). saveAnalysisTitle above is still used by the analysis detail page.
-
-// ===== Top Event =====
-async function saveTopEvent(analysisId, { quiet = false } = {}) {
-  const input = document.getElementById('topEventInput');
-  if (!input) return false;
-  const top_event = input.value.trim();
-  // The edit screen shows the saved top event at once: an update it fetched
-  // before this save must not put the old one back (P-3).
+// ===== Before and after a generation =====
+// The edit screen waits for saves in flight and saves ① as the level needs
+// (一次: the top event — not empty — and the reference information; 二次・三次:
+// the reference information only, J-09) through the same save as its save
+// buttons, and tracks the generation until its result is shown
+// (js/pages/edit/generation.js). null: nothing may be generated (the reason
+// was shown).
+async function _beginGeneration(level) {
   const bridge = window.ftaEditBridge;
-  const endWrite = bridge ? bridge.beginWrite() : () => {};
-  try {
-    const res = await fetch(`/analyses/${analysisId}/top-event`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ top_event }),
-    });
-    const data = await res.json();
-    if (data.success) {
-      input.dataset.saved = top_event;
-      if (!quiet) showToast('頂上事象を保存しました');
-      return true;
-    }
-    showToast('保存に失敗しました', 'error');
-    return false;
-  } catch (e) {
-    showToast('通信エラーが発生しました', 'error');
-    return false;
-  } finally {
-    endWrite();
+  if (!bridge || typeof bridge.beginGeneration !== 'function') {
+    showToast('画面の準備ができていないため、生成できません', 'error');
+    return null;
   }
-}
-
-// ===== Analysis Context (system / incident) =====
-async function saveAnalysisContext(analysisId, { quiet = false } = {}) {
-  const sysEl = document.getElementById('systemContextInput');
-  const incEl = document.getElementById('incidentContextInput');
-  if (!sysEl && !incEl) return true;
-  const payload = {};
-  if (sysEl) payload.system_context = sysEl.value.trim();
-  if (incEl) payload.incident_context = incEl.value.trim();
-  try {
-    const res = await fetch(`/analyses/${analysisId}/context`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (data.success) {
-      if (sysEl) sysEl.dataset.saved = data.system_context || '';
-      if (incEl) incEl.dataset.saved = data.incident_context || '';
-      const status = document.getElementById('analysisContextStatus');
-      if (status) {
-        const filled = !!(data.system_context || data.incident_context);
-        status.textContent = filled ? '入力済み' : '未入力・追加できます';
-        status.classList.toggle('filled', filled);
-        status.classList.toggle('empty', !filled);
-      }
-      if (!quiet) showToast('分析コンテキストを保存しました');
-      return true;
-    }
-    showToast(data.detail || '分析コンテキストの保存に失敗しました', 'error');
-    return false;
-  } catch (e) {
-    showToast('通信エラーが発生しました', 'error');
-    return false;
-  }
-}
-
-// Like ensureTopEventReady: an edited-but-unsaved context is silently saved
-// before generation so the LLM sees what the user sees. Context is optional,
-// so (unlike the top event) empty input never blocks generation.
-async function ensureAnalysisContextReady(analysisId) {
-  const sysEl = document.getElementById('systemContextInput');
-  const incEl = document.getElementById('incidentContextInput');
-  const dirty = [sysEl, incEl].some(
-    (el) => el && el.dataset.saved !== undefined && el.dataset.saved !== el.value.trim(),
-  );
-  if (!dirty) return true;
-  const ok = await saveAnalysisContext(analysisId, { quiet: true });
-  if (ok) showToast('編集中の分析コンテキストを保存してから生成します');
-  return ok;
+  return bridge.beginGeneration(Number(level));
 }
 
 // ===== Generation Status Badge =====
@@ -236,34 +114,19 @@ function _parentAllowed(parentId, level) {
   return true;
 }
 
-// Level-1 generation needs a top event: block empty input, and silently save
-// an edited-but-unsaved value first so the LLM sees what the user sees.
-async function ensureTopEventReady(analysisId) {
-  const input = document.getElementById('topEventInput');
-  if (!input) return true;
-  const current = input.value.trim();
-  if (!current) {
-    showToast('頂上事象を入力してから生成してください', 'error');
-    input.focus();
-    return false;
-  }
-  if (input.dataset.saved !== undefined && input.dataset.saved !== current) {
-    const ok = await saveTopEvent(analysisId, { quiet: true });
-    if (!ok) return false;
-    showToast('編集中の頂上事象を保存してから生成します');
-  }
-  return true;
-}
-
 // ===== Generate Factors =====
 async function generateFactors(analysisId, level) {
-  if (level === 1 && !(await ensureTopEventReady(analysisId))) return;
-  if (!(await ensureAnalysisContextReady(analysisId))) return;
-
-  if (level >= 2) {
-    await generateFactorsSequential(analysisId, level);
-    return;
+  const generation = await _beginGeneration(level);
+  if (!generation) return;
+  try {
+    if (level >= 2) await generateFactorsSequential(analysisId, level);
+    else await _generateLevel1(analysisId, level);
+  } finally {
+    await generation.end();
   }
+}
+
+async function _generateLevel1(analysisId, level) {
   // Level 1 — single call, show full-page overlay
   const overlay = document.getElementById('loadingOverlay');
   if (overlay) overlay.classList.remove('hidden');
@@ -397,9 +260,16 @@ async function generateFactorsSequential(analysisId, level) {
 //   of one specific parent (level-1 card → level 2, level-2 card → level 3)
 async function generateAdditional(analysisId, parentNodeId, childLevel) {
   if (!_parentAllowed(parentNodeId, childLevel)) return;
-  if (childLevel === 1 && !(await ensureTopEventReady(analysisId))) return;
-  if (!(await ensureAnalysisContextReady(analysisId))) return;
+  const generation = await _beginGeneration(childLevel);
+  if (!generation) return;
+  try {
+    await _generateAdditional(analysisId, parentNodeId, childLevel);
+  } finally {
+    await generation.end();
+  }
+}
 
+async function _generateAdditional(analysisId, parentNodeId, childLevel) {
   const overlay = (childLevel === 1) ? document.getElementById('loadingOverlay') : null;
   if (overlay) overlay.classList.remove('hidden');
   if (parentNodeId) setNodeGenStatus(parentNodeId, 'generating');
@@ -657,16 +527,5 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     closeNodeDetail();
     closeAddNodeModal();
-  }
-});
-
-// The analysis title (contenteditable): Enter should commit (blur → save),
-// not insert a newline into a single-line title. Rebuilt in PR-4.
-document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Enter') return;
-  const t = e.target;
-  if (t && t.isContentEditable && t.id === 'analysisTitle') {
-    e.preventDefault();
-    t.blur();
   }
 });

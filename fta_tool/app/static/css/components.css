@@ -211,9 +211,18 @@ textarea.ui-input {
 .ui-status[hidden] {
   display: none;
 }
-.ui-status--unsaved {
+.ui-status--unsaved,
+.ui-status--dirty {
   background: var(--color-warning-soft);
   color: var(--color-warning);
+}
+.ui-status--saved {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+.ui-status--saving {
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
 }
 
 /* ----- Dialog (native <dialog>, opened with showModal()) ----- */

@@ -287,7 +287,7 @@ def test_E_E07_analysis_deleted_elsewhere_stops_the_operations(page, e2e_server,
         expect(step_panel(page, 2).get_by_role("button", name=name, exact=True)).to_be_disabled()
     for name in ("詳細を編集", "AIで追加生成", "手動追加", "この要因を削除"):
         expect(inspector(page).get_by_role("button", name=name, exact=True)).to_be_disabled()
-    expect(page.locator("#analysisTitle")).to_have_attribute("contenteditable", "false")
+    expect(page.locator("[data-title-edit]")).to_be_disabled()  # the header title (PR-4)
 
     # Selecting still works; what it shows cannot be changed.
     select_button(page, "nav", b).click()
@@ -295,8 +295,8 @@ def test_E_E07_analysis_deleted_elsewhere_stops_the_operations(page, e2e_server,
     expect(judgement_button(inspector(page), b, "yes")).to_be_disabled()
     expect(inspector(page).get_by_role("button", name="詳細を編集")).to_be_disabled()
     step_button(page, 1).click()
-    expect(step_panel(page, 1).get_by_role("button", name="保存", exact=True)).to_be_disabled()
-    expect(step_panel(page, 1).get_by_role("button", name="コンテキストを保存")).to_be_disabled()
+    expect(step_panel(page, 1).get_by_role("button", name="頂上事象を保存")).to_be_disabled()
+    expect(step_panel(page, 1).get_by_role("button", name="参考情報を保存")).to_be_disabled()
 
     refresh(page)  # nothing is fetched any more
     page.wait_for_timeout(300)
@@ -659,7 +659,7 @@ def test_E_E19_answer_fetched_before_a_top_event_save_is_discarded(page, e2e_ser
     wait_for(page, lambda: bool(held_fetch))
     step_button(page, 1).click()  # … while the top event is saved
     page.fill("#topEventInput", "保存後の頂上事象")
-    step_panel(page, 1).get_by_role("button", name="保存", exact=True).click()
+    step_panel(page, 1).get_by_role("button", name="頂上事象を保存").click()
     expect(page.locator("#topEventInput")).to_have_attribute("data-saved", "保存後の頂上事象")
     expect(page.locator('#edit-nav [data-select="top"]')).to_contain_text("保存後の頂上事象")
 

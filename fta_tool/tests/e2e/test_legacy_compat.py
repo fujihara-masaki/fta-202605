@@ -1,7 +1,8 @@
 """E2E: the parts of the edit screen that still run on the old processing.
 
-PR-3 builds the new edit screen but keeps app.js for the title and step ①
-saving, generation, the detail dialog, manual add and delete (plan 7.2;
+PR-3 builds the new edit screen but keeps app.js for generation, the detail
+dialog, manual add and delete (the title and step ① were rebuilt in PR-4 and
+are driven here through the new controls; E-E10・E-E11 check them in full) (plan 7.2;
 acceptance 10 of plan 8.3: UI-09〜UI-14 stay usable, and the normal
 generation of 二次・三次 still includes Yes parents hidden by the filter).
 PR3-LEGACY-OPS drives them from the new page; their results are shown by a
@@ -21,20 +22,24 @@ new-analysis form had PR1-COMPAT-NEW until PR-2 (now E-N01〜E-N06).
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
 from tests.e2e.edit_helpers import (
     chip,
+    edit_title,
     expect_selected,
     inspector,
     inspector_title,
     item,
     judgement_button,
     open_edit,
+    save_button,
     select_button,
     step_button,
     step_panel,
+    title_input,
     toast,
     wait_until,
 )
@@ -59,23 +64,20 @@ def test_title_step1_and_generation_from_the_new_page(page, e2e_server):
     expect(page.locator(".ai-badge")).to_have_text("AI: e2e-stub")  # stub server, not a real LLM
     expect(page.get_by_role("navigation", name="メインメニュー").locator("[aria-current]")).to_have_count(0)
 
-    # Title (legacy contenteditable, saved on Enter; the edit page names the tab).
-    title = page.locator("#analysisTitle")
-    title.click()
-    page.keyboard.press("ControlOrMeta+a")
-    page.keyboard.type("互換確認（改名）")
-    page.keyboard.press("Enter")
+    # Title (rebuilt in PR-4: ✎ and Enter; the edit page names the tab).
+    edit_title(page, "互換確認（改名）")
     expect(page).to_have_title("互換確認（改名） - FTA編集")
+    expect(page.locator("#analysisTitle")).to_have_text("互換確認（改名）")
     wait_until(lambda: e2e_server.analysis(analysis_id)["title"] == "互換確認（改名）")
 
-    # Step ① keeps the ids and the save functions of the old screen.
+    # Step ① (rebuilt in PR-4) keeps its ids; the saved top event reaches the outlines.
     page.fill("#topEventInput", "編集後の頂上事象")
-    step_panel(page, 1).get_by_role("button", name="保存", exact=True).click()
+    save_button(page, "top-event").click()
     expect(page.locator("#topEventInput")).to_have_attribute("data-saved", "編集後の頂上事象")
     expect(step_button(page, 1)).to_contain_text("頂上事象：入力済み")
     expect(page.locator('#edit-nav [data-select="top"]')).to_contain_text("編集後の頂上事象")
     page.fill("#systemContextInput", "編集後のシステム構成")
-    page.get_by_role("button", name="コンテキストを保存").click()
+    save_button(page, "context").click()
     expect(page.locator("#analysisContextStatus")).to_have_text("入力済み")
     stored = e2e_server.analysis(analysis_id)
     assert stored["top_event"] == "編集後の頂上事象"
@@ -172,16 +174,17 @@ def test_detail_dialog_manual_add_additional_generation_delete_and_export(page, 
     wait_until(lambda: c not in e2e_server.node_ids(analysis_id))
     expect(select_button(page, "nav", c)).to_have_count(0)
 
-    # Export: the header links and the provisional links of ⑤.
+    # Export: the header's menu and the links of ⑤ (PR-4; E-E13 has the rest).
+    page.locator(".edit-header [data-ui-menu-button]").click()
     with page.expect_download() as download_info:
-        page.locator(".edit-header").get_by_role("link", name="JSON出力").click()
+        page.locator(".edit-header [data-ui-menu-panel]").get_by_role("link", name=re.compile("JSON")).click()
     assert download_info.value.suggested_filename == f"fta_{analysis_id}.json"
     exported = json.loads(open(download_info.value.path(), "rb").read())
     assert {n["title"] for n in exported["nodes"]} >= {"一次要因A", "手動で追加した二次要因"}
     step_button(page, 5).click()
-    for name, suffix in (("JSON出力", "json"), ("CSV出力", "csv"), ("MD出力", "md")):
+    for fmt, suffix in (("json", "json"), ("csv", "csv"), ("markdown", "md")):
         with page.expect_download() as download_info:
-            step_panel(page, 5).get_by_role("link", name=name).click()
+            step_panel(page, 5).locator(f'a[data-export-format="{fmt}"]').click()
         assert download_info.value.suggested_filename == f"fta_{analysis_id}.{suffix}"
 
     assert same_page(page)
@@ -242,32 +245,26 @@ def test_saving_dialogs_and_delete_messages_use_the_shared_notifications(page, e
     expect(page.locator("#toast")).to_have_count(0)  # the old element is gone
     expect(page.locator("#ui-toasts")).to_have_count(1)  # one place for every notification
 
-    # Title: saved (success), empty (error, stays, announced).
-    title = page.locator("#analysisTitle")
-    title.click()
-    page.keyboard.press("ControlOrMeta+a")
-    page.keyboard.type("通知の確認（改名）")
-    page.keyboard.press("Enter")
+    # Title (the new header of PR-4; E-E11 has the rest): saved (success),
+    # empty (shown at the input and announced, nothing sent, stays open).
+    edit_title(page, "通知の確認（改名）")
     expect_once(page, "タイトルを保存しました", "success")
-    title.click()
-    page.keyboard.press("ControlOrMeta+a")
-    page.keyboard.press("Delete")
-    page.keyboard.press("Enter")
-    expect_once(page, "タイトルは必須です", "error")
-    expect(page.locator("#ui-live-alert")).to_have_text("エラー：タイトルは必須です")
-    expect(page.locator("#titleError")).to_have_text("タイトルは必須です")
-    page.keyboard.type("通知の確認（改名）")
-    page.keyboard.press("Enter")
-    expect(page.locator("#titleError")).to_be_hidden()  # gone once the title is saved
+    edit_title(page, "")
+    expect(page.locator("[data-title-error]")).to_have_text("タイトルは必須です")
+    expect(page.locator("#ui-live-alert")).to_have_text("タイトルは必須です")
+    title_input(page).fill("通知の確認（改名2）")
+    expect(page.locator("[data-title-error]")).to_be_hidden()  # gone once the input is valid
+    title_input(page).press("Enter")
+    expect_once(page, "タイトルを保存しました", "success")
 
-    # Step ①.
+    # Step ① (the new save of PR-4; E-E10 has the rest).
     step_button(page, 1).click()
     page.fill("#topEventInput", "通知の頂上事象")
-    step_panel(page, 1).get_by_role("button", name="保存", exact=True).click()
+    save_button(page, "top-event").click()
     expect_once(page, "頂上事象を保存しました", "success")
     page.fill("#incidentContextInput", "通知の確認の状況")
-    page.get_by_role("button", name="コンテキストを保存").click()
-    expect_once(page, "分析コンテキストを保存しました", "success")
+    save_button(page, "context").click()
+    expect_once(page, "参考情報を保存しました", "success")
 
     # Detail dialog: an empty title is refused while the dialog stays open;
     # the notifications (two errors now) cover no part of the dialog, and are
@@ -320,7 +317,7 @@ def test_saving_dialogs_and_delete_messages_use_the_shared_notifications(page, e
 
     # Errors stay until they are closed; the rest has closed by itself.
     page.wait_for_timeout(3500)
-    for text in ("タイトルは必須です", "要因タイトルは必須です", "通信エラーが発生しました", "タイトルを入力してください"):
+    for text in ("要因タイトルは必須です", "通信エラーが発生しました", "タイトルを入力してください"):
         expect(toast(page, text, "error", exact=True)).to_have_count(1)
     expect(page.locator('#ui-toasts .ui-toast[data-toast-type="success"]')).to_have_count(0)
     expect(page.locator("#toast")).to_have_count(0)
