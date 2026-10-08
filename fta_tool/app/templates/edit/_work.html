@@ -1,0 +1,149 @@
+{#- Work view (the 作業 tab): one panel per step.
+    ① (PR-4, UI-07・UI-08, J-09・J-11) the top event and the two kinds of
+       reference information with their save status (入力中（未保存）／保存済み,
+       compared after the normalisation used for saving) and save buttons;
+       saving goes through the shared save coordinator (js/common/unsaved.js,
+       js/pages/edit/step1.js), as do leaving the page and the automatic save
+       before a generation, which this panel and the operation bars explain.
+    ②〜④ operation bar (the generation buttons call the legacy functions;
+       placement only, PR-6 rebuilds generation) and the work list; steps ③・④
+       group the factors by parent. The targets of the normal generation are
+       counted from the embedded data: every Yes factor of the level above,
+       hidden by the filter or not (J-07), except those with an inconsistent
+       parent link or ancestor (J-25, 判断3), shown separately.
+    ⑤ (PR-4, UI-04) the counts per level, the table of what each export
+       format contains (checked against the real exports by T-06) and the
+       export links.
+    data-region marks what a partial update replaces (plan 3.4-5); ① is
+    never replaced, so input in progress stays. The step titles take the
+    focus when the focused element is gone after a partial update. -#}
+{% import "edit/_parts.html" as parts %}
+{% import "_macros.html" as ui %}
+{%- macro save_status(field_id) -%}
+<span class="ui-status ui-status--saved" data-save-status="{{ field_id }}" data-state="saved" id="{{ field_id }}-status">保存済み</span>
+{%- endmacro %}
+{%- set counts = view.data.factorCounts %}
+<div class="edit-work">
+  <section class="edit-step-panel" data-step-panel="1" aria-labelledby="step-panel-1-title" hidden>
+    <h2 class="edit-step-panel__title" tabindex="-1" id="step-panel-1-title">① 頂上事象・参考情報</h2>
+    <div class="edit-step1__autosave" data-autosave-note>
+      <p><strong>生成の前の自動保存：</strong>一次要因の生成（通常・追加）の前に、入力中の頂上事象と参考情報を自動で保存します（頂上事象が空のときは生成しません）。</p>
+      <p>二次・三次要因の生成の前には参考情報だけを保存し、頂上事象は保存済みの値を使います（入力中の頂上事象は使われません）。</p>
+    </div>
+    <div class="edit-step1">
+      <div class="edit-step1__block" data-save-block="top-event">
+        <div class="ui-field">
+          <div class="edit-step1__label-row">
+            <label class="ui-field__label" for="topEventInput">頂上事象</label>
+            {{ save_status("topEventInput") }}
+          </div>
+          <textarea id="topEventInput" class="ui-input" rows="4" placeholder="頂上事象を入力してください" data-saved="{{ analysis.top_event }}">{{ analysis.top_event }}</textarea>
+          <p class="ui-field-help">分析の起点となる「発生した事象そのもの」です。空でも保存できますが、一次要因の生成には必要です。</p>
+        </div>
+        <div class="edit-step1__actions">
+          <p class="edit-step1__message" data-save-message="top-event"></p>
+          <button type="button" class="ui-btn ui-btn--primary" data-save-button="top-event">頂上事象を保存</button>
+        </div>
+      </div>
+      <div class="edit-step1__block" data-save-block="context">
+        <h3 class="edit-step1__subtitle">
+          AIへの参考情報（任意）
+          <span id="analysisContextStatus" class="context-status {{ 'filled' if system_context or incident_context else 'empty' }}">{{ '入力済み' if system_context or incident_context else '未入力・追加できます' }}</span>
+        </h3>
+        <p class="ui-field-help">頂上事象（発生した事象そのもの）とは別の参考情報で、AIの要因生成時に使われます。2つの欄はまとめて保存します。</p>
+        <div class="edit-step1__context">
+          <div class="ui-field">
+            <div class="edit-step1__label-row">
+              <label class="ui-field__label" for="systemContextInput">システム構成・対象範囲</label>
+              {{ save_status("systemContextInput") }}
+            </div>
+            <textarea id="systemContextInput" class="ui-input" rows="4" placeholder="例：Webサーバ2台＋DBサーバ1台の冗長構成。対象は社内認証システムのみ。" data-saved="{{ system_context }}">{{ system_context }}</textarea>
+          </div>
+          <div class="ui-field">
+            <div class="edit-step1__label-row">
+              <label class="ui-field__label" for="incidentContextInput">障害発生時の状況・観測事実</label>
+              {{ save_status("incidentContextInput") }}
+            </div>
+            <textarea id="incidentContextInput" class="ui-input" rows="4" placeholder="例：4/1 9:00頃から全ユーザーがログイン不可。画面には500エラーが表示。" data-saved="{{ incident_context }}">{{ incident_context }}</textarea>
+          </div>
+        </div>
+        <div class="edit-step1__actions">
+          <p class="edit-step1__message" data-save-message="context"></p>
+          <button type="button" class="ui-btn ui-btn--primary" data-save-button="context">参考情報を保存</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="edit-step-panel" data-step-panel="2" aria-labelledby="step-panel-2-title" hidden>
+    <h2 class="edit-step-panel__title" tabindex="-1" id="step-panel-2-title">② 一次要因</h2>
+    <div data-region="work-2">
+      <div class="edit-opbar" role="group" aria-label="一次要因の操作">
+        <div class="edit-opbar__buttons">
+          <button type="button" class="ui-btn ui-btn--primary" data-action="legacy-generate" data-level="1" data-generate>一次要因を生成</button>
+          {%- if view.level_nodes[1] %}
+          <button type="button" class="ui-btn" data-action="legacy-generate-additional" data-level="1" data-generate title="既存の一次要因と重複しないよう、一次要因を追加生成します">一次要因を追加生成</button>
+          {%- endif %}
+          <button type="button" class="ui-btn" data-action="legacy-add" data-level="1">手動追加</button>
+        </div>
+        <p class="edit-opbar__note">頂上事象と参考情報をもとに、AIが一次要因を{{ counts['1'] }}件生成します（追加生成は{{ counts['additional'] }}件）。</p>
+        <p class="edit-opbar__note" data-autosave-note="1">生成の前に、入力中の頂上事象と参考情報を自動で保存します（頂上事象が空のときは生成しません）。</p>
+      </div>
+      {%- if view.level_nodes[1] %}
+      <ul class="edit-rows">
+        {%- for n in view.level_nodes[1] %}
+        {{ parts.work_row(n) }}
+        {%- endfor %}
+      </ul>
+      {%- else %}
+      <p class="edit-empty">一次要因はまだありません。「一次要因を生成」または「手動追加」で追加します。</p>
+      {%- endif %}
+    </div>
+  </section>
+
+  {%- for level, number, name, parent_name in ((2, "③", "二次要因", "一次要因"), (3, "④", "三次要因", "二次要因")) %}
+  <section class="edit-step-panel" data-step-panel="{{ level + 1 }}" aria-labelledby="step-panel-{{ level + 1 }}-title" hidden>
+    <h2 class="edit-step-panel__title" tabindex="-1" id="step-panel-{{ level + 1 }}-title">{{ number }} {{ name }}</h2>
+    <div data-region="work-{{ level + 1 }}">
+      {%- if view.level_nodes[level - 1] %}
+      <div class="edit-opbar" role="group" aria-label="{{ name }}の操作">
+        <div class="edit-opbar__buttons">
+          <button type="button" class="ui-btn ui-btn--primary" data-action="legacy-generate" data-level="{{ level }}" data-generate>Yesの{{ parent_name }}から{{ name }}を生成</button>
+        </div>
+        <p class="edit-opbar__note" data-target-summary="{{ level }}">生成の対象：Yesの{{ parent_name }} <span data-target-count="{{ level }}">{{ view.targets[level].count }}</span>件（絞り込みで表示していない要因も含みます）<span data-target-excluded="{{ level }}"{% if not view.targets[level].excluded %} hidden{% endif %}>。親子関係に不整合があるため対象外：<span data-target-excluded-count>{{ view.targets[level].excluded }}</span>件</span></p>
+        <p class="edit-opbar__note">親1件につき{{ counts[level | string] }}件を生成します。追加生成と手動追加は、親ごとの見出しとインスペクタから行います。</p>
+        <p class="edit-opbar__note" data-autosave-note="{{ level }}">保存済みの頂上事象を使います。生成の前に自動で保存するのは参考情報だけです。<span class="edit-opbar__warn" data-top-event-unsaved-note hidden>頂上事象に保存していない変更があります。入力中の頂上事象は使われません（使う場合は①で保存してください）。</span></p>
+      </div>
+      {%- for parent in view.level_nodes[level - 1] %}
+      {{ parts.group(parent, level) }}
+      {%- endfor %}
+      {%- else %}
+      <p class="edit-empty">{{ parent_name }}がありません。{{ parent_name }}を追加すると、ここで{{ name }}を生成・追加できます。</p>
+      {%- endif %}
+    </div>
+  </section>
+  {%- endfor %}
+
+  <div class="edit-work__anomalies" data-work-anomalies hidden>
+    <div data-region="work-anomalies">
+      {{ parts.work_anomalies(view) }}
+    </div>
+  </div>
+
+  <section class="edit-step-panel" data-step-panel="5" aria-labelledby="step-panel-5-title" hidden>
+    <h2 class="edit-step-panel__title" tabindex="-1" id="step-panel-5-title">⑤ 確認・出力</h2>
+    <div data-region="summary">
+      {{ parts.summary(view) }}
+    </div>
+    <section class="edit-step5__export" aria-labelledby="step5-export-title">
+      <h3 class="edit-step5__title" id="step5-export-title">出力</h3>
+      <p class="edit-step5__lead">保存済みの内容をファイルに出力します（ヘッダーと一覧画面の「出力▾」と同じです）。入力中で保存していない内容は出力されません。形式によって含まれる項目が違います。</p>
+      {{ ui.export_contents_table() }}
+      <div class="edit-step5__links">
+        <a href="/analyses/{{ analysis.id }}/export/json" class="ui-btn" download data-export-format="json">JSON（.json）を出力</a>
+        <a href="/analyses/{{ analysis.id }}/export/csv" class="ui-btn" download data-export-format="csv">CSV（.csv）を出力</a>
+        <a href="/analyses/{{ analysis.id }}/export/markdown" class="ui-btn" download data-export-format="markdown">Markdown（.md）を出力</a>
+      </div>
+    </section>
+  </section>
+</div>

@@ -1,0 +1,33 @@
+{#- Header of the edit screen (PR-4, UI-04・UI-07). The analysis title is
+    edited inline: ✎ opens an input, Enter saves, Esc cancels, leaving the
+    input saves (not when the focus goes to its own 保存・取消). Required, 255
+    characters, counted like the list and the new-analysis form
+    (js/common/text.js). Leaving the page saves a changed title without a
+    question and stays when it cannot be saved (js/pages/edit/title.js).
+    The export menu is the list's (_macros.html export_menu: the same URLs,
+    download attribute and keyboard handling). The updated time is not shown
+    here (J-15). -#}
+{% import "_macros.html" as ui %}
+<div class="edit-header" data-edit-header>
+  <div class="edit-header__title">
+    <div class="edit-title" data-title-view>
+      <h1 class="edit-title__text" id="analysisTitle" data-title-text>{{ analysis.title }}</h1>
+      <button type="button" class="ui-btn ui-btn--icon edit-title__edit" data-title-edit title="分析タイトルを変更" aria-label="分析タイトルを変更：{{ analysis.title }}">✎</button>
+    </div>
+    <div class="edit-title-editor" data-title-editor role="group" aria-label="分析タイトルの変更" hidden>
+      <label class="visually-hidden" for="analysisTitleInput">分析タイトル（必須、255文字以内）</label>
+      <input type="text" id="analysisTitleInput" class="ui-input edit-title-editor__input" autocomplete="off" value="{{ analysis.title }}" data-saved="{{ analysis.title }}" aria-describedby="analysisTitleHelp analysisTitleError">
+      <div class="edit-title-editor__actions">
+        <button type="button" class="ui-btn ui-btn--sm ui-btn--primary" data-title-save>保存</button>
+        <button type="button" class="ui-btn ui-btn--sm" data-title-cancel>取消</button>
+      </div>
+      <p class="ui-field-help edit-title-editor__help" id="analysisTitleHelp"><span data-title-count>0</span>／255文字（必須）・Enterで保存、Escで取消。ほかの場所へ移ると保存します</p>
+      <p class="ui-field-error edit-title-editor__error" id="analysisTitleError" data-title-error role="alert" hidden></p>
+    </div>
+    <span class="ai-badge">AI: {{ ai_provider_name }}</span>
+  </div>
+  <div class="edit-header__actions">
+    {{ ui.export_menu(analysis.id, analysis.title) }}
+    <a href="/" class="ui-btn ui-btn--sm" data-leave-link>一覧へ</a>
+  </div>
+</div>

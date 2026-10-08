@@ -4,24 +4,40 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}FTA分析支援ツール{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+  {#- Screens that are not migrated yet keep the legacy stylesheet;
+      migrated screens replace this block with their own stylesheet. #}
+  {% block screen_styles %}<link rel="stylesheet" href="/static/style.css">{% endblock %}
 </head>
-<body>
-  <header class="site-header">
-    <div class="header-inner">
-      <a href="/" class="site-title">FTA分析支援ツール</a>
-      <nav class="header-nav">
-        <a href="/">分析一覧</a>
-        <a href="/analyses/new">新規作成</a>
+<body class="{% block body_class %}{% endblock %}">
+  <a class="skip-link" href="#main">本文へ移動</a>
+  {#- Screens with several work areas add their own skip links here. #}
+  {% block skip_links %}{% endblock %}
+  {%- set current_path = request.url.path if request else '' %}
+  <header class="app-header">
+    <div class="app-header__inner">
+      <a href="/" class="app-header__brand">FTA分析支援ツール</a>
+      <nav class="app-header__nav" aria-label="メインメニュー">
+        <a href="/"{% if current_path == '/' %} aria-current="page"{% endif %}>分析一覧</a>
+        <a href="/analyses/new"{% if current_path == '/analyses/new' %} aria-current="page"{% endif %}>新規作成</a>
       </nav>
     </div>
   </header>
-  <main class="site-main">
+  <main id="main" class="site-main" tabindex="-1">
     {% block content %}{% endblock %}
   </main>
-  <!-- Toast notification (shared across pages) -->
+  <!-- Notifications (shared): visible stack + live regions for screen readers -->
+  <div id="ui-toasts" class="ui-toast-stack"></div>
+  <div id="ui-live-status" class="visually-hidden" role="status" aria-live="polite"></div>
+  <div id="ui-live-alert" class="visually-hidden" role="alert" aria-live="assertive"></div>
+  {% block legacy_scripts %}
+  <!-- Legacy toast and script, used by the screens that are not migrated yet -->
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   <script src="/static/app.js"></script>
+  {% endblock %}
+  <script type="module" src="/static/js/common/boot.js"></script>
   {% block extra_scripts %}{% endblock %}
 </body>
 </html>

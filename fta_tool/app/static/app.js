@@ -1,275 +1,73 @@
 // FTA Tool - app.js
+//
+// Legacy processing still used by the analysis edit screen (plan 7.2):
+// generation, the detail modal, manual add and delete. The title, the top
+// event and the reference information are saved by the new screen since
+// PR-4 (js/pages/edit/title.js, step1.js, through js/common/unsaved.js). The new screen (js/pages/edit.js) owns selection,
+// judgement, filter and the views; the parts below that depended on the old
+// card columns reach it through window.ftaEditBridge (js/pages/edit/bridge.js).
 
-// ===== Toast notifications =====
+// ===== Notifications =====
+// Every message of this file goes to the shared notifications
+// (js/common/notify.js) with the same text and kind as before (the user's
+// decision of 2026-09-29, 判断4; J-24 moved forward to PR-3): success and
+// warnings close by themselves (3 s / 6 s as before), errors stay until
+// they are closed, screen readers are told. This is the one connection
+// point; the old #toast element is no longer rendered, so nothing is shown
+// twice. Without the edit screen's bridge the module is loaded directly.
 function showToast(message, type = 'success') {
-  const toast = document.getElementById('toast');
-  if (!toast) return;
-  // Any ordinary toast replaces a warning-detail one, so the badge-toggle
-  // state must not survive it (see showWarningDetail).
-  delete toast.dataset.warningDetail;
-  toast.textContent = message;
-  toast.className = `toast ${type}`;
-  // Warnings (e.g. all candidates excluded) carry a longer reason note, so
-  // keep them on screen a little longer than success/error toasts.
-  const duration = type === 'warning' ? 6000 : 3000;
-  clearTimeout(toast._hideTimer);
-  toast._hideTimer = setTimeout(() => { toast.className = 'toast hidden'; }, duration);
+  const bridge = window.ftaEditBridge;
+  if (bridge) {
+    bridge.notify(message, type);
+    return;
+  }
+  import('/static/js/common/notify.js')
+    .then(({ notify }) => notify(message, { type }))
+    .catch(() => {});
 }
 
-function hideToast() {
-  const toast = document.getElementById('toast');
-  if (!toast) return;
-  clearTimeout(toast._hideTimer);
-  delete toast.dataset.warningDetail;
-  toast.className = 'toast hidden';
-}
-
-// ===== Reload with scroll restore =====
-// location.reload() loses the horizontal/vertical position of the tree area,
-// which is painful on large analyses. Save it and restore after reload.
-function reloadPreservingScroll(delayMs = 0) {
-  const scroller = document.querySelector('.fta-tree-scroll');
-  if (scroller && typeof ANALYSIS_ID !== 'undefined') {
-    sessionStorage.setItem(
-      `ftaScroll_${ANALYSIS_ID}`,
-      JSON.stringify({ left: scroller.scrollLeft, top: scroller.scrollTop }),
-    );
+// ===== Show the result of a change =====
+// The edit screen shows it by a partial update through the bridge
+// (js/pages/edit/refresh.js; the page is not reloaded, selection, step,
+// view, scroll, filter and typed input are kept); `options` names a factor
+// to select after a manual add ({ select, level }) or the deleted factor
+// ({ deleted }). The old name is kept for the callers below.
+function reloadPreservingScroll(delayMs = 0, options = {}) {
+  const bridge = window.ftaEditBridge;
+  if (bridge) {
+    bridge.refresh(options);
+    return;
   }
   setTimeout(() => location.reload(), delayMs);
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  const scroller = document.querySelector('.fta-tree-scroll');
-  if (!scroller || typeof ANALYSIS_ID === 'undefined') return;
-  const key = `ftaScroll_${ANALYSIS_ID}`;
-  const saved = sessionStorage.getItem(key);
-  if (!saved) return;
-  sessionStorage.removeItem(key);
-  try {
-    const { left, top } = JSON.parse(saved);
-    scroller.scrollLeft = left || 0;
-    scroller.scrollTop = top || 0;
-  } catch { /* ignore corrupt state */ }
-});
-
-// ===== Analysis Title =====
-function _showTitleError(msg) {
-  const span = document.getElementById('titleError');
-  if (!span) return;
-  span.textContent = msg;
-  span.hidden = false;
-}
-
-function _clearTitleError() {
-  const span = document.getElementById('titleError');
-  if (span) span.hidden = true;
-}
-
-async function saveAnalysisTitle(analysisId, newTitle) {
-  const trimmed = (newTitle || '').trim();
-  const el = document.getElementById('analysisTitle');
-
-  if (!trimmed) {
-    _showTitleError('タイトルは必須です');
-    showToast('タイトルは必須です', 'error');
-    if (el) el.focus();
-    return false;
+// ===== Before and after a generation =====
+// The edit screen waits for saves in flight and saves ① as the level needs
+// (一次: the top event — not empty — and the reference information; 二次・三次:
+// the reference information only, J-09) through the same save as its save
+// buttons, and tracks the generation until its result is shown
+// (js/pages/edit/generation.js). null: nothing may be generated (the reason
+// was shown).
+async function _beginGeneration(level) {
+  const bridge = window.ftaEditBridge;
+  if (!bridge || typeof bridge.beginGeneration !== 'function') {
+    showToast('画面の準備ができていないため、生成できません', 'error');
+    return null;
   }
-  if (trimmed.length > 255) {
-    _showTitleError('タイトルは255文字以内で入力してください');
-    showToast('タイトルは255文字以内で入力してください', 'error');
-    if (el) el.focus();
-    return false;
-  }
-
-  try {
-    const res = await fetch(`/analyses/${analysisId}/title`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: trimmed }),
-    });
-    const data = await res.json();
-    if (data.success) {
-      _clearTitleError();
-      document.title = data.title + ' - FTA編集';
-      showToast('タイトルを保存しました');
-      return true;
-    }
-    const errMsg = data.detail || '保存に失敗しました';
-    _showTitleError(errMsg);
-    showToast(errMsg, 'error');
-    if (el) el.focus();
-    return false;
-  } catch {
-    showToast('通信エラーが発生しました', 'error');
-    return false;
-  }
-}
-
-function startTitleRename(analysisId) {
-  const link = document.getElementById(`title-link-${analysisId}`);
-  if (!link) return;
-  const currentTitle = link.textContent.trim();
-  const cell = link.closest('td');
-  const originalHTML = cell.innerHTML;
-
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.value = currentTitle;
-  input.className = 'rename-input';
-  input.maxLength = 255;
-  input.setAttribute('aria-label', '分析タイトル');
-
-  const saveBtn = document.createElement('button');
-  saveBtn.textContent = '保存';
-  saveBtn.className = 'btn btn-xs btn-primary';
-
-  const cancelBtn = document.createElement('button');
-  cancelBtn.textContent = 'キャンセル';
-  cancelBtn.className = 'btn btn-xs btn-outline';
-
-  const hintSpan = document.createElement('span');
-  hintSpan.className = 'rename-hint';
-  hintSpan.textContent = '255文字以内で入力してください';
-
-  const errSpan = document.createElement('span');
-  errSpan.className = 'rename-error';
-  errSpan.hidden = true;
-
-  cell.innerHTML = '';
-  cell.append(input, saveBtn, cancelBtn, hintSpan, errSpan);
-  input.focus();
-  input.select();
-
-  const showRenameErr = (msg) => { errSpan.textContent = msg; errSpan.hidden = false; input.focus(); };
-  const clearRenameErr = () => { errSpan.hidden = true; };
-
-  const doSave = async () => {
-    const newTitle = input.value.trim();
-    if (!newTitle) { showRenameErr('タイトルは必須です'); return; }
-    clearRenameErr();
-    const ok = await saveAnalysisTitle(analysisId, newTitle);
-    if (ok) {
-      cell.innerHTML = originalHTML;
-      const linkEl = document.getElementById(`title-link-${analysisId}`);
-      if (linkEl) linkEl.textContent = newTitle;
-    } else {
-      showRenameErr('保存に失敗しました');
-    }
-  };
-
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); doSave(); }
-    if (e.key === 'Escape') { cell.innerHTML = originalHTML; }
-  });
-  saveBtn.addEventListener('click', doSave);
-  cancelBtn.addEventListener('click', () => { cell.innerHTML = originalHTML; });
-}
-
-// ===== Delete Analysis =====
-async function deleteAnalysis(analysisId, title) {
-  const name = (title || '').trim() || `ID: ${analysisId}`;
-  if (!confirm(`分析「${name}」を削除しますか？\nこの分析のすべての要因・評価・メモも削除されます。この操作は取り消せません。`)) return;
-  try {
-    const res = await fetch(`/analyses/${analysisId}/delete`, { method: 'POST' });
-    const data = await res.json();
-    if (data.success) {
-      showToast('分析を削除しました');
-      setTimeout(() => location.reload(), 500);
-    } else {
-      showToast(data.detail || '削除に失敗しました', 'error');
-    }
-  } catch {
-    showToast('通信エラーが発生しました', 'error');
-  }
-}
-
-// ===== Top Event =====
-async function saveTopEvent(analysisId, { quiet = false } = {}) {
-  const input = document.getElementById('topEventInput');
-  if (!input) return false;
-  const top_event = input.value.trim();
-  try {
-    const res = await fetch(`/analyses/${analysisId}/top-event`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ top_event }),
-    });
-    const data = await res.json();
-    if (data.success) {
-      input.dataset.saved = top_event;
-      if (!quiet) showToast('頂上事象を保存しました');
-      return true;
-    }
-    showToast('保存に失敗しました', 'error');
-    return false;
-  } catch (e) {
-    showToast('通信エラーが発生しました', 'error');
-    return false;
-  }
-}
-
-// ===== Analysis Context (system / incident) =====
-async function saveAnalysisContext(analysisId, { quiet = false } = {}) {
-  const sysEl = document.getElementById('systemContextInput');
-  const incEl = document.getElementById('incidentContextInput');
-  if (!sysEl && !incEl) return true;
-  const payload = {};
-  if (sysEl) payload.system_context = sysEl.value.trim();
-  if (incEl) payload.incident_context = incEl.value.trim();
-  try {
-    const res = await fetch(`/analyses/${analysisId}/context`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (data.success) {
-      if (sysEl) sysEl.dataset.saved = data.system_context || '';
-      if (incEl) incEl.dataset.saved = data.incident_context || '';
-      const status = document.getElementById('analysisContextStatus');
-      if (status) {
-        const filled = !!(data.system_context || data.incident_context);
-        status.textContent = filled ? '入力済み' : '未入力・追加できます';
-        status.classList.toggle('filled', filled);
-        status.classList.toggle('empty', !filled);
-      }
-      if (!quiet) showToast('分析コンテキストを保存しました');
-      return true;
-    }
-    showToast(data.detail || '分析コンテキストの保存に失敗しました', 'error');
-    return false;
-  } catch (e) {
-    showToast('通信エラーが発生しました', 'error');
-    return false;
-  }
-}
-
-// Like ensureTopEventReady: an edited-but-unsaved context is silently saved
-// before generation so the LLM sees what the user sees. Context is optional,
-// so (unlike the top event) empty input never blocks generation.
-async function ensureAnalysisContextReady(analysisId) {
-  const sysEl = document.getElementById('systemContextInput');
-  const incEl = document.getElementById('incidentContextInput');
-  const dirty = [sysEl, incEl].some(
-    (el) => el && el.dataset.saved !== undefined && el.dataset.saved !== el.value.trim(),
-  );
-  if (!dirty) return true;
-  const ok = await saveAnalysisContext(analysisId, { quiet: true });
-  if (ok) showToast('編集中の分析コンテキストを保存してから生成します');
-  return ok;
+  return bridge.beginGeneration(Number(level));
 }
 
 // ===== Generation Status Badge =====
+// Shown next to the parent's group heading in the work list (steps ③・④).
 function setNodeGenStatus(nodeId, status, count) {
-  const card = document.getElementById(`node-${nodeId}`);
-  if (!card) return;
-  let badge = card.querySelector('.gen-status-badge');
+  const bridge = window.ftaEditBridge;
+  const host = bridge ? bridge.genHost(nodeId) : null;
+  if (!host) return;
+  let badge = host.querySelector('.gen-status-badge');
   if (!badge) {
     badge = document.createElement('span');
     badge.className = 'gen-status-badge';
-    const header = card.querySelector('.node-card-header');
-    if (header) header.appendChild(badge);
+    host.appendChild(badge);
   }
   badge.className = `gen-status-badge gen-status-${status}`;
   if (status === 'generating') badge.textContent = '生成中…';
@@ -281,40 +79,54 @@ function setNodeGenStatus(nodeId, status, count) {
 
 // Disable every generation trigger while a request is in flight so a slow
 // LLM call can't be double-fired (or fired for another level in parallel).
+// The edit screen keeps the buttons it disabled for another reason (J-25).
 function setGenerateButtonsDisabled(disabled) {
-  document.querySelectorAll('.btn-generate, .btn-add-gen').forEach((btn) => {
+  const bridge = window.ftaEditBridge;
+  if (bridge) {
+    bridge.setGenerating(disabled);
+    return;
+  }
+  document.querySelectorAll('[data-generate]').forEach((btn) => {
     btn.disabled = disabled;
   });
 }
 
-// Level-1 generation needs a top event: block empty input, and silently save
-// an edited-but-unsaved value first so the LLM sees what the user sees.
-async function ensureTopEventReady(analysisId) {
-  const input = document.getElementById('topEventInput');
-  if (!input) return true;
-  const current = input.value.trim();
-  if (!current) {
-    showToast('頂上事象を入力してから生成してください', 'error');
-    input.focus();
+// ===== Parents of manual add and generation (J-25, 判断3) =====
+// A 二次・三次 request always names its parent (never a request without
+// parent_id, which the API would answer for every Yes factor), and the
+// parent must be one the edit screen allows: never a factor with an
+// inconsistent parent link or ancestor. Asked right before every request,
+// from the data of the page; without the edit screen nothing is sent.
+function _parentAllowed(parentId, level) {
+  if (Number(level) === 1) return true;
+  if (!parentId) {
+    showToast('親要因が指定されていないため、追加・生成できません', 'error');
     return false;
   }
-  if (input.dataset.saved !== undefined && input.dataset.saved !== current) {
-    const ok = await saveTopEvent(analysisId, { quiet: true });
-    if (!ok) return false;
-    showToast('編集中の頂上事象を保存してから生成します');
+  const bridge = window.ftaEditBridge;
+  const check = bridge
+    ? bridge.checkParent(Number(parentId), Number(level))
+    : { allowed: false, reason: '親要因を確認できないため、追加・生成できません' };
+  if (!check.allowed) {
+    showToast(check.reason, 'error');
+    return false;
   }
   return true;
 }
 
 // ===== Generate Factors =====
 async function generateFactors(analysisId, level) {
-  if (level === 1 && !(await ensureTopEventReady(analysisId))) return;
-  if (!(await ensureAnalysisContextReady(analysisId))) return;
-
-  if (level >= 2) {
-    await generateFactorsSequential(analysisId, level);
-    return;
+  const generation = await _beginGeneration(level);
+  if (!generation) return;
+  try {
+    if (level >= 2) await generateFactorsSequential(analysisId, level);
+    else await _generateLevel1(analysisId, level);
+  } finally {
+    await generation.end();
   }
+}
+
+async function _generateLevel1(analysisId, level) {
   // Level 1 — single call, show full-page overlay
   const overlay = document.getElementById('loadingOverlay');
   if (overlay) overlay.classList.remove('hidden');
@@ -350,17 +162,30 @@ async function generateFactors(analysisId, level) {
   }
 }
 
-// ===== Generate Factors Sequential (level 2/3 — per parent card) =====
+// ===== Generate Factors Sequential (level 2/3 — per parent) =====
+// The parents are every Yes factor of the level above, taken from the edit
+// screen's data (hidden by the filter or not, J-07), in the same order as
+// before, except factors with an inconsistent parent link or ancestor
+// (J-25, 判断3), which are counted and named separately; one request per
+// parent, each with its parent_id, each checked again before it is sent.
 async function generateFactorsSequential(analysisId, level) {
-  const parentLevel = level - 1;
-  const parentCards = document.querySelectorAll(`.level-${parentLevel}-card.yes`);
+  const bridge = window.ftaEditBridge;
+  const { targets: parentIds, excluded } = bridge
+    ? bridge.generationTargets(level)
+    : { targets: [], excluded: 0 };
 
-  if (parentCards.length === 0) {
-    showToast('Yes評価の要因がありません', 'error');
+  if (parentIds.length === 0) {
+    showToast(
+      excluded > 0
+        ? `生成できる親要因がありません（Yes評価の要因のうち${excluded}件は親子関係に不整合があるため対象外です）`
+        : 'Yes評価の要因がありません',
+      'error',
+    );
     return;
   }
 
-  showToast(`${parentCards.length}件の親要因から順に生成中...`);
+  const excludedNote = excluded > 0 ? `（親子関係に不整合があるYes評価の要因${excluded}件は対象外）` : '';
+  showToast(`${parentIds.length}件の親要因から順に生成中...${excludedNote}`);
   setGenerateButtonsDisabled(true);
 
   let totalCreated = 0;
@@ -369,15 +194,19 @@ async function generateFactorsSequential(analysisId, level) {
   const reasonSet = new Set();
 
   try {
-    for (const card of parentCards) {
-      const nodeId = card.dataset.nodeId;
+    for (const nodeId of parentIds) {
+      if (!_parentAllowed(nodeId, level)) {
+        setNodeGenStatus(nodeId, 'error');
+        totalErrors++;
+        continue;
+      }
       setNodeGenStatus(nodeId, 'generating');
 
       try {
         const res = await fetch(`/analyses/${analysisId}/generate/level/${level}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ parent_id: parseInt(nodeId) }),
+          body: JSON.stringify({ parent_id: Number(nodeId) }),
         });
         const data = await res.json();
         const qs = data.quality_summary || {};
@@ -430,9 +259,17 @@ async function generateFactorsSequential(analysisId, level) {
 // - generateAdditional(analysisId, parentNodeId, childLevel): more children
 //   of one specific parent (level-1 card → level 2, level-2 card → level 3)
 async function generateAdditional(analysisId, parentNodeId, childLevel) {
-  if (childLevel === 1 && !(await ensureTopEventReady(analysisId))) return;
-  if (!(await ensureAnalysisContextReady(analysisId))) return;
+  if (!_parentAllowed(parentNodeId, childLevel)) return;
+  const generation = await _beginGeneration(childLevel);
+  if (!generation) return;
+  try {
+    await _generateAdditional(analysisId, parentNodeId, childLevel);
+  } finally {
+    await generation.end();
+  }
+}
 
+async function _generateAdditional(analysisId, parentNodeId, childLevel) {
   const overlay = (childLevel === 1) ? document.getElementById('loadingOverlay') : null;
   if (overlay) overlay.classList.remove('hidden');
   if (parentNodeId) setNodeGenStatus(parentNodeId, 'generating');
@@ -440,7 +277,7 @@ async function generateAdditional(analysisId, parentNodeId, childLevel) {
 
   try {
     const body = { additional: true };
-    if (parentNodeId) body.parent_id = parentNodeId;
+    if (Number(childLevel) !== 1) body.parent_id = Number(parentNodeId);
     const res = await fetch(`/analyses/${analysisId}/generate/level/${childLevel}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -475,75 +312,36 @@ async function generateAdditional(analysisId, parentNodeId, childLevel) {
   }
 }
 
-// ===== Judgement =====
-async function setJudgement(nodeId, judgement) {
-  try {
-    const res = await fetch(`/nodes/${nodeId}/update`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_judgement: judgement }),
-    });
-    const data = await res.json();
-    if (data.success) {
-      const card = document.getElementById(`node-${nodeId}`);
-      if (card) {
-        card.classList.remove('yes', 'no', 'unknown');
-        card.classList.add(judgement);
-        // Update button states
-        card.querySelectorAll('.judgement-btn').forEach(btn => {
-          btn.classList.remove('active');
-          const active = btn.classList.contains(judgement);
-          if (active) btn.classList.add('active');
-          btn.setAttribute('aria-pressed', active ? 'true' : 'false');
-        });
-      }
-      // Keep the table view row in sync (judgement chip + filter data).
-      const row = document.querySelector(`.node-table-row[data-node-id="${nodeId}"]`);
-      if (row) {
-        row.dataset.judgement = judgement;
-        const chip = row.querySelector('.tree-judgement');
-        if (chip) {
-          chip.className = `tree-judgement tree-judgement-${judgement}`;
-          chip.textContent = ({ yes: 'Yes', no: 'No', unknown: '未評価' })[judgement] || judgement;
-        }
-      }
-      applyNodeFilter();
-      showToast('評価を更新しました');
-    } else {
-      showToast('更新に失敗しました', 'error');
-    }
-  } catch (e) {
-    showToast('通信エラーが発生しました', 'error');
-  }
-}
-
-// ===== Save Node Title =====
-async function saveNodeTitle(nodeId, title) {
-  const trimmed = title.trim();
-  if (!trimmed) return;
-  try {
-    await fetch(`/nodes/${nodeId}/update`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: trimmed }),
-    });
-  } catch (e) {
-    console.error('Failed to save title', e);
-  }
-}
+// Judgement (UI-12), the filter (UI-15) and the quality warning (UI-17) are
+// handled by the edit screen itself (js/pages/edit); the card columns with
+// their direct title editing are gone (J-10: titles are edited in the
+// detail dialog until the inspector takes over in PR-5).
 
 // ===== Delete Node =====
+// Only as the edit screen computed it for the data of the page (J-25,
+// 判断2): a factor whose delete would remove factors of another analysis,
+// whose subtree could not be walked completely, or whose category is kept
+// undeletable is refused before the confirmation, and nothing is sent.
+// Without the edit screen nothing is deleted. This does not make the delete
+// API itself safe.
 async function deleteNode(nodeId, analysisId) {
-  const card = document.getElementById(`node-${nodeId}`);
-  const titleEl = card ? card.querySelector('.node-title') : null;
-  const name = titleEl ? titleEl.textContent.trim() : `ID: ${nodeId}`;
+  const bridge = window.ftaEditBridge;
+  const check = bridge
+    ? bridge.checkDelete(Number(nodeId))
+    : { allowed: false, reason: '削除できるか確認できないため、削除できません' };
+  if (!check.allowed) {
+    showToast(check.reason, 'error');
+    return;
+  }
+  const title = bridge.nodeTitle(nodeId);
+  const name = title !== null ? title : `ID: ${nodeId}`;
   if (!confirm(`要因「${name}」を削除しますか？\nこの要因の子要因もすべて削除されます。この操作は取り消せません。`)) return;
   try {
     const res = await fetch(`/nodes/${nodeId}/delete`, { method: 'POST' });
     const data = await res.json();
     if (data.success) {
       showToast('削除しました');
-      reloadPreservingScroll(500);
+      reloadPreservingScroll(500, { deleted: Number(nodeId) });
     } else {
       showToast('削除に失敗しました', 'error');
     }
@@ -552,33 +350,15 @@ async function deleteNode(nodeId, analysisId) {
   }
 }
 
-// ===== Warning flags =====
-// The badge tooltip is hover-only; clicking (or Enter on) the badge shows the
-// full reason so touch/keyboard users can read it too. Clicking the badge
-// again while its reason is on screen hides it (toggle); clicking a badge
-// with a different reason switches the toast to that reason. Ordinary
-// success/error/warning toasts are unaffected: showToast clears the
-// warning-detail marker, so they always behave as before.
-function showWarningDetail(flags) {
-  if (!flags) return;
-  const toast = document.getElementById('toast');
-  if (!toast) return;
-  const isVisible = !toast.classList.contains('hidden');
-  if (isVisible && toast.dataset.warningDetail === flags) {
-    hideToast();
-    return;
-  }
-  showToast(`要確認の理由: ${flags}`, 'warning');
-  // Set after showToast (which clears it) to mark this as a badge toast.
-  toast.dataset.warningDetail = flags;
-}
-
 // ===== Node Detail Modal =====
 let currentNodeId = null;
 let lastFocusedBeforeModal = null;
+let lastFocusBeforeModal = null;  // the same, as the edit screen describes it
 
 function _openModal(modalId, focusSelector) {
   lastFocusedBeforeModal = document.activeElement;
+  const bridge = window.ftaEditBridge;
+  lastFocusBeforeModal = bridge ? bridge.rememberFocus() : null;
   const modal = document.getElementById(modalId);
   modal.classList.remove('hidden');
   const target = focusSelector ? modal.querySelector(focusSelector) : null;
@@ -589,10 +369,16 @@ function _closeModal(modalId) {
   const modal = document.getElementById(modalId);
   if (!modal || modal.classList.contains('hidden')) return;
   modal.classList.add('hidden');
-  if (lastFocusedBeforeModal && typeof lastFocusedBeforeModal.focus === 'function') {
+  const bridge = window.ftaEditBridge;
+  if (lastFocusedBeforeModal && !lastFocusedBeforeModal.isConnected && bridge && lastFocusBeforeModal) {
+    // The page was updated while the dialog was open (e.g. a generation
+    // ended) and the control that opened it was replaced: its replacement.
+    bridge.restoreFocus(lastFocusBeforeModal);
+  } else if (lastFocusedBeforeModal && typeof lastFocusedBeforeModal.focus === 'function') {
     lastFocusedBeforeModal.focus();
-    lastFocusedBeforeModal = null;
   }
+  lastFocusedBeforeModal = null;
+  lastFocusBeforeModal = null;
 }
 
 async function openNodeDetail(nodeId) {
@@ -680,6 +466,7 @@ async function saveNodeDetail() {
 
 // ===== Add Node Modal =====
 function showAddNodeModal(analysisId, parentId, level) {
+  if (!_parentAllowed(parentId, level)) return;
   document.getElementById('addNodeAnalysisId').value = analysisId;
   document.getElementById('addNodeParentId').value = parentId || '';
   document.getElementById('addNodeLevel').value = level;
@@ -704,6 +491,8 @@ async function submitAddNode() {
     document.getElementById('addNodeTitle').focus();
     return;
   }
+  // The page may have been updated while the dialog was open.
+  if (!_parentAllowed(parentId, level)) return;
 
   try {
     let url, body;
@@ -723,7 +512,7 @@ async function submitAddNode() {
     if (data.success) {
       showToast('要因を追加しました');
       closeAddNodeModal();
-      reloadPreservingScroll(500);
+      reloadPreservingScroll(500, { select: data.node_id, level });
     } else {
       showToast(data.detail || '追加に失敗しました', 'error');
     }
@@ -732,82 +521,11 @@ async function submitAddNode() {
   }
 }
 
-// ===== Node filter (search / judgement) =====
-// Applies to both representations of the same node set: the card columns and
-// the table view rows, so the two never show a different subset.
-function applyNodeFilter() {
-  const textInput = document.getElementById('nodeFilterText');
-  const judgeSelect = document.getElementById('nodeFilterJudgement');
-  if (!textInput && !judgeSelect) return;
-
-  const text = textInput ? textInput.value.trim().toLowerCase() : '';
-  const judge = judgeSelect ? judgeSelect.value : '';
-  const cards = document.querySelectorAll('.node-card[data-node-id]');
-  let visible = 0;
-
-  const matchesFilter = (haystack, judgement, hasWarning) => {
-    if (text && !haystack.includes(text)) return false;
-    if (!judge) return true;
-    if (judge === 'warning') return hasWarning;
-    return judgement === judge;
-  };
-
-  cards.forEach((card) => {
-    const titleEl = card.querySelector('.node-title');
-    const descEl = card.querySelector('.node-desc');
-    const haystack = (
-      (titleEl ? titleEl.textContent : '') + ' ' + (descEl ? descEl.textContent : '')
-    ).toLowerCase();
-    const judgement = ['yes', 'no', 'unknown'].find((j) => card.classList.contains(j)) || '';
-    const matches = matchesFilter(haystack, judgement, !!card.querySelector('.warning-badge'));
-    card.classList.toggle('filter-hidden', !matches);
-    if (matches) visible++;
-  });
-
-  document.querySelectorAll('.node-table-row').forEach((row) => {
-    const titleEl = row.querySelector('.node-table-title-text');
-    const descEl = row.querySelector('.node-table-desc');
-    const haystack = (
-      (titleEl ? titleEl.textContent : '') + ' ' + (descEl ? descEl.textContent : '')
-    ).toLowerCase();
-    const matches = matchesFilter(haystack, row.dataset.judgement || '', row.dataset.warning === '1');
-    row.classList.toggle('filter-hidden', !matches);
-  });
-
-  const countEl = document.getElementById('nodeFilterCount');
-  if (countEl) {
-    const active = text || judge;
-    countEl.textContent = active ? `${visible}/${cards.length}件を表示` : `全${cards.length}件`;
-  }
-}
-
-function clearNodeFilter() {
-  const textInput = document.getElementById('nodeFilterText');
-  const judgeSelect = document.getElementById('nodeFilterJudgement');
-  if (textInput) textInput.value = '';
-  if (judgeSelect) judgeSelect.value = '';
-  applyNodeFilter();
-}
-
-document.addEventListener('DOMContentLoaded', applyNodeFilter);
-
 // ===== Keyboard support =====
 // Close modals on Escape key
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     closeNodeDetail();
     closeAddNodeModal();
-  }
-});
-
-// contenteditable titles: Enter should commit (blur → save), not insert a
-// newline into a single-line title.
-document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Enter') return;
-  const t = e.target;
-  if (t && t.isContentEditable &&
-      (t.classList.contains('node-title') || t.id === 'analysisTitle')) {
-    e.preventDefault();
-    t.blur();
   }
 });
