@@ -92,6 +92,19 @@ export function ancestry(model, node) {
   return { chain, underTopEvent: isConsistentRoot(chain[0] || node) };
 }
 
+// Is `node` the factor `ancestorId` or below it (parent links in the data,
+// each visited once)?
+export function isAtOrBelow(model, node, ancestorId) {
+  const seen = new Set();
+  let current = node;
+  while (current && !seen.has(current.id)) {
+    if (current.id === Number(ancestorId)) return true;
+    seen.add(current.id);
+    current = current.parentId === null ? null : getNode(model, current.parentId);
+  }
+  return false;
+}
+
 export function childrenOf(model, node) {
   return (model.childrenOf.get(node.id) || []).filter((child) => child.id !== node.id);
 }

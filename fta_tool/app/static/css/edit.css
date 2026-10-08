@@ -753,6 +753,8 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+/* Unused since PR-5 (the read-only details list became the editor); the old
+   CSS is removed in PR-7. */
 .edit-details {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
@@ -824,7 +826,11 @@
    cover no part of it (×, 保存・追加, キャンセル included) however many are
    stacked; when it closes they are back at the bottom centre. The width
    keeps a gap beside the widest dialog from 1100px (the page's minimum
-   width) up; narrower display areas are PR-7. */
+   width) up; narrower display areas are PR-7.
+   Since PR-5 the edit page has no legacy dialog (.modal) any more, so this
+   rule no longer applies; it is kept, with the layout boundaries it gives
+   (tests/e2e/support.py LAYOUT_BOUNDARIES), until the old CSS is removed
+   in PR-7. */
 .edit-body:has(.modal:not(.hidden)) .ui-toast-stack {
   top: var(--space-5);
   right: var(--space-4);
@@ -832,4 +838,81 @@
   left: auto;
   width: clamp(220px, calc((100vw - 560px) / 2 - 2 * var(--space-4)), 360px);
   transform: none;
+}
+
+/* ----- Inspector: the factor's editor (PR-5) -----
+   Seven fields saved with 保存; the 保存・取消 bar stays at the bottom of the
+   inspector's scroll area while the editor is in view (position: sticky),
+   so they are reached without scrolling past the fields. Text wraps; no
+   width depends on the font. */
+.edit-editor {
+  display: grid;
+  gap: var(--space-2);
+}
+.edit-editor__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-2);
+}
+.edit-editor__lead {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.edit-editor__fields {
+  display: grid;
+  gap: var(--space-2);
+}
+.edit-editor__field .ui-input {
+  width: 100%;
+}
+.edit-editor__field textarea.ui-input {
+  min-height: 3.2em;
+}
+.edit-editor__required {
+  margin-left: 4px;
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+}
+.edit-editor[data-phase="loading"] .edit-editor__fields,
+.edit-editor[data-phase="failed"] .edit-editor__fields {
+  opacity: 0.55;
+}
+.edit-editor__bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: grid;
+  gap: var(--space-1);
+  margin: 0 calc(-1 * var(--space-4));
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.edit-editor__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.edit-editor__message {
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+.edit-editor__message[data-kind="error"] {
+  color: var(--color-danger);
+  font-weight: 700;
+}
+.edit-editor__message[data-kind="info"] {
+  color: var(--color-text-muted);
+}
+.edit-editor__message[hidden] {
+  display: none;
+}
+
+/* ----- Dialogs with fields (manual add, PR-5) ----- */
+.ui-dialog--form .ui-field .ui-input {
+  width: 100%;
 }

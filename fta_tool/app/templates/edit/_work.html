@@ -84,7 +84,7 @@
           {%- if view.level_nodes[1] %}
           <button type="button" class="ui-btn" data-action="legacy-generate-additional" data-level="1" data-generate title="既存の一次要因と重複しないよう、一次要因を追加生成します">一次要因を追加生成</button>
           {%- endif %}
-          <button type="button" class="ui-btn" data-action="legacy-add" data-level="1">手動追加</button>
+          <button type="button" class="ui-btn" data-action="add" data-level="1">手動追加</button>
         </div>
         <p class="edit-opbar__note">頂上事象と参考情報をもとに、AIが一次要因を{{ counts['1'] }}件生成します（追加生成は{{ counts['additional'] }}件）。</p>
         <p class="edit-opbar__note" data-autosave-note="1">生成の前に、入力中の頂上事象と参考情報を自動で保存します（頂上事象が空のときは生成しません）。</p>
