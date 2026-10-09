@@ -9,7 +9,9 @@
 // Whether the factor may be deleted (判断2) is asked at three points with the
 // same answer (edit/permissions.js): the button (disabled with its reason),
 // opening this dialog, and confirming it (the data may have been updated
-// meanwhile). Refused: nothing is asked or sent.
+// meanwhile). Refused: nothing is asked or sent. Also refused at both points
+// while the save of the edited factor (the factor deleted or one below it)
+// is in flight.
 //
 // When the factor being edited in the inspector, or one of its ancestors, is
 // deleted, the dialog says 「編集中の変更も破棄されます」. キャンセル, Esc and a
@@ -35,11 +37,28 @@ function draftAffected(app, nodeId) {
   return Boolean(edited) && isAtOrBelow(app.model, edited, nodeId);
 }
 
+// The save of the edited factor is in flight and the delete would remove
+// that factor (or it is below): refused until the save has ended, so the
+// save and the delete never race (Codex review of e53767d).
+const SAVING_REASON = '編集中の要因を保存しています。保存が終わってから削除してください。';
+
+function saveInFlightAffected(app, nodeId) {
+  const editor = currentEditor();
+  return Boolean(editor) && editor.isSaving() && draftAffected(app, nodeId);
+}
+
+function check(app, id) {
+  const answer = checkDelete(app, id);
+  if (!answer.allowed) return answer;
+  if (saveInFlightAffected(app, id)) return { allowed: false, reason: SAVING_REASON };
+  return answer;
+}
+
 export function openDeleteDialog(app, nodeId, { invoker = null } = {}) {
   const id = Number(nodeId);
-  const check = checkDelete(app, id);
-  if (!check.allowed) {
-    notify(check.reason, { type: 'error' });
+  const first = check(app, id);
+  if (!first.allowed) {
+    notify(first.reason, { type: 'error' });
     return null;
   }
   const node = getNode(app.model, id);
@@ -78,8 +97,9 @@ export function openDeleteDialog(app, nodeId, { invoker = null } = {}) {
         dialog.close(actionId);
         return;
       }
-      // Asked again: the page may have been updated while the dialog was open.
-      const again = checkDelete(app, id);
+      // Asked again: the page may have been updated, or a save of the edited
+      // factor started, while the dialog was open.
+      const again = check(app, id);
       if (!again.allowed) {
         dialog.setError(again.reason);
         focusElement(dialog.button('cancel'));

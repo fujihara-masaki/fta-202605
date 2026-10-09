@@ -733,3 +733,63 @@ def test_E_E17_two_adds_while_the_update_is_held_select_the_last_one(page, e2e_s
     page.wait_for_timeout(500)
     expect_selected(page, d, "続けて追加した要因D")
     assert adds == [f"/analyses/{analysis_id}/nodes/add-level1"] * 2
+
+
+@pytest.mark.acceptance("E-E16")
+def test_E_E16_no_delete_while_the_edited_factors_save_is_in_flight(page, e2e_server):
+    """Codex review of e53767d (2026-10-09): while the save of the edited
+    factor is in flight, deleting it (or an ancestor) is refused — when the
+    dialog opens and again when it is confirmed — so the save and the delete
+    never race. Once the save has ended, the delete works."""
+    analysis_id, a, b, c, b2, d = tree_abc(e2e_server, "保存中の削除")
+    open_edit(page, analysis_id, f"#sel={b}&step=3&view=work")
+    expect_editor_ready(page, b)
+    sent = node_posts(page)
+    held = []
+    page.route(f"**/nodes/{b}/update", lambda route: held.append(route))
+    factor_field(page, "memo").fill("保存中のBのメモ")
+    factor_save(page).click()
+    wait_until(lambda: len(held) == 1)
+
+    # B itself, and its ancestor A (from another control, as a stale one would be).
+    inspector(page).get_by_role("button", name="この要因を削除").click()
+    expect(toast(page, "編集中の要因を保存しています。保存が終わってから削除してください。", "error")).to_be_visible()
+    expect(delete_dialog(page)).to_have_count(0)
+    inject_delete(page, a)
+    expect(delete_dialog(page)).to_have_count(0)
+    page.wait_for_timeout(300)
+    assert [path for path, _ in sent if path.endswith("/delete")] == []
+
+    held[0].continue_()
+    expect(factor_status(page)).to_have_attribute("data-state", "saved")
+    wait_until(lambda: e2e_server.get_node(b)["memo"] == "保存中のBのメモ")
+    inspector(page).get_by_role("button", name="この要因を削除").click()
+    delete_dialog(page).get_by_role("button", name="削除する").click()
+    expect_selected(page, a, "一次要因A")
+    assert [path for path, _ in sent] == [f"/nodes/{b}/update", f"/nodes/{b}/delete"]
+
+
+@pytest.mark.acceptance("E-E16")
+def test_E_E16_confirming_is_refused_when_a_save_started_meanwhile(page, e2e_server):
+    """The same, asked again on 削除する: the save of the edited factor began
+    after the dialog opened (here through the page's own save function, as
+    no control behind the modal dialog can be used)."""
+    analysis_id, a, b, c, b2, d = tree_abc(e2e_server, "確定時の保存中")
+    open_edit(page, analysis_id, f"#sel={b}&step=3&view=work")
+    expect_editor_ready(page, b)
+    sent = node_posts(page)
+    held = []
+    page.route(f"**/nodes/{b}/update", lambda route: held.append(route))
+    factor_field(page, "memo").fill("確定時のBのメモ")
+    inspector(page).get_by_role("button", name="この要因を削除").click()
+    expect(delete_dialog(page).locator("[data-delete-draft]")).to_be_visible()
+    page.evaluate("() => document.querySelector('[data-factor-save]').click()")
+    wait_until(lambda: len(held) == 1)
+    delete_dialog(page).get_by_role("button", name="削除する").click()
+    expect(delete_dialog(page).locator(".ui-dialog__error")).to_have_text(
+        "編集中の要因を保存しています。保存が終わってから削除してください。")
+    page.wait_for_timeout(300)
+    assert [path for path, _ in sent if path.endswith("/delete")] == []
+    held[0].continue_()
+    delete_dialog(page).get_by_role("button", name="キャンセル").click()
+    expect(factor_status(page)).to_have_attribute("data-state", "saved")
