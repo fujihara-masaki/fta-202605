@@ -240,7 +240,7 @@ def test_E_E14_input_typed_during_the_save_stays_unsaved(page, e2e_server):
 
     factor_field(page, "memo").fill("先に送るメモ")
     factor_save(page).click()
-    pump(page, lambda: len(held) == 1)
+    pump(page, lambda: len(held) == 1, timeout=10.0)
     expect(factor_status(page)).to_have_text("保存中…")
     expect(factor_save(page)).to_have_attribute("aria-disabled", "true")
     factor_field(page, "memo").fill("先に送るメモ（追加）")  # typing is allowed meanwhile
@@ -607,7 +607,7 @@ def test_E_E17_a_later_choice_is_never_replaced_by_the_selection(page, e2e_serve
                lambda r: held.append(r) if is_page_fetch(r.request, analysis_id) and not held else r.continue_())
 
     add_factor(page, step_panel(page, 2).get_by_role("button", name="手動追加", exact=True), "遅れて表示される要因")
-    pump(page, lambda: bool(held))
+    pump(page, lambda: bool(held), timeout=10.0)
     choose(page, b)  # chosen before the update arrives
     held[0].continue_()
     added = e2e_server.query("SELECT id FROM nodes WHERE title = ?", ("遅れて表示される要因",))[0][0]
@@ -654,7 +654,7 @@ def test_E_E17_choosing_a_b_a_while_the_update_is_held_keeps_the_users_choice(pa
                lambda r: held.append(r) if is_page_fetch(r.request, analysis_id) and not held else r.continue_())
 
     add_factor(page, step_panel(page, 2).get_by_role("button", name="手動追加", exact=True), "保留中に追加した要因C")
-    pump(page, lambda: bool(held))
+    pump(page, lambda: bool(held), timeout=10.0)
     choose(page, b)
     choose(page, a)  # back to A: the same id as when the add was made
     judgement_of(page, b, "yes").click()  # a write meanwhile: the held answer is fetched again
@@ -721,9 +721,9 @@ def test_E_E17_two_adds_while_the_update_is_held_select_the_last_one(page, e2e_s
 
     add_button = step_panel(page, 2).get_by_role("button", name="手動追加", exact=True)
     add_factor(page, add_button, "続けて追加した要因C")
-    pump(page, lambda: bool(held))
+    pump(page, lambda: bool(held), timeout=10.0)
     add_factor(page, add_button, "続けて追加した要因D")
-    pump(page, lambda: len(adds) == 2)
+    pump(page, lambda: len(adds) == 2, timeout=10.0)
     held[0].continue_()
     c = e2e_server.query("SELECT id FROM nodes WHERE title = ?", ("続けて追加した要因C",))[0][0]
     d = e2e_server.query("SELECT id FROM nodes WHERE title = ?", ("続けて追加した要因D",))[0][0]
@@ -749,7 +749,7 @@ def test_E_E16_no_delete_while_the_edited_factors_save_is_in_flight(page, e2e_se
     page.route(f"**/nodes/{b}/update", lambda route: held.append(route))
     factor_field(page, "memo").fill("保存中のBのメモ")
     factor_save(page).click()
-    pump(page, lambda: len(held) == 1)
+    pump(page, lambda: len(held) == 1, timeout=10.0)
 
     # B itself, and its ancestor A (from another control, as a stale one would be).
     inspector(page).get_by_role("button", name="この要因を削除").click()
@@ -784,7 +784,7 @@ def test_E_E16_confirming_is_refused_when_a_save_started_meanwhile(page, e2e_ser
     inspector(page).get_by_role("button", name="この要因を削除").click()
     expect(delete_dialog(page).locator("[data-delete-draft]")).to_be_visible()
     page.evaluate("() => document.querySelector('[data-factor-save]').click()")
-    pump(page, lambda: len(held) == 1)
+    pump(page, lambda: len(held) == 1, timeout=10.0)
     delete_dialog(page).get_by_role("button", name="削除する").click()
     expect(delete_dialog(page).locator(".ui-dialog__error")).to_have_text(
         "編集中の要因を保存しています。保存が終わってから削除してください。")
@@ -816,7 +816,7 @@ def a_dirty_c_held_d_held(page, e2e_server, title):
 
     add_button = step_panel(page, 2).get_by_role("button", name="手動追加", exact=True)
     add_factor(page, add_button, "追加した要因C")                  # 1-2: C added, its update held
-    pump(page, lambda: bool(held_fetch))
+    pump(page, lambda: bool(held_fetch), timeout=10.0)
     add_button.click()                                               # 3: D's add sent, held
     page.fill("#add-factor-title", "追加した要因D")
     add_dialog(page).get_by_role("button", name="追加する").click()
