@@ -261,7 +261,10 @@ export function createRefresher(app, { scrollers }) {
     // the same factor again: A → B → A); the number was recorded when the
     // update was asked for and is never taken again (retries, a generation
     // holding the update back).
-    const selectNew = options.select !== undefined && getNode(model, options.select)
+    // A newer add asked for its own update meanwhile (waiting in `pending`):
+    // that one selects its factor, this older one selects nothing.
+    const superseded = Boolean(pending) && pending.select !== undefined;
+    const selectNew = options.select !== undefined && !superseded && getNode(model, options.select)
       && options.selectIntent === app.selectionIntent
       && (options.selectFrom === undefined || options.selectFrom === app.state.sel);
     if (options.deleted !== undefined && selected && !keepsDraft

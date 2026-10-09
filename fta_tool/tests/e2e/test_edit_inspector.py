@@ -701,3 +701,35 @@ def test_E_E17_a_b_a_during_a_generation_keeps_the_users_choice(page, e2e_server
     expect(select_button(page, "nav", c)).to_have_count(1)
     page.wait_for_timeout(500)
     expect_selected(page, a, "一次要因A")
+
+
+@pytest.mark.acceptance("E-E17")
+def test_E_E17_two_adds_while_the_update_is_held_select_the_last_one(page, e2e_server):
+    """Codex review of bb3496b (2026-10-09): C is added, and D before C's
+    update arrives. The older update must not select C (which would leave D's
+    selection to compare against C); the last factor added, D, is selected."""
+    analysis_id = e2e_server.create_analysis("続けての手動追加", top_event="頂上")
+    a = e2e_server.add_level1(analysis_id, "一次要因A")
+    open_edit(page, analysis_id)
+    expect_editor_ready(page, a)
+    adds: list[str] = []
+    page.on("request", lambda r: adds.append(urlparse(r.url).path)
+            if r.method == "POST" and urlparse(r.url).path.endswith("/add-level1") else None)
+    held = []
+    page.route(f"**/analyses/{analysis_id}",
+               lambda r: held.append(r) if is_page_fetch(r.request, analysis_id) and not held else r.continue_())
+
+    add_button = step_panel(page, 2).get_by_role("button", name="手動追加", exact=True)
+    add_factor(page, add_button, "続けて追加した要因C")
+    wait_until(lambda: bool(held))
+    add_factor(page, add_button, "続けて追加した要因D")
+    wait_until(lambda: len(adds) == 2)
+    held[0].continue_()
+    c = e2e_server.query("SELECT id FROM nodes WHERE title = ?", ("続けて追加した要因C",))[0][0]
+    d = e2e_server.query("SELECT id FROM nodes WHERE title = ?", ("続けて追加した要因D",))[0][0]
+    expect_selected(page, d, "続けて追加した要因D")
+    expect_editor_ready(page, d)
+    expect(select_button(page, "nav", c)).to_have_count(1)
+    page.wait_for_timeout(500)
+    expect_selected(page, d, "続けて追加した要因D")
+    assert adds == [f"/analyses/{analysis_id}/nodes/add-level1"] * 2
