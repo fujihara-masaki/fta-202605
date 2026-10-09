@@ -316,10 +316,12 @@ export function createRefresher(app, { scrollers }) {
     }
     restoreFocus(app, focus, previousModel);
     app.saveSession();
-    if (selectNew && app.requestSelect) {
+    if (selectNew && app.autoSelect) {
       // The added factor, as its route of R-01: asked about an unsaved
       // draft first; 編集を続ける keeps the selection (the factor stays added).
-      app.requestSelect(Number(options.select), { invoker: document.activeElement });
+      // A later add while that check is open becomes the target
+      // (edit.js autoSelect).
+      app.autoSelect(Number(options.select), options.selectIntent);
     }
   }
 

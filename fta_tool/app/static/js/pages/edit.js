@@ -192,6 +192,37 @@ function start(root, model) {
     });
   };
 
+  // The selection after a manual add (edit/refresh.js), one at a time: the
+  // latest added factor is the target. While its check is open (the three
+  // choices for an unsaved draft), the selection after a later add only
+  // replaces the target — it is not dropped because the check is busy, and
+  // the earlier factor is not selected over it. Before switching, the
+  // target is judged again: if the user chose anything meanwhile
+  // (selectionIntent), nothing is selected. 編集を続ける keeps the selection
+  // and the draft, and drops the target.
+  let autoTarget = null;
+  let autoRunning = false;
+  app.autoSelect = (nodeId, intent) => {
+    autoTarget = { id: Number(nodeId), intent };
+    if (autoRunning) return;
+    autoRunning = true;
+    const opener = document.activeElement;
+    requestSwitch({
+      source: currentFactorSource(),
+      invoker: opener,
+      fallbackFocus: successorOf(opener),
+      proceed: () => {
+        const target = autoTarget;
+        if (target && target.intent === app.selectionIntent && getNode(app.model, target.id)) {
+          app.select(target.id, {});
+        }
+      },
+    }).finally(() => {
+      autoRunning = false;
+      autoTarget = null;
+    });
+  };
+
   app.afterJudgement = () => {
     applyFilter(app);
   };

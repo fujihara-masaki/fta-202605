@@ -13,11 +13,12 @@
 //   confirms an IME conversion) adds; Esc and キャンセル close and drop the
 //   input.
 // - After a success the dialog closes and a partial update shows the factor;
-//   selecting it goes through the R-01 check (edit.js requestSelect: the
+//   selecting it goes through the R-01 check (edit.js autoSelect: the
 //   inspector's unsaved draft is asked about; 編集を続ける keeps the selection
 //   and the draft, the factor stays added). A later choice of the user is
-//   never replaced by that selection (edit/refresh.js selectFrom). Nothing
-//   about the selection or the display sends the add again.
+//   never replaced by that selection (edit/refresh.js selectIntent); a later
+//   add completed while that check is open becomes the one selected.
+//   Nothing about the selection or the display sends the add again.
 
 import { el, focusElement } from '../../common/dom.js';
 import { openDialog } from '../../common/dialog.js';
