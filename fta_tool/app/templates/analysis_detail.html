@@ -9,8 +9,9 @@
     screen state. PR-4: the header title edited inline and the export menu,
     ① with its save status, ⑤'s counts and export table, and leaving the
     page through the shared save coordinator (js/common/unsaved.js).
-    Detail editing, manual add, delete and generation still run through the
-    legacy app.js with its dialogs (replaced in PR-5・PR-6); style.css keeps
+    PR-5: the inspector's editor of a factor, the manual-add and delete
+    dialogs, and the R-01 check when the factor is switched. Generation
+    still runs through the legacy app.js (replaced in PR-6); style.css keeps
     only what those legacy parts use. -#}
 {% block screen_styles %}<link rel="stylesheet" href="/static/css/edit.css"><link rel="stylesheet" href="/static/style.css">{% endblock %}
 {% block body_class %}ui-page edit-body{% endblock %}

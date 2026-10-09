@@ -1,11 +1,14 @@
 // FTA Tool - app.js
 //
 // Legacy processing still used by the analysis edit screen (plan 7.2):
-// generation, the detail modal, manual add and delete. The title, the top
-// event and the reference information are saved by the new screen since
-// PR-4 (js/pages/edit/title.js, step1.js, through js/common/unsaved.js). The new screen (js/pages/edit.js) owns selection,
-// judgement, filter and the views; the parts below that depended on the old
-// card columns reach it through window.ftaEditBridge (js/pages/edit/bridge.js).
+// generation only (replaced in PR-6). The title, the top event and the
+// reference information are saved by the new screen since PR-4
+// (js/pages/edit/title.js, step1.js, through js/common/unsaved.js); detail
+// editing, manual add and delete since PR-5 (js/pages/edit/factor-editor.js,
+// add-dialog.js, delete-dialog.js: the detail modal, the manual-add modal and
+// the confirm() of deleteNode are gone). The new screen (js/pages/edit.js)
+// owns selection, judgement, filter and the views; the parts below reach it
+// through window.ftaEditBridge (js/pages/edit/bridge.js).
 
 // ===== Notifications =====
 // Every message of this file goes to the shared notifications
@@ -29,9 +32,8 @@ function showToast(message, type = 'success') {
 // ===== Show the result of a change =====
 // The edit screen shows it by a partial update through the bridge
 // (js/pages/edit/refresh.js; the page is not reloaded, selection, step,
-// view, scroll, filter and typed input are kept); `options` names a factor
-// to select after a manual add ({ select, level }) or the deleted factor
-// ({ deleted }). The old name is kept for the callers below.
+// view, scroll, filter and typed input are kept). The old name is kept for
+// the callers below.
 function reloadPreservingScroll(delayMs = 0, options = {}) {
   const bridge = window.ftaEditBridge;
   if (bridge) {
@@ -91,7 +93,7 @@ function setGenerateButtonsDisabled(disabled) {
   });
 }
 
-// ===== Parents of manual add and generation (J-25, 判断3) =====
+// ===== Parents of a generation (J-25, 判断3) =====
 // A 二次・三次 request always names its parent (never a request without
 // parent_id, which the API would answer for every Yes factor), and the
 // parent must be one the edit screen allows: never a factor with an
@@ -312,220 +314,6 @@ async function _generateAdditional(analysisId, parentNodeId, childLevel) {
   }
 }
 
-// Judgement (UI-12), the filter (UI-15) and the quality warning (UI-17) are
-// handled by the edit screen itself (js/pages/edit); the card columns with
-// their direct title editing are gone (J-10: titles are edited in the
-// detail dialog until the inspector takes over in PR-5).
-
-// ===== Delete Node =====
-// Only as the edit screen computed it for the data of the page (J-25,
-// 判断2): a factor whose delete would remove factors of another analysis,
-// whose subtree could not be walked completely, or whose category is kept
-// undeletable is refused before the confirmation, and nothing is sent.
-// Without the edit screen nothing is deleted. This does not make the delete
-// API itself safe.
-async function deleteNode(nodeId, analysisId) {
-  const bridge = window.ftaEditBridge;
-  const check = bridge
-    ? bridge.checkDelete(Number(nodeId))
-    : { allowed: false, reason: '削除できるか確認できないため、削除できません' };
-  if (!check.allowed) {
-    showToast(check.reason, 'error');
-    return;
-  }
-  const title = bridge.nodeTitle(nodeId);
-  const name = title !== null ? title : `ID: ${nodeId}`;
-  if (!confirm(`要因「${name}」を削除しますか？\nこの要因の子要因もすべて削除されます。この操作は取り消せません。`)) return;
-  try {
-    const res = await fetch(`/nodes/${nodeId}/delete`, { method: 'POST' });
-    const data = await res.json();
-    if (data.success) {
-      showToast('削除しました');
-      reloadPreservingScroll(500, { deleted: Number(nodeId) });
-    } else {
-      showToast('削除に失敗しました', 'error');
-    }
-  } catch (e) {
-    showToast('通信エラーが発生しました', 'error');
-  }
-}
-
-// ===== Node Detail Modal =====
-let currentNodeId = null;
-let lastFocusedBeforeModal = null;
-let lastFocusBeforeModal = null;  // the same, as the edit screen describes it
-
-function _openModal(modalId, focusSelector) {
-  lastFocusedBeforeModal = document.activeElement;
-  const bridge = window.ftaEditBridge;
-  lastFocusBeforeModal = bridge ? bridge.rememberFocus() : null;
-  const modal = document.getElementById(modalId);
-  modal.classList.remove('hidden');
-  const target = focusSelector ? modal.querySelector(focusSelector) : null;
-  if (target) setTimeout(() => target.focus(), 50);
-}
-
-function _closeModal(modalId) {
-  const modal = document.getElementById(modalId);
-  if (!modal || modal.classList.contains('hidden')) return;
-  modal.classList.add('hidden');
-  const bridge = window.ftaEditBridge;
-  if (lastFocusedBeforeModal && !lastFocusedBeforeModal.isConnected && bridge && lastFocusBeforeModal) {
-    // The page was updated while the dialog was open (e.g. a generation
-    // ended) and the control that opened it was replaced: its replacement.
-    bridge.restoreFocus(lastFocusBeforeModal);
-  } else if (lastFocusedBeforeModal && typeof lastFocusedBeforeModal.focus === 'function') {
-    lastFocusedBeforeModal.focus();
-  }
-  lastFocusedBeforeModal = null;
-  lastFocusBeforeModal = null;
-}
-
-async function openNodeDetail(nodeId) {
-  // Load the saved values from the server: memo / evidence / prevention etc.
-  // are not rendered in the card DOM, and pre-filling them as blanks would
-  // overwrite the stored values on save.
-  let node = null;
-  try {
-    const res = await fetch(`/nodes/${nodeId}`);
-    if (res.ok) node = await res.json();
-  } catch { /* fall back to DOM below */ }
-
-  if (!node) {
-    showToast('ノード情報の取得に失敗しました', 'error');
-    return;
-  }
-
-  document.getElementById('modalNodeId').value = nodeId;
-  document.getElementById('modalTitle').value = node.title || '';
-  document.getElementById('modalDescription').value = node.description || '';
-  document.getElementById('modalMemo').value = node.memo || '';
-  document.getElementById('modalDirectStatus').value = node.direct_cause_status || 'unknown';
-  document.getElementById('modalDirectComment').value = node.direct_cause_comment || '';
-  document.getElementById('modalEvidence').value = node.evidence || '';
-  document.getElementById('modalPrevention').value = node.prevention_idea || '';
-
-  const warnRow = document.getElementById('modalWarningRow');
-  if (warnRow) {
-    if (node.warning_flags) {
-      warnRow.hidden = false;
-      document.getElementById('modalWarningText').textContent = node.warning_flags;
-    } else {
-      warnRow.hidden = true;
-    }
-  }
-
-  currentNodeId = nodeId;
-  _openModal('nodeDetailModal', '#modalTitle');
-}
-
-function closeNodeDetail() {
-  _closeModal('nodeDetailModal');
-  currentNodeId = null;
-}
-
-async function saveNodeDetail() {
-  const nodeId = document.getElementById('modalNodeId').value;
-  const title = document.getElementById('modalTitle').value.trim();
-  if (!title) {
-    showToast('要因タイトルは必須です', 'error');
-    document.getElementById('modalTitle').focus();
-    return;
-  }
-  const payload = {
-    title,
-    description: document.getElementById('modalDescription').value.trim(),
-    memo: document.getElementById('modalMemo').value.trim(),
-    direct_cause_status: document.getElementById('modalDirectStatus').value,
-    direct_cause_comment: document.getElementById('modalDirectComment').value.trim(),
-    evidence: document.getElementById('modalEvidence').value.trim(),
-    prevention_idea: document.getElementById('modalPrevention').value.trim(),
-  };
-  const saveBtn = document.getElementById('modalSaveBtn');
-  if (saveBtn) saveBtn.disabled = true;
-  try {
-    const res = await fetch(`/nodes/${nodeId}/update`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (data.success) {
-      showToast('保存しました');
-      closeNodeDetail();
-      reloadPreservingScroll(600);
-    } else {
-      showToast('保存に失敗しました', 'error');
-    }
-  } catch (e) {
-    showToast('通信エラーが発生しました', 'error');
-  } finally {
-    if (saveBtn) saveBtn.disabled = false;
-  }
-}
-
-// ===== Add Node Modal =====
-function showAddNodeModal(analysisId, parentId, level) {
-  if (!_parentAllowed(parentId, level)) return;
-  document.getElementById('addNodeAnalysisId').value = analysisId;
-  document.getElementById('addNodeParentId').value = parentId || '';
-  document.getElementById('addNodeLevel').value = level;
-  document.getElementById('addNodeTitle').value = '';
-  document.getElementById('addNodeDescription').value = '';
-  _openModal('addNodeModal', '#addNodeTitle');
-}
-
-function closeAddNodeModal() {
-  _closeModal('addNodeModal');
-}
-
-async function submitAddNode() {
-  const analysisId = document.getElementById('addNodeAnalysisId').value;
-  const parentId = document.getElementById('addNodeParentId').value;
-  const level = parseInt(document.getElementById('addNodeLevel').value);
-  const title = document.getElementById('addNodeTitle').value.trim();
-  const description = document.getElementById('addNodeDescription').value.trim();
-
-  if (!title) {
-    showToast('タイトルを入力してください', 'error');
-    document.getElementById('addNodeTitle').focus();
-    return;
-  }
-  // The page may have been updated while the dialog was open.
-  if (!_parentAllowed(parentId, level)) return;
-
-  try {
-    let url, body;
-    if (level === 1) {
-      url = `/analyses/${analysisId}/nodes/add-level1`;
-      body = { title, description };
-    } else {
-      url = `/nodes/${parentId}/children`;
-      body = { title, description };
-    }
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
-    if (data.success) {
-      showToast('要因を追加しました');
-      closeAddNodeModal();
-      reloadPreservingScroll(500, { select: data.node_id, level });
-    } else {
-      showToast(data.detail || '追加に失敗しました', 'error');
-    }
-  } catch (e) {
-    showToast('通信エラーが発生しました', 'error');
-  }
-}
-
-// ===== Keyboard support =====
-// Close modals on Escape key
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    closeNodeDetail();
-    closeAddNodeModal();
-  }
-});
+// Judgement (UI-12), the filter (UI-15), the quality warning (UI-17), detail
+// editing (UI-13・UI-14), manual add (UI-11) and delete are handled by the
+// edit screen itself (js/pages/edit).

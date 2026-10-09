@@ -101,6 +101,7 @@ let guardActive = false;
 let linkGuardInstalled = false;
 let navigationHold = null;
 let generationPhase = 'idle';
+let leavingPage = false;
 
 function attempt(fn, fallback) {
   try {
@@ -288,7 +289,7 @@ function delay(ms) {
 // that the server may be busy. 編集を続ける stops waiting (the request is
 // not cancelled: the server may still apply it). Resolves to
 // { done: true, value } or { done: false }.
-async function waitFor(promise, invoker, { title, lead }) {
+async function waitFor(promise, invoker, { title, lead, fallbackFocus = null }) {
   const finished = Promise.resolve(promise).then((value) => ({ done: true, value }));
   const quick = await Promise.race([finished, delay(300).then(() => null)]);
   if (quick) return quick;
@@ -298,6 +299,7 @@ async function waitFor(promise, invoker, { title, lead }) {
     body: [lead],
     actions: [{ id: 'continue', label: '編集を続ける', autofocus: true }],
     invoker,
+    fallbackFocus,
     cancelAction: 'continue',
   });
   dialog.setStatus('保存しています…');
@@ -436,8 +438,10 @@ function pendingList(pending) {
   return el('ul', { class: 'ui-dialog__list' }, pending.map((source) => el('li', {}, labelOf(source))));
 }
 
+// The sources the dialog listed ('auto' ones are never listed: they were
+// saved before leaving, and a factor switch leaves them as they are).
 function discardAll() {
-  dirtySources().forEach((source) => attempt(() => source.discard(), null));
+  dirtySources().filter((source) => !isAuto(source)).forEach((source) => attempt(() => source.discard(), null));
   refresh();
 }
 
@@ -474,7 +478,7 @@ function askToDiscard(invoker, pending, prompt = {}) {
   return dialog.result;
 }
 
-function askAboutUnsaved(invoker) {
+function askAboutUnsaved(invoker, { note = null, fallbackFocus = null } = {}) {
   const pending = dirtySources().filter((source) => !isAuto(source));
   const unsavable = pending.find((source) => typeof source.save !== 'function');
   if (unsavable) return askToDiscard(invoker, pending, unsavable.prompt);
@@ -485,6 +489,7 @@ function askAboutUnsaved(invoker) {
       '次の変更はまだ保存されていません。',
       pendingList(pending),
       '保存してから移動するか、変更を破棄して移動するかを選んでください。',
+      note,
     ],
     actions: [
       { id: 'continue', label: '編集を続ける', autofocus: true },
@@ -492,6 +497,7 @@ function askAboutUnsaved(invoker) {
       { id: 'save', label: '保存して移動', variant: 'primary' },
     ],
     invoker,
+    fallbackFocus,
     cancelAction: 'continue',
     onAction: (actionId, controller) => {
       if (actionId === 'continue') {
@@ -579,13 +585,125 @@ async function runGuarded({ invoker, proceed }) {
 
 // Leave the page (in-page link) with the unsaved-change check.
 export function requestLeave(href, { invoker = null } = {}) {
-  return runGuarded({ invoker, proceed: () => window.location.assign(href) });
+  return runGuarded({
+    invoker,
+    proceed: () => {
+      leavingPage = true;
+      window.location.assign(href);
+    },
+  });
+}
+
+// True once the page is being left after the check (PR-5: a partial update
+// asked for by a save of 保存して移動 must not reload the page then).
+export function isLeavingPage() {
+  return leavingPage;
 }
 
 // Any other transition that would drop the current input (e.g. opening the
 // rename of another row): same three choices, then `proceed`.
 export function requestTransition({ invoker = null, proceed }) {
   return runGuarded({ invoker, proceed });
+}
+
+// ----- switching the inspector's factor (R-01; PR-5) -------------------------
+//
+// requestSwitch({ source, invoker, proceed }) — `source` is the factor source
+// of the inspector now (null while its details load or failed to load: there
+// is no draft yet). Only that draft decides whether to ask: unsaved input of
+// ① or the header title stays as it is and the factor is switched.
+// The state is judged again after every wait and before discarding or
+// proceeding (a generation can start, a save can end meanwhile):
+//   - its save in flight: awaited (the dialog after 300 ms, the reason after
+//     10 s; the request is never cancelled), then judged again;
+//   - unchanged: switched at once (also while a generation runs: browsing is
+//     never refused);
+//   - changed, no generation: the same three choices as leaving the page,
+//     listing every unsaved source (要因 → 頂上事象 → 参考情報; plan 5.9.3 and
+//     the design record: 保存して移動 saves the factor and ①);
+//   - changed while a generation is prepared, runs or is finished (J-01, the
+//     part moved forward to PR-5): 編集を続ける / 破棄して移動 only, nothing is
+//     sent; 破棄して移動 drops the inspector's change alone (①, the reference
+//     information and the title stay). Once idle again, the three choices.
+// 編集を続ける and Esc keep everything (proceed is not called) and give the
+// focus back to `invoker` — or, when a partial update replaced it while the
+// dialog was open (e.g. after a partial success of 保存して移動), to what
+// `fallbackFocus()` finds (its successor).
+
+const SWITCH_NOTE = '「破棄して移動」を選ぶと、上の一覧のすべての変更が破棄されます。';
+const GENERATING_SWITCH = '生成中は保存できません。生成が終わると保存できます。';
+
+function isCurrent(source) {
+  return Boolean(source) && sources.get(source.id) === source;
+}
+
+function askWhileGenerating(invoker, source, fallbackFocus) {
+  const dialog = openDialog({
+    title: '保存していない変更があります',
+    body: [
+      '次の変更はまだ保存されていません。',
+      pendingList([source]),
+      el('p', { 'data-generating-reason': true }, GENERATING_SWITCH),
+      '「破棄して移動」を選ぶと、この要因の変更だけが破棄されます（頂上事象・参考情報・分析タイトルの入力は保持されます）。',
+    ],
+    actions: [
+      { id: 'continue', label: '編集を続ける', autofocus: true },
+      { id: 'discard', label: '破棄して移動', variant: 'danger-outline' },
+    ],
+    invoker,
+    fallbackFocus,
+    cancelAction: 'continue',
+    onAction: (actionId, controller) => {
+      if (actionId !== 'discard') {
+        controller.close('continue');
+        return;
+      }
+      // Judged again right before discarding: a save that started, or a
+      // generation that ended (the three choices apply again).
+      if (isSourceSaving(source) || generationPhase === 'idle') {
+        controller.close('recheck', { restoreFocus: false });
+        return;
+      }
+      attempt(() => source.discard(), null);
+      refresh();
+      controller.close('discarded', { restoreFocus: false });
+    },
+  });
+  return dialog.result;
+}
+
+export async function requestSwitch({ source = null, invoker = null, fallbackFocus = null, proceed }) {
+  if (guardActive) return false;
+  guardActive = true;
+  try {
+    for (;;) {
+      if (!isCurrent(source)) break;
+      if (isSourceSaving(source)) {
+        const state = stateOf(source);
+        const outcome = await waitFor(state.promise || Promise.resolve(), invoker, {
+          title: '保存の完了を待っています',
+          lead: `${labelOf(source)}の保存が終わってから切り替えます。`,
+          fallbackFocus,
+        });
+        if (!outcome.done) return false;
+        continue;
+      }
+      if (!attempt(() => source.isDirty(), false)) break;
+      if (generationPhase !== 'idle') {
+        const choice = await askWhileGenerating(invoker, source, fallbackFocus);
+        if (choice === 'recheck') continue;
+        if (choice !== 'discarded') return false;
+        continue; // judged once more before switching
+      }
+      const choice = await askAboutUnsaved(invoker, { note: SWITCH_NOTE, fallbackFocus });
+      if (choice !== 'saved' && choice !== 'discarded') return false;
+    }
+    refresh();
+    proceed();
+    return true;
+  } finally {
+    guardActive = false;
+  }
 }
 
 export function holdNavigation(message) {

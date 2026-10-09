@@ -1,19 +1,30 @@
-"""E2E: the parts of the edit screen that still run on the old processing.
+"""E2E: the operations of the edit screen that ran on the old processing in
+PR-3, as they are driven from the new page now.
 
-PR-3 builds the new edit screen but keeps app.js for generation, the detail
-dialog, manual add and delete (the title and step ① were rebuilt in PR-4 and
-are driven here through the new controls; E-E10・E-E11 check them in full) (plan 7.2;
-acceptance 10 of plan 8.3: UI-09〜UI-14 stay usable, and the normal
-generation of 二次・三次 still includes Yes parents hidden by the filter).
-PR3-LEGACY-OPS drives them from the new page; their results are shown by a
-partial update, never by reloading the page (the page is marked and the mark
-must still be there).
+PR-3 built the new edit screen but kept app.js for generation, the detail
+dialog, manual add and delete (plan 7.2; acceptance 10 of plan 8.3: UI-09〜
+UI-14 stay usable, and the normal generation of 二次・三次 still includes Yes
+parents hidden by the filter). The title and step ① were rebuilt in PR-4;
+the detail dialog, manual add and delete in PR-5 (the inspector's editor,
+the manual-add and delete dialogs: E-E14〜E-E17 check them in full). Only
+generation still runs on app.js until PR-6. PR3-LEGACY-OPS keeps checking
+that every one of these operations works from the new page, what each one
+guaranteed (the memo saved, the judgement untouched, the quality warning
+with its full text, the added factor selected, the No parent's additional
+generation, the parent selected after a delete, the exports) through the
+controls that replaced the old ones, and that the results are shown by a
+partial update, never by reloading the page (the page is marked and the
+mark must still be there).
 
-PR3-LEGACY-NOTIFY: app.js's messages (saving, generation, the dialogs,
-delete, communication errors) appear in the shared notifications with the
-same text and kind, once each, errors staying until closed (the user's
-decision of 2026-09-29, 判断4; J-24 moved forward); the old #toast element
-is gone. While a legacy dialog is open they never cover its buttons.
+PR3-LEGACY-NOTIFY: the messages (saving, generation, the dialogs, delete,
+communication errors) appear in the shared notifications with their kind,
+once each, errors staying until closed (the user's decision of 2026-09-29,
+判断4; J-24 moved forward); the old #toast element is gone. app.js's
+generation messages keep their text. PR-5's messages of the factor's save,
+manual add and delete are the new screen's own; a missing title is shown at
+the field (the editor) or in the dialog (manual add), never as a
+notification. The in-page dialogs (<dialog>, top layer) are never covered by
+the notifications.
 
 Until PR-3 the old screen had this check as PR1-COMPAT-EDIT; the
 new-analysis form had PR1-COMPAT-NEW until PR-2 (now E-N01〜E-N06).
@@ -27,7 +38,15 @@ import re
 import pytest
 
 from tests.e2e.edit_helpers import (
+    add_dialog,
+    add_factor,
+    choose,
     chip,
+    delete_dialog,
+    delete_factor,
+    factor_field,
+    factor_message,
+    factor_save,
     edit_title,
     expect_selected,
     inspector,
@@ -112,7 +131,9 @@ def test_title_step1_and_generation_from_the_new_page(page, e2e_server):
 
 
 @pytest.mark.acceptance("PR3-LEGACY-OPS")
-def test_detail_dialog_manual_add_additional_generation_delete_and_export(page, e2e_server):
+def test_details_manual_add_additional_generation_delete_and_export(page, e2e_server):
+    """What the legacy detail dialog, manual add and delete guaranteed, through
+    the controls of PR-5 that replaced them (and the legacy generation)."""
     analysis_id = e2e_server.create_analysis("互換確認（詳細）", top_event="頂上")
     a = e2e_server.add_level1(analysis_id, "一次要因A")
     b = e2e_server.add_level1(analysis_id, "一次要因B")
@@ -123,54 +144,44 @@ def test_detail_dialog_manual_add_additional_generation_delete_and_export(page, 
     mark_page(page)
     expect_selected(page, a, "一次要因A")
 
-    # Detail dialog from the inspector: the memo is saved, the judgement untouched.
-    inspector(page).get_by_role("button", name="詳細を編集").click()
-    expect(page.locator("#nodeDetailModal")).to_be_visible()
-    expect(page.locator("#modalTitle")).to_have_value("一次要因A")
-    expect(page.locator("#modalTitle")).to_be_focused()  # app.js focuses it 50 ms after opening
-    expect(page.locator("#modalWarningRow")).to_be_hidden()  # no quality warning, no empty 要確認 row
-    page.fill("#modalMemo", "互換確認のメモ")
-    page.locator("#modalSaveBtn").click()
-    expect(page.locator('[data-details] [data-detail="memo"]')).to_have_text("互換確認のメモ")
+    # The inspector's editor (was 詳細を編集): the memo is saved, the judgement untouched.
+    expect(factor_field(page, "title")).to_have_value("一次要因A")
+    expect(inspector(page).locator("[data-inspector-warning]")).to_have_count(0)  # no warning, no empty 要確認 part
+    factor_field(page, "memo").fill("互換確認のメモ")
+    factor_save(page).click()
+    expect(toast(page, "要因を保存しました", "success", exact=True)).to_be_visible()
     expect_selected(page, a, "一次要因A")
-    node = e2e_server.get_node(a)
-    assert node["memo"] == "互換確認のメモ" and node["user_judgement"] == "unknown"
+    wait_until(lambda: e2e_server.get_node(a)["memo"] == "互換確認のメモ")
+    assert e2e_server.get_node(a)["user_judgement"] == "unknown"
     expect(item(page, "work", a)).to_contain_text("メモあり")
 
-    # A factor with a quality warning keeps its 要確認 row with the full text.
-    select_button(page, "nav", b).click()
-    inspector(page).get_by_role("button", name="詳細を編集").click()
-    expect(page.locator("#modalTitle")).to_have_value("一次要因B")
-    expect(page.locator("#modalWarningRow")).to_be_visible()
-    expect(page.locator("#modalWarningText")).to_have_text("既存要因「一次要因A」に類似; 要因名が長すぎる")
-    page.locator("#nodeDetailModal").get_by_role("button", name="キャンセル").click()
-    expect(page.locator("#nodeDetailModal")).to_be_hidden()
-    select_button(page, "nav", a).click()
-    expect(inspector_title(page)).to_have_text("一次要因A")
+    # A factor with a quality warning shows it in full in the inspector.
+    choose(page, b)
+    expect(factor_field(page, "title")).to_have_value("一次要因B")
+    expect(inspector(page).locator("[data-warning-text]")).to_have_text("既存要因「一次要因A」に類似; 要因名が長すぎる")
+    choose(page, a)
 
-    # Manual add below A from the inspector: the new factor is selected.
-    inspector(page).get_by_role("button", name="手動追加").click()
-    expect(page.locator("#addNodeModal")).to_be_visible()
-    page.fill("#addNodeTitle", "手動で追加した二次要因")
-    page.locator("#addNodeModal").get_by_role("button", name="追加").click()
+    # Manual add below A from the inspector (the dialog): the new factor is selected.
+    add_factor(page, inspector(page).get_by_role("button", name="手動追加", exact=True), "手動で追加した二次要因")
     expect(inspector_title(page)).to_have_text("手動で追加した二次要因")
     added = int(page.locator('#edit-nav [data-action="select"][aria-current="true"]').get_attribute("data-node-id"))
     assert e2e_server.get_node(added)["parent_id"] == a
     expect(item(page, "work", added)).to_contain_text("手動")
 
-    # AI additional generation below the No parent B from its group heading (J-16).
+    # AI additional generation below the No parent B from its group heading
+    # (J-16; still the legacy generation of app.js until PR-6).
     step_button(page, 3).click()
     page.locator(f'[data-group-parent="{b}"]').get_by_role("button", name="AIで追加生成").click()
     expect(page.locator(f'[data-group-parent="{b}"] [data-role="work-item"]')).to_have_count(2)
     call = e2e_server.stub_calls()[-1]
     assert (call["target_level"], call["parent_factor"], call["additional"]) == (2, "一次要因B", True)
 
-    # Delete C from the inspector (the old confirmation): its parent is selected.
+    # Delete C from the inspector (the in-page dialog, no confirm()): its parent is selected.
     select_button(page, "nav", c).click()
     dialogs = record_dialogs(page, action="accept")
-    inspector(page).get_by_role("button", name="この要因を削除").click()
+    delete_factor(page)
     expect(inspector_title(page)).to_have_text("一次要因A")
-    assert dialogs == ["confirm"]
+    assert dialogs == []
     wait_until(lambda: c not in e2e_server.node_ids(analysis_id))
     expect(select_button(page, "nav", c)).to_have_count(0)
 
@@ -208,19 +219,16 @@ def boxes_overlap(a: dict, b: dict) -> bool:
                 or a["y"] + a["height"] <= b["y"] or b["y"] + b["height"] <= a["y"])
 
 
-def expect_dialog_uncovered(page, dialog_id: str) -> None:
-    """While a legacy dialog is open the notifications cover no part of it:
-    the whole stack stays clear of the dialog box, and every button of the
-    dialog is what is drawn at its centre."""
-    stack = page.locator("#ui-toasts").bounding_box()
-    dialog = page.locator(f"#{dialog_id} .modal-content").bounding_box()
-    assert stack["height"] > 0
-    assert not boxes_overlap(stack, dialog), (stack, dialog)
-    buttons = page.locator(f"#{dialog_id} button")
-    assert buttons.count() >= 3  # ×, キャンセル and 保存 / 追加
+def expect_dialog_uncovered(page, dialog) -> None:
+    """While an in-page dialog is open (PR-5: <dialog> in the top layer; the
+    legacy dialogs needed the notifications moved aside) the notifications
+    cover no part of it: every button of the dialog is what is drawn at its
+    centre."""
+    assert page.locator("#ui-toasts .ui-toast").count() > 0
+    buttons = dialog.locator("button")
+    assert buttons.count() >= 2
     for index in range(buttons.count()):
         button = buttons.nth(index)
-        button.scroll_into_view_if_needed()
         assert button.evaluate("""(el) => {
           const r = el.getBoundingClientRect();
           const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
@@ -266,58 +274,57 @@ def test_saving_dialogs_and_delete_messages_use_the_shared_notifications(page, e
     save_button(page, "context").click()
     expect_once(page, "参考情報を保存しました", "success")
 
-    # Detail dialog: an empty title is refused while the dialog stays open;
-    # the notifications (two errors now) cover no part of the dialog, and are
-    # back in their usual place once it is closed.
+    # The inspector's editor (PR-5; was the detail dialog): an empty title
+    # is refused at the field (announced, not a notification, nothing sent);
+    # then saved (success).
     expect_normal_place(page)
-    select_button(page, "nav", a).click()
-    inspector(page).get_by_role("button", name="詳細を編集").click()
-    expect(page.locator("#modalTitle")).to_be_focused()
-    page.fill("#modalTitle", "")
-    page.locator("#modalSaveBtn").click()
-    expect_once(page, "要因タイトルは必須です", "error")
-    expect_dialog_uncovered(page, "nodeDetailModal")
-    page.fill("#modalTitle", "一次要因A（改名）")
-    page.locator("#modalSaveBtn").click()
-    expect_once(page, "保存しました", "success")
+    choose(page, a)
+    factor_field(page, "title").fill("")
+    factor_save(page).click()
+    expect(factor_message(page)).to_have_text("保存できませんでした：要因タイトルは必須です")
+    expect(page.locator("#ui-live-alert")).to_have_text("要因タイトルは必須です")
+    expect(toast(page, "要因タイトルは必須です", "error")).to_have_count(0)
+    factor_field(page, "title").fill("一次要因A（改名）")
+    factor_save(page).click()
+    expect_once(page, "要因を保存しました", "success")
     expect(inspector_title(page)).to_have_text("一次要因A（改名）")
-    expect(page.locator("#nodeDetailModal")).to_be_hidden()
     expect_normal_place(page)
 
     # A communication error (the request never reaches the server).
     page_watch.allow_console_error(r"ERR_FAILED")
     page.route(f"**/nodes/{a}/update", lambda route: route.abort())
-    inspector(page).get_by_role("button", name="詳細を編集").click()
-    expect(page.locator("#modalTitle")).to_be_focused()
-    page.locator("#modalSaveBtn").click()
-    expect_once(page, "通信エラーが発生しました", "error")
-    expect_dialog_uncovered(page, "nodeDetailModal")
-    page.locator("#nodeDetailModal").get_by_role("button", name="キャンセル").click()
+    factor_field(page, "memo").fill("通信エラーのメモ")
+    factor_save(page).click()
+    expect_once(page, "要因を保存できませんでした：サーバーに接続できませんでした（通信エラー）", "error")
     page.unroute(f"**/nodes/{a}/update")
+    factor_field(page, "memo").fill("")  # back to the saved value
     expect_normal_place(page)
 
-    # Manual add: an empty title, then added.
+    # Manual add: an empty title (in the dialog), then added. The errors
+    # stacked meanwhile never cover the dialog.
     inspector(page).get_by_role("button", name="手動追加", exact=True).click()
-    expect(page.locator("#addNodeTitle")).to_be_focused()
-    page.locator("#addNodeModal").get_by_role("button", name="追加").click()
-    expect_once(page, "タイトルを入力してください", "error")
-    expect_dialog_uncovered(page, "addNodeModal")
-    page.fill("#addNodeTitle", "手動の二次要因")
-    page.locator("#addNodeModal").get_by_role("button", name="追加").click()
+    expect(page.locator("#add-factor-title")).to_be_focused()
+    add_dialog(page).get_by_role("button", name="追加する").click()
+    expect(add_dialog(page).locator(".ui-dialog__error")).to_have_text("要因タイトルを入力してください")
+    expect(toast(page, "要因タイトルを入力してください", "error")).to_have_count(0)
+    expect_dialog_uncovered(page, add_dialog(page))
+    page.fill("#add-factor-title", "手動の二次要因")
+    add_dialog(page).get_by_role("button", name="追加する").click()
     expect_once(page, "要因を追加しました", "success")
     expect(inspector_title(page)).to_have_text("手動の二次要因")
-    expect(page.locator("#addNodeModal")).to_be_hidden()
+    expect(add_dialog(page)).to_have_count(0)
     expect_normal_place(page)
 
     # Delete.
-    select_button(page, "nav", b).click()
-    record_dialogs(page, action="accept")
+    choose(page, b)
     inspector(page).get_by_role("button", name="この要因を削除").click()
-    expect_once(page, "削除しました", "success")
+    expect_dialog_uncovered(page, delete_dialog(page))
+    delete_dialog(page).get_by_role("button", name="削除する").click()
+    expect_once(page, "要因「一次要因B」を削除しました", "success")
 
     # Errors stay until they are closed; the rest has closed by itself.
     page.wait_for_timeout(3500)
-    for text in ("要因タイトルは必須です", "通信エラーが発生しました", "タイトルを入力してください"):
+    for text in ("要因を保存できませんでした：サーバーに接続できませんでした（通信エラー）",):
         expect(toast(page, text, "error", exact=True)).to_have_count(1)
     expect(page.locator('#ui-toasts .ui-toast[data-toast-type="success"]')).to_have_count(0)
     expect(page.locator("#toast")).to_have_count(0)

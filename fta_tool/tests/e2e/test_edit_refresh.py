@@ -1,9 +1,11 @@
 """E2E: partial update of the edit screen (PR-3) — plan 3.4-5, 5.7, 8.3,
 E-E07 and E-E19.
 
-After a manual add, a delete, a detail save or a generation (still the
-legacy app.js in PR-3) the page fetches its own URL again and replaces only
-the structure (edit/refresh.js); it is never reloaded. The tests mark the
+After a manual add, a delete, a factor's save or a generation (the
+generation is still the legacy app.js; since PR-5 the save is the
+inspector's editor and add / delete the in-page dialogs, which these tests
+now use in place of the legacy dialogs) the page fetches its own URL again
+and replaces only the structure (edit/refresh.js); it is never reloaded. The tests mark the
 page (window.__pr3NoReload) and check that the mark is still there.
 
 * E-E07  the focus goes back to the same element (or the parent's row / the
@@ -14,8 +16,9 @@ page (window.__pr3NoReload) and check that the mark is still there.
          (404) stops the operations; a failed fetch reloads the page when
          nothing is typed and keeps the page (with a message) when something
          is; nothing is fetched while a generation runs, once after it; a
-         legacy dialog closed after an update gives the focus back to the
-         control that opened it (or the one that replaced it); a factor added
+         dialog (PR-5: the manual-add and delete dialogs; the legacy dialogs
+         before) closed after an update gives the focus back to the control
+         that opened it (or the one that replaced it); a factor added
          during a generation does not take a selection made after it.
 * E-E19  an old answer never rolls the page back: the answer to a fetch
          issued before a judgement or the top event of ① was saved is
@@ -41,7 +44,15 @@ from urllib.parse import urlparse
 import pytest
 
 from tests.e2e.edit_helpers import (
+    add_dialog,
+    add_factor,
+    choose,
     chip,
+    delete_dialog,
+    delete_factor,
+    editor,
+    factor_field,
+    factor_save,
     expect_selected,
     inspector,
     inspector_title,
@@ -136,15 +147,11 @@ def selected_node(page) -> int:
     return int(nav(page).locator('[data-action="select"][aria-current="true"]').get_attribute("data-node-id"))
 
 
-def open_dialog(page, button, field: str) -> None:
-    """Open a legacy dialog and wait for its first field: app.js focuses it
-    50 ms after opening, which would otherwise take text typed meanwhile."""
-    button.click()
-    expect(page.locator(field)).to_be_focused()
-
-
-def open_detail(page) -> None:
-    open_dialog(page, inspector(page).get_by_role("button", name="詳細を編集"), "#modalTitle")
+def save_memo(page, node_id: int, memo: str) -> None:
+    """Choose the factor and save a memo in the inspector (PR-5)."""
+    choose(page, node_id)
+    factor_field(page, "memo").fill(memo)
+    factor_save(page).click()
 
 
 def many_level1(server, title: str, count: int = 30) -> tuple[int, list[int]]:
@@ -172,18 +179,18 @@ def test_E_E07_detail_save_keeps_focus_scroll_and_typed_input(page, e2e_server):
     mark_page(page)
     fetches = page_fetches(page, analysis_id)
 
-    edit = inspector(page).get_by_role("button", name="詳細を編集")
-    open_dialog(page, edit, "#modalTitle")
-    page.fill("#modalTitle", "一次要因21（改名）")
-    page.fill("#modalDescription", "改めた説明")
-    page.locator("#modalSaveBtn").click()
+    expect(editor(page)).to_have_attribute("data-phase", "ready")
+    factor_field(page, "title").fill("一次要因21（改名）")
+    factor_field(page, "description").fill("改めた説明")
+    edit = factor_save(page)
+    edit.click()
 
     expect(inspector_title(page)).to_have_text("一次要因21（改名）")
-    expect(page.locator('[data-details] [data-detail="description"]')).to_have_text("改めた説明")
+    expect(factor_field(page, "description")).to_have_value("改めた説明")
     for role in ("nav", "work", "tree", "table"):
         expect(select_button(page, role, target)).to_contain_text("一次要因21（改名）")
     expect_selected(page, target, "一次要因21（改名）")
-    expect(edit).to_be_focused()
+    expect(edit).to_be_focused()  # the editor was put back with the focus on 保存
     assert same_page(page)
     assert (scroll_top(page, "center"), scroll_top(page, "nav")) == (center, navigation)
     expect(page.locator("#topEventInput")).to_have_value("入力中の頂上事象（未保存）")
@@ -211,9 +218,7 @@ def test_E_E07_manual_add_and_delete_select_and_keep_the_focus(page, e2e_server)
     # Manual add from the parent's group heading: the new factor is selected,
     # the focus is back on the button, the filter still applies.
     add = page.locator(f'[data-group-parent="{a}"]').get_by_role("button", name="手動追加（親：一次要因A）")
-    open_dialog(page, add, "#addNodeTitle")
-    page.fill("#addNodeTitle", "手動で追加した二次要因")
-    page.locator("#addNodeModal").get_by_role("button", name="追加").click()
+    add_factor(page, add, "手動で追加した二次要因")
     expect(inspector_title(page)).to_have_text("手動で追加した二次要因")
     added = selected_node(page)
     assert e2e_server.get_node(added)["parent_id"] == a
@@ -229,10 +234,10 @@ def test_E_E07_manual_add_and_delete_select_and_keep_the_focus(page, e2e_server)
     # Delete it from the inspector: its parent is selected (step ②) and the
     # focus, whose button is gone, moves to the inspector heading.
     dialogs = record_dialogs(page, action="accept")
-    inspector(page).get_by_role("button", name="この要因を削除").click()
+    delete_factor(page)
     expect(inspector_title(page)).to_have_text("一次要因A")
     expect(inspector_title(page)).to_be_focused()
-    assert dialogs == ["confirm"]
+    assert dialogs == []  # the in-page dialog (PR-5), no confirm()
     for role in ("nav", "work", "tree", "table"):
         expect(select_button(page, role, added)).to_have_count(0)
     expect_selected(page, a, "一次要因A")
@@ -285,15 +290,16 @@ def test_E_E07_analysis_deleted_elsewhere_stops_the_operations(page, e2e_server,
     expect(judgement_button(inspector(page), a, "yes")).to_be_disabled()
     for name in ("一次要因を生成", "一次要因を追加生成", "手動追加"):
         expect(step_panel(page, 2).get_by_role("button", name=name, exact=True)).to_be_disabled()
-    for name in ("詳細を編集", "AIで追加生成", "手動追加", "この要因を削除"):
+    for name in ("保存", "AIで追加生成", "手動追加", "この要因を削除"):
         expect(inspector(page).get_by_role("button", name=name, exact=True)).to_be_disabled()
+    expect(factor_field(page, "memo")).to_have_attribute("readonly", "")  # the editor keeps its values (PR-5)
     expect(page.locator("[data-title-edit]")).to_be_disabled()  # the header title (PR-4)
 
     # Selecting still works; what it shows cannot be changed.
     select_button(page, "nav", b).click()
     expect(inspector_title(page)).to_have_text("一次要因B")
     expect(judgement_button(inspector(page), b, "yes")).to_be_disabled()
-    expect(inspector(page).get_by_role("button", name="詳細を編集")).to_be_disabled()
+    expect(factor_save(page)).to_be_disabled()
     step_button(page, 1).click()
     expect(step_panel(page, 1).get_by_role("button", name="頂上事象を保存")).to_be_disabled()
     expect(step_panel(page, 1).get_by_role("button", name="参考情報を保存")).to_be_disabled()
@@ -325,9 +331,7 @@ def test_E_E07_failed_fetch_keeps_typed_input_or_reloads(page, e2e_server, page_
     page.fill("#topEventInput", "入力中の頂上事象")
     step_button(page, 2).click()
     mark_page(page)
-    open_dialog(page, step_panel(page, 2).get_by_role("button", name="手動追加", exact=True), "#addNodeTitle")
-    page.fill("#addNodeTitle", "追加した一次要因C")
-    page.locator("#addNodeModal").get_by_role("button", name="追加").click()
+    add_factor(page, step_panel(page, 2).get_by_role("button", name="手動追加", exact=True), "追加した一次要因C")
     expect(toast(page, "最新の表示に更新できませんでした（E2E：部分更新の取得に失敗（検証用））。"
                        "入力中の内容を保存してから、ページを再読み込みしてください。", "error")).to_be_visible()
     assert same_page(page)
@@ -337,14 +341,11 @@ def test_E_E07_failed_fetch_keeps_typed_input_or_reloads(page, e2e_server, page_
     # Nothing typed: the page is reloaded and the state comes back (plan 5.5).
     step_button(page, 1).click()
     page.fill("#topEventInput", "頂上")
-    select_button(page, "nav", b).click()
-    open_detail(page)
-    page.fill("#modalMemo", "再読み込みの前に保存したメモ")
-    page.locator("#modalSaveBtn").click()
+    save_memo(page, b, "再読み込みの前に保存したメモ")
     page.wait_for_function("() => window.__pr3NoReload === undefined")
     expect(page.locator('.edit-steps [aria-current="step"]')).to_have_count(1)
     expect_selected(page, b, "一次要因B")
-    expect(page.locator('[data-details] [data-detail="memo"]')).to_have_text("再読み込みの前に保存したメモ")
+    expect(factor_field(page, "memo")).to_have_value("再読み込みの前に保存したメモ")
     expect(step_panel(page, 2).locator('[data-role="work-item"]')).to_have_count(3)
     assert a in {int(v) for v in step_panel(page, 2).locator('[data-role="work-item"]').evaluate_all(
         "els => els.map((e) => e.dataset.nodeId)")}
@@ -378,32 +379,39 @@ def test_E_E07_no_fetch_while_a_generation_runs_one_after(page, e2e_server):
 
 
 @pytest.mark.acceptance("E-E07")
-def test_E_E07_legacy_dialog_gives_the_focus_back_after_an_update(page, e2e_server):
+def test_E_E07_dialog_gives_the_focus_back_after_an_update(page, e2e_server):
     analysis_id = e2e_server.create_analysis("部分更新（ダイアログを開いている間）", top_event="頂上")
     a = e2e_server.add_level1(analysis_id, "一次要因A")
     open_edit(page, analysis_id, f"#sel={a}&step=2&view=work")
+    expect(editor(page)).to_have_attribute("data-phase", "ready")
     fetches = page_fetches(page, analysis_id)
     mark_page(page)
 
     # The page is updated behind an open dialog (e.g. a generation of 二次要因
-    # ends): the inspector is drawn again, the work list replaced.
-    open_detail(page)
+    # ends): the inspector is drawn again, the work list replaced. PR-5: the
+    # delete and manual-add dialogs (the legacy detail and add dialogs before).
+    delete = inspector(page).get_by_role("button", name="この要因を削除")
+    delete.click()
+    expect(delete_dialog(page).get_by_role("button", name="キャンセル")).to_be_focused()
     refresh(page)
     wait_for(page, lambda: len(fetches) == 1)
     page.wait_for_timeout(300)
-    expect(page.locator("#modalTitle")).to_be_focused()
+    expect(delete_dialog(page).get_by_role("button", name="キャンセル")).to_be_focused()
     page.keyboard.press("Escape")
-    expect(page.locator("#nodeDetailModal")).to_be_hidden()
-    expect(inspector(page).get_by_role("button", name="詳細を編集")).to_be_focused()
+    expect(delete_dialog(page)).to_have_count(0)
+    expect(inspector(page).get_by_role("button", name="この要因を削除")).to_be_focused()  # its successor
 
     add = step_panel(page, 2).get_by_role("button", name="手動追加", exact=True)
-    open_dialog(page, add, "#addNodeTitle")
+    add.click()
+    expect(page.locator("#add-factor-title")).to_be_focused()
+    page.fill("#add-factor-title", "閉じると破棄される入力")
     refresh(page)
     wait_for(page, lambda: len(fetches) == 2)
     page.wait_for_timeout(300)
-    page.locator("#addNodeModal").get_by_role("button", name="キャンセル").click()
-    expect(page.locator("#addNodeModal")).to_be_hidden()
-    expect(add).to_be_focused()
+    expect(page.locator("#add-factor-title")).to_have_value("閉じると破棄される入力")
+    add_dialog(page).get_by_role("button", name="キャンセル").click()
+    expect(add_dialog(page)).to_have_count(0)
+    expect(step_panel(page, 2).get_by_role("button", name="手動追加", exact=True)).to_be_focused()
     assert same_page(page)
 
 
@@ -439,10 +447,7 @@ def test_E_E07_a_factor_added_during_a_generation_leaves_a_newer_selection(page,
 
     # A factor is added meanwhile: its update waits for the generation …
     step_button(page, 2).click()
-    open_dialog(page, step_panel(page, 2).get_by_role("button", name="手動追加", exact=True), "#addNodeTitle")
-    page.fill("#addNodeTitle", "生成中に追加した一次要因")
-    page.locator("#addNodeModal").get_by_role("button", name="追加").click()
-    expect(page.locator("#addNodeModal")).to_be_hidden()
+    add_factor(page, step_panel(page, 2).get_by_role("button", name="手動追加", exact=True), "生成中に追加した一次要因")
     assert e2e_server.query("SELECT COUNT(*) FROM nodes WHERE analysis_id = ? AND title = ?",
                             (analysis_id, "生成中に追加した一次要因"))[0][0] == 1
     # … and another factor is chosen before it ends.
@@ -487,9 +492,7 @@ def test_E_E19_answer_fetched_before_a_judgement_is_discarded(page, e2e_server):
     mark_page(page)
 
     # A manual add asks for an update; its answer is held back …
-    open_dialog(page, step_panel(page, 2).get_by_role("button", name="手動追加", exact=True), "#addNodeTitle")
-    page.fill("#addNodeTitle", "手動で追加した一次要因")
-    page.locator("#addNodeModal").get_by_role("button", name="追加").click()
+    add_factor(page, step_panel(page, 2).get_by_role("button", name="手動追加", exact=True), "手動で追加した一次要因")
     wait_for(page, lambda: bool(held_fetch))
     # … while the judgement of A is being saved, and more updates are asked for.
     judgement_button(item(page, "work", a), a, "yes").click()
@@ -540,11 +543,8 @@ def test_E_E19_answer_without_the_confirmed_judgement_is_not_applied(page, e2e_s
     fetches = page_fetches(page, analysis_id)
     mark_page(page)
 
-    # A detail save of B asks for an update; the answers lack A's judgement.
-    select_button(page, "nav", b).click()
-    open_detail(page)
-    page.fill("#modalMemo", "Bのメモ")
-    page.locator("#modalSaveBtn").click()
+    # A save of B in the inspector asks for an update; the answers lack A's judgement.
+    save_memo(page, b, "Bのメモ")
 
     expect(toast(page, "表示を最新にできませんでした。ページを再読み込みしてください。", "error")).to_be_visible()
     page.wait_for_timeout(300)
@@ -571,10 +571,7 @@ def test_E_E19_judgement_changed_elsewhere_does_not_stop_later_updates(page, e2e
 
     # The update right after cannot tell the newer value from an old answer:
     # as for an old answer, nothing is applied and a reload is asked for.
-    select_button(page, "nav", b).click()
-    open_detail(page)
-    page.fill("#modalMemo", "Bのメモ")
-    page.locator("#modalSaveBtn").click()
+    save_memo(page, b, "Bのメモ")
     expect(toast(page, "表示を最新にできませんでした。ページを再読み込みしてください。", "error")).to_have_count(1)
     page.wait_for_timeout(300)
     assert len(fetches) == 2
@@ -583,9 +580,7 @@ def test_E_E19_judgement_changed_elsewhere_does_not_stop_later_updates(page, e2e
 
     # That judgement has been checked; the next update is applied and shows
     # the value from the other tab (it is not refused until a reload).
-    open_dialog(page, step_panel(page, 2).get_by_role("button", name="手動追加", exact=True), "#addNodeTitle")
-    page.fill("#addNodeTitle", "手動で追加した一次要因")
-    page.locator("#addNodeModal").get_by_role("button", name="追加").click()
+    add_factor(page, step_panel(page, 2).get_by_role("button", name="手動追加", exact=True), "手動で追加した一次要因")
     expect(inspector_title(page)).to_have_text("手動で追加した一次要因")
     expect(chip(nav(page), a)).to_have_text("No")
     expect(chip(page.locator("#edit-panel-table"), a)).to_have_text("No")
@@ -655,7 +650,7 @@ def test_E_E19_answer_fetched_before_a_top_event_save_is_discarded(page, e2e_ser
     fetches = page_fetches(page, analysis_id)
     mark_page(page)
 
-    refresh(page)  # e.g. after a detail save; its answer is held back …
+    refresh(page)  # e.g. after a factor's save; its answer is held back …
     wait_for(page, lambda: bool(held_fetch))
     step_button(page, 1).click()  # … while the top event is saved
     page.fill("#topEventInput", "保存後の頂上事象")

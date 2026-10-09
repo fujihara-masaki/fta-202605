@@ -34,8 +34,8 @@
 {%- endmacro %}
 
 {#- A parent group of steps ③・④: the parent's name selects it, its judgement
-    is shown (J-16), and additional generation / manual add name the parent
-    (the legacy functions need it). -#}
+    is shown (J-16), and additional generation (legacy app.js until PR-6) /
+    manual add (the dialog of js/pages/edit, PR-5) name the parent. -#}
 {% macro group(parent, level) -%}
 <section class="edit-group" data-group-parent="{{ parent.id }}" aria-labelledby="group-{{ parent.id }}-title">
   <div class="edit-group__header" data-node-id="{{ parent.id }}" data-role="group-item" data-judgement="{{ parent.judgement }}">
@@ -47,7 +47,7 @@
     <span class="edit-group__gen" data-gen-host="{{ parent.id }}"></span>
     <div class="edit-group__actions">
       <button type="button" class="ui-btn ui-btn--sm" data-action="legacy-generate-additional" data-parent-id="{{ parent.id }}" data-level="{{ level }}" data-generate aria-label="AIで追加生成（親：{{ parent.title }}）">AIで追加生成</button>
-      <button type="button" class="ui-btn ui-btn--sm" data-action="legacy-add" data-parent-id="{{ parent.id }}" data-level="{{ level }}" aria-label="手動追加（親：{{ parent.title }}）">手動追加</button>
+      <button type="button" class="ui-btn ui-btn--sm" data-action="add" data-parent-id="{{ parent.id }}" data-level="{{ level }}" aria-label="手動追加（親：{{ parent.title }}）">手動追加</button>
     </div>
   </div>
   {%- if parent.children %}
