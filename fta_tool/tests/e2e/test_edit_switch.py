@@ -352,7 +352,7 @@ def test_E_E18_a_switch_waits_for_the_save_and_its_answer_stays_with_its_factor(
 
     factor_field(page, "memo").fill("保存中のAのメモ")
     factor_save(page).click()
-    wait_until(lambda: len(held) == 1)
+    pump(page, lambda: len(held) == 1)
     select_button(page, "nav", d).click()
     waiting = page.get_by_role("dialog", name="保存の完了を待っています")
     expect(waiting).to_be_visible()
@@ -379,7 +379,7 @@ def test_E_E18_details_loading_and_the_first_answer_of_a_b_a(page, e2e_server):
     dialogs = record_dialogs(page)
 
     select_button(page, "nav", a).click()  # its details are held
-    wait_until(lambda: len(held) == 1)
+    pump(page, lambda: len(held) == 1)
     expect(editor(page)).to_have_attribute("data-phase", "loading")
     expect(factor_field(page, "memo")).to_be_disabled()
     expect(factor_save(page)).to_be_disabled()
