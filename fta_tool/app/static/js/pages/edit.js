@@ -41,7 +41,7 @@ import {
 import { openAddDialog } from './edit/add-dialog.js';
 import { openDeleteDialog } from './edit/delete-dialog.js';
 import { requestJudgement } from './edit/judgement.js';
-import { createRefresher } from './edit/refresh.js';
+import { createRefresher, successorOf } from './edit/refresh.js';
 import { createStep1 } from './edit/step1.js';
 import { createTitleEditor } from './edit/title.js';
 import { createGeneration } from './edit/generation.js';
@@ -151,6 +151,11 @@ function start(root, model) {
   // Show a factor (or the top event). Only after the switch was allowed:
   // the R-01 routes call requestSelect. Choosing the factor already shown
   // (or its 要確認) keeps its editor and draft: nothing is drawn again.
+  // Every choice the user makes on an R-01 route counts (even the factor
+  // already shown): a selection asked for before it (after a manual add) is
+  // then not made (edit/refresh.js).
+  app.selectionIntent = 0;
+
   app.select = (sel, { source = null, focusWarning = false } = {}) => {
     const node = sel === 'top' ? null : getNode(app.model, sel);
     if (sel !== 'top' && !node) return;
@@ -178,9 +183,11 @@ function start(root, model) {
       return Promise.resolve(true);
     }
     if (next !== 'top' && !getNode(app.model, next)) return Promise.resolve(false);
+    const opener = invoker || document.activeElement;
     return requestSwitch({
       source: currentFactorSource(),
-      invoker: invoker || document.activeElement,
+      invoker: opener,
+      fallbackFocus: successorOf(opener),
       proceed: () => app.select(sel, { source, focusWarning }),
     });
   };
@@ -319,6 +326,7 @@ function start(root, model) {
     if (!button || button.disabled) return;
     const action = button.dataset.action;
     if (action === 'select') {
+      app.selectionIntent += 1;
       app.requestSelect(button.dataset.select === 'top' ? 'top' : button.dataset.nodeId, {
         source: SOURCES[button.dataset.role] || null,
         focusWarning: button.dataset.focus === 'warning',

@@ -615,3 +615,41 @@ def test_E_E18_a_generation_that_ended_while_the_two_choices_were_open_asks_agai
     three.get_by_role("button", name="保存して移動").click()
     expect_selected(page, d, "一次要因D")
     assert e2e_server.get_node(c)["memo"] == "2択の間の下書き"
+
+
+@pytest.mark.acceptance("E-E15")
+@pytest.mark.parametrize("how", ["continue", "escape"])
+def test_E_E15_after_a_partial_success_the_focus_returns_to_the_replaced_control(page, e2e_server, page_watch, how):
+    """External review R-02 (2026-10-09): A's save succeeds, the reference
+    information's fails; the partial update after A's save replaces the
+    structure navigation (B's button is a new element) while the results are
+    shown. 編集を続ける / Esc keep A and the unsaved reference information,
+    and give the focus to the successor of the button that opened the dialog."""
+    analysis_id, a, b, c, d = build(e2e_server, "一部成功の後のフォーカス")
+    open_edit(page, analysis_id)
+    expect_editor_ready(page, a)
+    page_watch.allow_console_error(r"status of 500")
+    page.route(f"**/analyses/{analysis_id}/context",
+               lambda r: r.fulfill(status=500, json={"detail": "E2E: 参考情報だけ失敗"}))
+    factor_field(page, "memo").fill("保存されるAのメモ")
+    step_button(page, 1).click()
+    page.fill("#systemContextInput", "保存されない構成")
+    step_button(page, 2).click()
+    opener = select_button(page, "nav", d)
+    handle = opener.element_handle()
+    opener.click()
+    dialog = switch_dialog(page)
+    dialog.get_by_role("button", name="保存して移動").click()
+    expect(dialog.locator('[data-source-id="edit-context"]')).to_contain_text("失敗：E2E: 参考情報だけ失敗")
+    pump(page, lambda: not handle.evaluate("(el) => el.isConnected"))  # the update replaced the nav
+    if how == "continue":
+        dialog.get_by_role("button", name="編集を続ける").click()
+    else:
+        page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    expect(select_button(page, "nav", d)).to_be_focused()
+    expect(inspector_title(page)).to_have_text("一次要因A")
+    expect(factor_status(page)).to_have_attribute("data-state", "saved")
+    expect(page.locator("#systemContextInput")).to_have_value("保存されない構成")
+    expect(save_status(page, "systemContextInput")).to_have_attribute("data-state", "dirty")
+    assert e2e_server.get_node(a)["memo"] == "保存されるAのメモ"

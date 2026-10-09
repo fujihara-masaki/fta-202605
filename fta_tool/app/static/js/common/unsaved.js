@@ -289,7 +289,7 @@ function delay(ms) {
 // that the server may be busy. 編集を続ける stops waiting (the request is
 // not cancelled: the server may still apply it). Resolves to
 // { done: true, value } or { done: false }.
-async function waitFor(promise, invoker, { title, lead }) {
+async function waitFor(promise, invoker, { title, lead, fallbackFocus = null }) {
   const finished = Promise.resolve(promise).then((value) => ({ done: true, value }));
   const quick = await Promise.race([finished, delay(300).then(() => null)]);
   if (quick) return quick;
@@ -299,6 +299,7 @@ async function waitFor(promise, invoker, { title, lead }) {
     body: [lead],
     actions: [{ id: 'continue', label: '編集を続ける', autofocus: true }],
     invoker,
+    fallbackFocus,
     cancelAction: 'continue',
   });
   dialog.setStatus('保存しています…');
@@ -477,7 +478,7 @@ function askToDiscard(invoker, pending, prompt = {}) {
   return dialog.result;
 }
 
-function askAboutUnsaved(invoker, { note = null } = {}) {
+function askAboutUnsaved(invoker, { note = null, fallbackFocus = null } = {}) {
   const pending = dirtySources().filter((source) => !isAuto(source));
   const unsavable = pending.find((source) => typeof source.save !== 'function');
   if (unsavable) return askToDiscard(invoker, pending, unsavable.prompt);
@@ -496,6 +497,7 @@ function askAboutUnsaved(invoker, { note = null } = {}) {
       { id: 'save', label: '保存して移動', variant: 'primary' },
     ],
     invoker,
+    fallbackFocus,
     cancelAction: 'continue',
     onAction: (actionId, controller) => {
       if (actionId === 'continue') {
@@ -624,7 +626,9 @@ export function requestTransition({ invoker = null, proceed }) {
 //     sent; 破棄して移動 drops the inspector's change alone (①, the reference
 //     information and the title stay). Once idle again, the three choices.
 // 編集を続ける and Esc keep everything (proceed is not called) and give the
-// focus back to `invoker`.
+// focus back to `invoker` — or, when a partial update replaced it while the
+// dialog was open (e.g. after a partial success of 保存して移動), to what
+// `fallbackFocus()` finds (its successor).
 
 const SWITCH_NOTE = '「破棄して移動」を選ぶと、上の一覧のすべての変更が破棄されます。';
 const GENERATING_SWITCH = '生成中は保存できません。生成が終わると保存できます。';
@@ -633,7 +637,7 @@ function isCurrent(source) {
   return Boolean(source) && sources.get(source.id) === source;
 }
 
-function askWhileGenerating(invoker, source) {
+function askWhileGenerating(invoker, source, fallbackFocus) {
   const dialog = openDialog({
     title: '保存していない変更があります',
     body: [
@@ -647,6 +651,7 @@ function askWhileGenerating(invoker, source) {
       { id: 'discard', label: '破棄して移動', variant: 'danger-outline' },
     ],
     invoker,
+    fallbackFocus,
     cancelAction: 'continue',
     onAction: (actionId, controller) => {
       if (actionId !== 'discard') {
@@ -667,7 +672,7 @@ function askWhileGenerating(invoker, source) {
   return dialog.result;
 }
 
-export async function requestSwitch({ source = null, invoker = null, proceed }) {
+export async function requestSwitch({ source = null, invoker = null, fallbackFocus = null, proceed }) {
   if (guardActive) return false;
   guardActive = true;
   try {
@@ -678,18 +683,19 @@ export async function requestSwitch({ source = null, invoker = null, proceed }) 
         const outcome = await waitFor(state.promise || Promise.resolve(), invoker, {
           title: '保存の完了を待っています',
           lead: `${labelOf(source)}の保存が終わってから切り替えます。`,
+          fallbackFocus,
         });
         if (!outcome.done) return false;
         continue;
       }
       if (!attempt(() => source.isDirty(), false)) break;
       if (generationPhase !== 'idle') {
-        const choice = await askWhileGenerating(invoker, source);
+        const choice = await askWhileGenerating(invoker, source, fallbackFocus);
         if (choice === 'recheck') continue;
         if (choice !== 'discarded') return false;
         continue; // judged once more before switching
       }
-      const choice = await askAboutUnsaved(invoker, { note: SWITCH_NOTE });
+      const choice = await askAboutUnsaved(invoker, { note: SWITCH_NOTE, fallbackFocus });
       if (choice !== 'saved' && choice !== 'discarded') return false;
     }
     refresh();

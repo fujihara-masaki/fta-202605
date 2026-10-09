@@ -8,8 +8,9 @@
 // saved values stay; nothing is read again for the same factor.
 // Selection, step, tab, filter and scroll positions stay. After a manual
 // add the new factor is selected through the R-01 check (app.requestSelect:
-// an unsaved draft is asked about first), unless another one was chosen
-// before the update was applied — it waits while a generation runs; after a
+// an unsaved draft is asked about first), unless the user chose anything
+// (even the same factor again) before the update was applied — it waits
+// while a generation runs; after a
 // delete its parent (the draft it affected was dropped by the delete
 // dialog); either is brought into view. The focus goes back to the same
 // element (data-node-id and role), or to its parent's row or the list
@@ -68,6 +69,23 @@ function selectorFor(element) {
     if (value !== undefined) parts.push(`[data-${kebab(key)}="${CSS.escape(value)}"]`);
   }
   return parts.length ? parts.join('') : null;
+}
+
+// A function that finds the element again after a partial update replaced
+// it (the same data-* in the same region or the inspector), or null when the
+// element carries nothing to find it by (plan 5.7; PR-5: the dialogs give
+// the focus back to the successor of the control that opened them).
+export function successorOf(element) {
+  if (!element || !element.dataset) return null;
+  const selector = selectorFor(element);
+  if (!selector) return null;
+  const region = element.closest('[data-region]');
+  const scope = region ? `[data-region="${region.dataset.region}"] ` : (
+    element.closest('[data-inspector-body]') ? '[data-inspector-body] ' : '');
+  return () => {
+    if (element.isConnected) return element;
+    return [...document.querySelectorAll(`${scope}${selector}`)].find((node) => isShown(node) && !node.disabled) || null;
+  };
 }
 
 // Where the focus is, if it is in a part that will be replaced.
@@ -239,7 +257,12 @@ export function createRefresher(app, { scrollers }) {
     const selected = app.state.sel === 'top' ? null : getNode(previousModel, app.state.sel);
     const editor = currentEditor();
     const keepsDraft = Boolean(editor) && editor.nodeId === Number(app.state.sel) && editor.hasDraft();
+    // Only if the user has chosen nothing since the add (any choice, even of
+    // the same factor again: A → B → A); the number was recorded when the
+    // update was asked for and is never taken again (retries, a generation
+    // holding the update back).
     const selectNew = options.select !== undefined && getNode(model, options.select)
+      && options.selectIntent === app.selectionIntent
       && (options.selectFrom === undefined || options.selectFrom === app.state.sel);
     if (options.deleted !== undefined && selected && !keepsDraft
       && isAtOrBelow(previousModel, selected, Number(options.deleted))) {
@@ -373,9 +396,12 @@ export function createRefresher(app, { scrollers }) {
   return {
     request(options = {}) {
       if (app.gone) return;
-      // The factor to select is selected only if the selection is still the
-      // one of now when the update is applied (a newer choice stays).
-      const asked = options.select !== undefined ? { ...options, selectFrom: app.state.sel } : options;
+      // The factor to select is selected only if the user has chosen nothing
+      // since now (app.selectionIntent counts every choice of the user) and
+      // the selection is still the one of now (a newer choice stays).
+      const asked = options.select !== undefined
+        ? { ...options, selectFrom: app.state.sel, selectIntent: app.selectionIntent }
+        : options;
       if (running || app.generating) {
         pending = merge(pending, asked);
         return;

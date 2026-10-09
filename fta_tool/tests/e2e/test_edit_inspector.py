@@ -615,3 +615,89 @@ def test_E_E17_a_later_choice_is_never_replaced_by_the_selection(page, e2e_serve
     page.wait_for_timeout(500)
     expect_selected(page, b, "一次要因B")
     expect_editor_ready(page, b)
+
+
+def pump(page, check, timeout: float = 15.0) -> None:
+    """Let the page run (and Playwright deliver its events) until check() holds."""
+    import time
+    deadline = time.monotonic() + timeout
+    while not check():
+        if time.monotonic() > deadline:
+            raise AssertionError("condition not met within the timeout")
+        page.wait_for_timeout(50)
+
+
+def generation_phase(page) -> str:
+    return page.evaluate("async () => (await import('/static/js/common/unsaved.js')).getGenerationPhase()")
+
+
+def judgement_of(page, node_id: int, value: str):
+    return page.locator(f'[data-role="work-item"][data-node-id="{node_id}"] [data-value="{value}"]')
+
+
+@pytest.mark.acceptance("E-E17")
+def test_E_E17_choosing_a_b_a_while_the_update_is_held_keeps_the_users_choice(page, e2e_server):
+    """External review R-01 (2026-10-09): the selection id alone cannot tell
+    A chosen again from A never left. A later choice of the user — any, even
+    back to the same factor — cancels the selection of the added factor, also
+    when the update is fetched again (a judgement saved meanwhile)."""
+    analysis_id = e2e_server.create_analysis("追加後の A→B→A", top_event="頂上")
+    a = e2e_server.add_level1(analysis_id, "一次要因A")
+    b = e2e_server.add_level1(analysis_id, "一次要因B")
+    open_edit(page, analysis_id)
+    expect_editor_ready(page, a)
+    adds: list[str] = []
+    page.on("request", lambda r: adds.append(urlparse(r.url).path)
+            if r.method == "POST" and urlparse(r.url).path.endswith("/add-level1") else None)
+    held = []
+    page.route(f"**/analyses/{analysis_id}",
+               lambda r: held.append(r) if is_page_fetch(r.request, analysis_id) and not held else r.continue_())
+
+    add_factor(page, step_panel(page, 2).get_by_role("button", name="手動追加", exact=True), "保留中に追加した要因C")
+    wait_until(lambda: bool(held))
+    choose(page, b)
+    choose(page, a)  # back to A: the same id as when the add was made
+    judgement_of(page, b, "yes").click()  # a write meanwhile: the held answer is fetched again
+    expect(judgement_of(page, b, "yes")).to_have_attribute("aria-pressed", "true")
+    held[0].continue_()
+    c = e2e_server.query("SELECT id FROM nodes WHERE title = ?", ("保留中に追加した要因C",))[0][0]
+    expect(select_button(page, "nav", c)).to_have_count(1)  # C is shown …
+    page.wait_for_timeout(500)
+    expect_selected(page, a, "一次要因A")  # … and A, the last choice, stays
+    expect_editor_ready(page, a)
+    assert adds == [f"/analyses/{analysis_id}/nodes/add-level1"]  # never sent again
+    assert e2e_server.node_count(analysis_id) == 3
+
+
+@pytest.mark.acceptance("E-E17")
+def test_E_E17_a_b_a_during_a_generation_keeps_the_users_choice(page, e2e_server):
+    """R-01, while a generation holds the update back: the decision uses what
+    was recorded when the add was made, never a value taken again later."""
+    analysis_id = e2e_server.create_analysis("生成中の追加と A→B→A", top_event="頂上")
+    a = e2e_server.add_level1(analysis_id, "一次要因A")
+    b = e2e_server.add_level1(analysis_id, "一次要因B")
+    e2e_server.update_node(a, user_judgement="yes")
+    open_edit(page, analysis_id)
+    expect_editor_ready(page, a)
+    # The generation request is held in the browser (the single worker would
+    # otherwise answer the add only after the generation, plan 2.4).
+    held = []
+    page.route(f"**/analyses/{analysis_id}/generate/level/2", lambda route: held.append(route))
+    step_button(page, 3).click()
+    step_panel(page, 3).get_by_role("button", name="Yesの一次要因から二次要因を生成").click()
+    pump(page, lambda: bool(held))
+    assert generation_phase(page) == "running"
+    step_button(page, 2).click()
+    add_factor(page, step_panel(page, 2).get_by_role("button", name="手動追加", exact=True), "生成中に追加した要因C")
+    select_button(page, "nav", b).click()
+    expect(inspector_title(page)).to_have_text("一次要因B")
+    select_button(page, "nav", a).click()
+    expect(inspector_title(page)).to_have_text("一次要因A")
+    assert generation_phase(page) == "running"  # all of it while the update was held back
+    held[0].continue_()
+    # The generation ends; its update shows C and the three new factors.
+    expect(page.locator(f'[data-group-parent="{a}"] [data-role="work-item"]')).to_have_count(3, timeout=20000)
+    c = e2e_server.query("SELECT id FROM nodes WHERE title = ?", ("生成中に追加した要因C",))[0][0]
+    expect(select_button(page, "nav", c)).to_have_count(1)
+    page.wait_for_timeout(500)
+    expect_selected(page, a, "一次要因A")
