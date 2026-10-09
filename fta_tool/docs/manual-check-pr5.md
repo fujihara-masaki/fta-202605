@@ -1,6 +1,6 @@
 # PR-5 Windows 実機確認の手順（Chrome・Edge）
 
-計画書（[ui-redesign-implementation-plan.md](ui-redesign-implementation-plan.md)）第8.5節の確認を、Windows のインストール済みの **Google Chrome と Microsoft Edge の両方**で行うための手順です。対象は PR-5 の作業ブランチ `claude/sharp-dijkstra-n526mz` の受入候補の SHA（報告に書いた SHA）です。
+計画書（[ui-redesign-implementation-plan.md](ui-redesign-implementation-plan.md)）第8.5節の確認を、Windows のインストール済みの **Google Chrome と Microsoft Edge の両方**で行うための手順です。対象は PR-5 の作業ブランチ `claude/sharp-dijkstra-n526mz`（[PR #21](https://github.com/fujihara-masaki/fta-202605/pull/21)）の受入候補の SHA（報告と PR 本文に書いた SHA）です。
 
 この手順書は確認の進め方をまとめたもので、受入の合否を決めるものではありません。合否、PR の作成と `feature/ui-redesign` へのマージは、利用者が判断します。
 
@@ -13,7 +13,7 @@
 
 | ブラウザ | 方式 | 対象の SHA | 状態 |
 |---|---|---|---|
-| Google Chrome | 準備確認 → 全必須 E2E（第3節）＋実操作・目視（第5節） | （報告に書いた受入候補の SHA） | 未実施 |
+| Google Chrome | 準備確認 → 全必須 E2E（第3節）＋実操作・目視（第5節） | 受入候補：PR #21 のブランチの先頭（報告・PR 本文に書いた SHA。アプリとテストは `6cd414e` と同じ） | 未実施 |
 | Microsoft Edge | 準備確認 → 全必須 E2E（第4節）＋実操作・目視（第5節） | 同上 | 未実施 |
 
 ## 0. 守ること
@@ -120,7 +120,7 @@ manual-check-pr4.md 第5.1節と同じ手順で、新しい DB・AI: mock のサ
 2. 確定の Enter で保存されないこと（「要因を保存しました」が出ない。保存状態は「入力中（未保存）」のまま）。
 3. もう一度 Enter を押すと保存され、「保存済み」になり、構造ナビ・作業リストの名前も変わること。
 4. 「② 一次要因」の「手動追加」を押し、ダイアログの要因タイトルに IME で「ついか」→「追加」と入力し、**Enter で確定する**。確定の Enter でダイアログが閉じない（追加されない）こと。もう一度 Enter を押すと追加され、ダイアログが閉じて追加した要因が選ばれること。
-5. 説明・メモなどの複数行の欄では、IME の確定の Enter・通常の Enter が改行になり、保存されないこと（保存は「保存」ボタン）。
+5. 説明・メモなどの複数行の欄では、IME の確定の Enter は変換の確定だけを行い、保存されないこと。変換を確定した後の通常の Enter は改行になり、保存されないこと（保存は「保存」ボタン）。
 
 ### 5.3 実操作2：インスペクタに未保存の入力がある状態での F5（ブラウザの標準の確認）
 
