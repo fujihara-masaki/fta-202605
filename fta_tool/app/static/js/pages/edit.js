@@ -200,24 +200,43 @@ function start(root, model) {
   // target is judged again: if the user chose anything meanwhile
   // (selectionIntent), nothing is selected. 編集を続ける keeps the selection
   // and the draft, and drops the target.
+  // The answer covers every add sent until then (adds are numbered when they
+  // are sent, app.nextAddSeq), including one whose update is still being
+  // fetched: after 編集を続ける none of them selects (no second check);
+  // after 破棄して移動 the selection made here does not stop a later one
+  // (edit/refresh.js isAutoSelection), so the last add is selected.
+  let addSeq = 0;
+  app.nextAddSeq = () => {
+    addSeq += 1;
+    return addSeq;
+  };
   let autoTarget = null;
   let autoRunning = false;
-  app.autoSelect = (nodeId, intent) => {
+  let autoSelected = null; // { sel, intent }: the selection made here
+  let declined = null; // { intent, upTo }: 編集を続ける for the adds up to upTo
+  app.isAutoSelection = (intent) => Boolean(autoSelected)
+    && autoSelected.intent === intent && autoSelected.sel === String(app.state.sel);
+  app.autoSelect = (nodeId, intent, seq) => {
+    if (declined && declined.intent === intent && Number.isInteger(seq) && seq <= declined.upTo) return;
     autoTarget = { id: Number(nodeId), intent };
     if (autoRunning) return;
     autoRunning = true;
+    let switched = false;
     const opener = document.activeElement;
     requestSwitch({
       source: currentFactorSource(),
       invoker: opener,
       fallbackFocus: successorOf(opener),
       proceed: () => {
+        switched = true;
         const target = autoTarget;
         if (target && target.intent === app.selectionIntent && getNode(app.model, target.id)) {
           app.select(target.id, {});
+          autoSelected = { sel: String(app.state.sel), intent: target.intent };
         }
       },
     }).finally(() => {
+      if (!switched && autoTarget) declined = { intent: autoTarget.intent, upTo: addSeq };
       autoRunning = false;
       autoTarget = null;
     });

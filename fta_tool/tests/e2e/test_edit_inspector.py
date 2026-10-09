@@ -795,10 +795,16 @@ def test_E_E16_confirming_is_refused_when_a_save_started_meanwhile(page, e2e_ser
     expect(factor_status(page)).to_have_attribute("data-state", "saved")
 
 
-def a_dirty_c_held_d_held(page, e2e_server, title):
+def a_dirty_c_held_d_held(page, e2e_server, title, hold_d_update=False, hold_d_add=False):
     """A with an unsaved memo; C added and its update held; D's add sent and
     held; C's update returned: the three choices for C are open; then D's add
-    and its update complete while they are open (review of e53b40d)."""
+    and its update complete while they are open (review of e53b40d).
+
+    hold_d_update: D's add completes but its update (the GET) is held while
+    the three choices are open (Codex review of b74d942); the held request is
+    returned with the rest.
+    hold_d_add: stops with the three choices open and D's add still held,
+    returned with the rest (C's id only)."""
     analysis_id = e2e_server.create_analysis(title, top_event="頂上")
     a = e2e_server.add_level1(analysis_id, "一次要因A")
     open_edit(page, analysis_id)
@@ -808,7 +814,8 @@ def a_dirty_c_held_d_held(page, e2e_server, title):
             if r.method == "POST" and urlparse(r.url).path.endswith("/add-level1") else None)
     held_fetch, held_add = [], []
     page.route(f"**/analyses/{analysis_id}",
-               lambda r: held_fetch.append(r) if is_page_fetch(r.request, analysis_id) and not held_fetch
+               lambda r: held_fetch.append(r) if is_page_fetch(r.request, analysis_id)
+               and len(held_fetch) < (2 if hold_d_update else 1)
                else r.continue_())
     page.route(f"**/analyses/{analysis_id}/nodes/add-level1",
                lambda r: held_add.append(r) if len(adds) == 2 and not held_add else r.continue_())
@@ -825,11 +832,19 @@ def a_dirty_c_held_d_held(page, e2e_server, title):
     dialog = leave_dialog(page)
     expect(dialog).to_be_visible()
     expect(dialog.locator("ul").first.locator("li")).to_have_text(["要因「一次要因A」の内容"])
+    if hold_d_add:
+        c = e2e_server.query("SELECT id FROM nodes WHERE title = ?", ("追加した要因C",))[0][0]
+        return analysis_id, a, c, adds, dialog, held_add[0]
     held_add[0].continue_()                                          # 5: D's add and its update complete
     d_id = lambda: e2e_server.query("SELECT id FROM nodes WHERE title = ?", ("追加した要因D",))
     wait_until(lambda: bool(d_id()))
     d = d_id()[0][0]
     c = e2e_server.query("SELECT id FROM nodes WHERE title = ?", ("追加した要因C",))[0][0]
+    if hold_d_update:
+        pump(page, lambda: len(held_fetch) == 2, timeout=10.0)       # D's update asked for, held
+        expect(select_button(page, "nav", d)).to_have_count(0)
+        expect(dialog).to_be_visible()
+        return analysis_id, a, c, d, adds, dialog, held_fetch[1]
     expect(select_button(page, "nav", d)).to_have_count(1)
     expect(dialog).to_be_visible()
     return analysis_id, a, c, d, adds, dialog
@@ -857,4 +872,53 @@ def test_E_E17_continue_keeps_a_and_its_draft_when_a_later_add_completed_while_a
     expect_selected(page, a, "一次要因A")
     expect(factor_field(page, "memo")).to_have_value("Aの未保存のメモ")
     expect(select_button(page, "nav", c)).to_have_count(1)
+    assert adds == [f"/analyses/{analysis_id}/nodes/add-level1"] * 2
+
+
+@pytest.mark.acceptance("E-E17")
+def test_E_E17_a_later_add_whose_update_is_in_flight_while_asking_is_the_one_selected(page, e2e_server):
+    analysis_id, a, c, d, adds, dialog, d_update = a_dirty_c_held_d_held(
+        page, e2e_server, "確認中に後の追加の更新を取得中", hold_d_update=True)
+    dialog.get_by_role("button", name="破棄して移動").click()
+    expect(dialog).to_have_count(0)
+    d_update.continue_()                                             # D's update returns afterwards
+    expect(select_button(page, "nav", d)).to_have_count(1)
+    expect_selected(page, d, "追加した要因D")                          # the last add, not C
+    expect_editor_ready(page, d)
+    page.wait_for_timeout(500)
+    expect_selected(page, d, "追加した要因D")
+    expect(leave_dialog(page)).to_have_count(0)
+    assert e2e_server.get_node(a)["memo"] == ""
+    assert adds == [f"/analyses/{analysis_id}/nodes/add-level1"] * 2
+
+
+@pytest.mark.acceptance("E-E17")
+def test_E_E17_continue_keeps_a_and_its_draft_when_a_later_adds_update_was_in_flight(page, e2e_server):
+    analysis_id, a, c, d, adds, dialog, d_update = a_dirty_c_held_d_held(
+        page, e2e_server, "確認中に後の追加の更新を取得中（続ける）", hold_d_update=True)
+    dialog.get_by_role("button", name="編集を続ける").click()
+    expect(dialog).to_have_count(0)
+    d_update.continue_()
+    expect(select_button(page, "nav", d)).to_have_count(1)
+    page.wait_for_timeout(500)
+    expect(leave_dialog(page)).to_have_count(0)                       # D (added before the answer) does not ask again
+    expect_selected(page, a, "一次要因A")
+    expect(factor_field(page, "memo")).to_have_value("Aの未保存のメモ")
+    assert adds == [f"/analyses/{analysis_id}/nodes/add-level1"] * 2
+
+
+@pytest.mark.acceptance("E-E17")
+def test_E_E17_continue_also_covers_an_add_sent_before_the_answer_and_completed_after(page, e2e_server):
+    analysis_id, a, c, adds, dialog, d_add = a_dirty_c_held_d_held(
+        page, e2e_server, "確認中に送った追加が答えの後に完了（続ける）", hold_d_add=True)
+    dialog.get_by_role("button", name="編集を続ける").click()
+    expect(dialog).to_have_count(0)
+    d_add.continue_()                                                # D's add completes after the answer
+    d_id = lambda: e2e_server.query("SELECT id FROM nodes WHERE title = ?", ("追加した要因D",))
+    wait_until(lambda: bool(d_id()))
+    expect(select_button(page, "nav", d_id()[0][0])).to_have_count(1)
+    page.wait_for_timeout(500)
+    expect(leave_dialog(page)).to_have_count(0)
+    expect_selected(page, a, "一次要因A")
+    expect(factor_field(page, "memo")).to_have_value("Aの未保存のメモ")
     assert adds == [f"/analyses/{analysis_id}/nodes/add-level1"] * 2

@@ -263,10 +263,14 @@ export function createRefresher(app, { scrollers }) {
     // holding the update back).
     // A newer add asked for its own update meanwhile (waiting in `pending`):
     // that one selects its factor, this older one selects nothing.
+    // The selection changed since the request only by the selection of an
+    // earlier add (edit.js autoSelect, same selectIntent: 破棄して移動 chosen
+    // while this update was being fetched): this later add still selects.
     const superseded = Boolean(pending) && pending.select !== undefined;
     const selectNew = options.select !== undefined && !superseded && getNode(model, options.select)
       && options.selectIntent === app.selectionIntent
-      && (options.selectFrom === undefined || options.selectFrom === app.state.sel);
+      && (options.selectFrom === undefined || options.selectFrom === app.state.sel
+        || (Boolean(app.isAutoSelection) && app.isAutoSelection(options.selectIntent)));
     if (options.deleted !== undefined && selected && !keepsDraft
       && isAtOrBelow(previousModel, selected, Number(options.deleted))) {
       const deleted = getNode(previousModel, options.deleted);
@@ -321,7 +325,7 @@ export function createRefresher(app, { scrollers }) {
       // draft first; 編集を続ける keeps the selection (the factor stays added).
       // A later add while that check is open becomes the target
       // (edit.js autoSelect).
-      app.autoSelect(Number(options.select), options.selectIntent);
+      app.autoSelect(Number(options.select), options.selectIntent, options.addSeq);
     }
   }
 

@@ -17,7 +17,10 @@
 //   inspector's unsaved draft is asked about; 編集を続ける keeps the selection
 //   and the draft, the factor stays added). A later choice of the user is
 //   never replaced by that selection (edit/refresh.js selectIntent); a later
-//   add completed while that check is open becomes the one selected.
+//   add completed while that check is open, or whose update is still being
+//   fetched when 破棄して移動 is chosen, becomes the one selected. Each add is
+//   numbered when it is sent (app.nextAddSeq): after 編集を続ける the adds
+//   sent until then select nothing.
 //   Nothing about the selection or the display sends the add again.
 
 import { el, focusElement } from '../../common/dom.js';
@@ -127,6 +130,7 @@ export function openAddDialog(app, { parentId = null, level, invoker = null } = 
       const url = place.level === 1
         ? `/analyses/${place.analysisId}/nodes/add-level1`
         : `/nodes/${place.parentId}/children`;
+      const addSeq = app.nextAddSeq();
       const result = await requestJson(url, {
         method: 'POST',
         body: { title: text, description: normalizeText(description.value) },
@@ -144,7 +148,7 @@ export function openAddDialog(app, { parentId = null, level, invoker = null } = 
       controller.close('added');
       notify('要因を追加しました', { type: 'success' });
       const nodeId = Number(result.data && result.data.node_id);
-      app.refresh(Number.isInteger(nodeId) && nodeId > 0 ? { select: nodeId } : {});
+      app.refresh(Number.isInteger(nodeId) && nodeId > 0 ? { select: nodeId, addSeq } : {});
     },
   });
   open = { dialog, title, description };
