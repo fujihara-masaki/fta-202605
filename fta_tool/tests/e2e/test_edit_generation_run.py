@@ -694,12 +694,41 @@ def test_E_G12_every_ending_lifts_the_restrictions(page, e2e_server, page_watch,
         "stub-error": ("failed", "failed"),
     }
     if ending == "js-error":
+        # PR-6 review R4: A's request was sent but its answer was not judged
+        # (結果不明, not 生成中…), C was never sent (送信していません), nothing
+        # is told as success or as 候補0件, and nothing stays 進行中.
         expect(page.locator("[data-gen-log-error]")).to_be_visible()
         expect(toast(page, "生成の処理中に画面のエラーが発生しました", "error")).to_be_visible()
+        expect_js_error_rows(page, a, c, restored=False)
+        expect(toast(page, "二次要因の通常生成：作成を確認できませんでした（1件の親は結果不明。詳細は生成ログ）",
+                     "error", exact=True)).to_be_visible()
+        for wrong in ("生成候補がありませんでした", "作成しました"):
+            expect(page.locator("#ui-toasts .ui-toast").filter(has_text=wrong)).to_have_count(0)
     else:
         expect(log_row(page, a)).to_have_attribute("data-category", categories[ending][0])
         expect(log_row(page, c)).to_have_attribute("data-category", categories[ending][1])
     expect_back_to_normal(page, analysis_id, a, b)
+    if ending == "js-error":
+        step_button(page, 3).click()  # after the reload: the same, settled rows (restored)
+        expect(page.locator("[data-gen-log-restored]")).to_be_visible()
+        expect_js_error_rows(page, a, c, restored=True)
+
+
+def expect_js_error_rows(page, a, c, *, restored):
+    row_a, row_c = log_row(page, a), log_row(page, c)
+    expect(row_a).to_have_attribute("data-category", "unknown")
+    expect(row_a).to_contain_text("結果不明")
+    expect(row_a).to_contain_text("画面の処理中にエラーが発生したため、この親の結果を確認できていません")
+    expect(row_a).not_to_contain_text("再読み込みの時点")
+    expect(row_c).to_have_attribute("data-category", "skipped")
+    expect(row_c).to_contain_text("画面の処理中にエラーが発生したため、送信していません")
+    log = page.locator("[data-gen-log]")
+    expect(log).not_to_contain_text("生成中…")
+    expect(log).not_to_contain_text("待機中")
+    expect(log.locator("[data-gen-log-summary]")).to_contain_text("結果不明の親 1件")
+    expect(log.locator("[data-gen-log-progress]")).to_have_text(
+        "完了していました。" if restored else "完了：2件の親（要求ごとの結果は下の一覧）。")
+    expect(page.locator('[data-gen-badge][data-category="running"], [data-gen-badge][data-category="waiting"]')).to_have_count(0)
 
 
 @SINGLE
@@ -769,3 +798,223 @@ def test_E_G12_a_failed_update_ends_it_too(page, e2e_server, page_watch, typed):
         assert phase(page) == "idle"
         expect(log_row(page, a)).to_contain_text("作成 3件")
         expect(generate_button(page, 2)).to_be_enabled()
+
+
+# ----- PR-6 review (R1〜R3) ------------------------------------------------------
+
+@SINGLE
+@pytest.mark.acceptance("E-G10")
+@pytest.mark.parametrize("order", ["answer-after-the-save", "answer-while-saving"])
+def test_E_G10_a_save_is_never_rolled_back_by_an_older_second_read(page, e2e_server, order):
+    """R1: the read after a generation goes out with the old memo; the factor
+    is saved (by 保存) before its answer arrives — after the save, or while
+    the save is in flight. The answer is older than the save: the memo, its
+    saved value and the next save keep the saved memo."""
+    analysis_id, a, b, c = setup(e2e_server, f"再取得と保存：{order}")
+    e2e_server.update_node(b, memo="旧メモ")
+    open_edit(page, analysis_id)
+    choose(page, b)
+    held = start_held(page, analysis_id)
+    factor_field(page, "memo").fill("新メモ")
+    reads = []
+
+    def read(route):
+        if reads:
+            route.continue_()
+            return
+        reads.append((route, route.fetch()))  # read now (the old memo), answered later
+
+    page.route(f"**/nodes/{b}", read)
+    held_save = []
+    if order == "answer-while-saving":
+        page.route(f"**/nodes/{b}/update", lambda route: held_save.append(route) if not held_save else route.continue_())
+    gets = detail_gets(page)
+    release(page, held)
+    pump(page, lambda: len(reads) == 1)
+    assert reads[0][1].json()["memo"] == "旧メモ"
+    sent = []
+    page.on("request", lambda r: sent.append(r.post_data_json)
+            if r.method == "POST" and r.url.endswith(f"/nodes/{b}/update") else None)
+    factor_save(page).click()
+    if order == "answer-while-saving":
+        pump(page, lambda: len(held_save) == 1)
+        reads[0][0].fulfill(response=reads[0][1])  # the old answer arrives while the save is in flight
+        page.wait_for_timeout(300)
+        expect(factor_field(page, "memo")).to_have_value("新メモ")
+        held_save[0].continue_()
+        expect(factor_status(page)).to_have_text("保存済み")
+    else:
+        expect(factor_status(page)).to_have_text("保存済み")
+        assert e2e_server.get_node(b)["memo"] == "新メモ"
+        reads[0][0].fulfill(response=reads[0][1])  # the old answer arrives after the save
+    page.wait_for_timeout(500)
+    expect(factor_field(page, "memo")).to_have_value("新メモ")  # not the older answer's 旧メモ
+    expect(factor_status(page)).to_have_text("保存済み")
+    pump(page, lambda: len(gets) >= 2)  # read again once the save has ended
+    page.wait_for_timeout(300)
+    expect(factor_field(page, "memo")).to_have_value("新メモ")
+    expect(inspector(page).locator("[data-detail-read]")).to_be_hidden()
+    # A later save of another field keeps the saved memo.
+    factor_field(page, "description").fill("別の欄の変更")
+    factor_save(page).click()
+    expect(factor_status(page)).to_have_text("保存済み")
+    assert sent[-1]["memo"] == "新メモ" and sent[-1]["description"] == "別の欄の変更"
+    assert e2e_server.get_node(b)["memo"] == "新メモ"
+    # The cache is the saved one too: shown again during the next generation.
+    held = start_held(page, analysis_id)
+    select_button(page, "nav", c).click()
+    select_button(page, "nav", b).click()
+    expect_editor_ready(page, b)
+    expect(factor_field(page, "memo")).to_have_value("新メモ")
+    expect(factor_field(page, "description")).to_have_value("別の欄の変更")
+    release(page, held)
+
+
+@SINGLE
+@pytest.mark.acceptance("E-G10")
+def test_E_G10_save_and_go_does_not_cross_a_second_read_either(page, e2e_server, page_watch):
+    """R1 through 保存して移動 (the other way into the same save): the
+    factor is saved, the reference information fails, so the page stays on
+    the factor (編集を続ける) — and then the older read arrives."""
+    page_watch.allow_console_error(r"status of 500")
+    analysis_id, a, b, c = setup(e2e_server, "再取得と保存して移動")
+    e2e_server.update_node(b, memo="旧メモ")
+    open_edit(page, analysis_id)
+    choose(page, b)
+    held = start_held(page, analysis_id)
+    factor_field(page, "memo").fill("新メモ")
+    reads = []
+    page.route(f"**/nodes/{b}", lambda route: route.continue_() if reads else reads.append((route, route.fetch())))
+    page.route(f"**/analyses/{analysis_id}/context",
+               lambda route: route.fulfill(status=500, content_type="application/json", body='{"detail": "参考情報だけ失敗（検証用）"}'))
+    release(page, held)
+    pump(page, lambda: len(reads) == 1)
+    step_button(page, 1).click()
+    page.fill("#systemContextInput", "保存できない参考情報")
+    select_button(page, "nav", c).click()
+    dialog = leave_dialog(page)
+    dialog.get_by_role("button", name="保存して移動").click()
+    expect(dialog.locator('[data-save-result="saved"]')).to_have_count(1)  # the factor
+    expect(dialog.locator('[data-save-result="failed"]')).to_have_count(1)  # the reference information
+    dialog.get_by_role("button", name="編集を続ける").click()
+    expect(editor(page)).to_have_attribute("data-node-id", str(b))
+    assert e2e_server.get_node(b)["memo"] == "新メモ"
+    reads[0][0].fulfill(response=reads[0][1])  # the older answer arrives now
+    page.wait_for_timeout(500)
+    expect(factor_field(page, "memo")).to_have_value("新メモ")
+    expect(factor_status(page)).to_have_text("保存済み")
+    sent = []
+    page.on("request", lambda r: sent.append(r.post_data_json)
+            if r.method == "POST" and r.url.endswith(f"/nodes/{b}/update") else None)
+    factor_field(page, "description").fill("別の欄の変更")
+    factor_save(page).click()
+    expect(factor_status(page)).to_have_text("保存済み")
+    assert sent[-1]["memo"] == "新メモ"
+    assert e2e_server.get_node(b)["memo"] == "新メモ"
+
+
+EXPORTS = (
+    ("header", lambda page: page.locator('.edit-header a[data-export-format="csv"]')),
+    ("step5", lambda page: step_panel(page, 5).locator('a[data-export-format="json"]')),
+)
+
+
+@SINGLE
+@pytest.mark.acceptance("E-G04")
+def test_E_G04_exports_are_refused_with_modifier_keys_and_the_middle_button(page, e2e_server):
+    """R2 (Codex P2 on PR #22): Ctrl / Shift / Alt / Meta with the click and
+    the middle button (auxclick) request no export while a generation is
+    under way; afterwards the exports work again."""
+    analysis_id, a, b, c = setup(e2e_server, "生成中の出力")
+    open_edit(page, analysis_id)
+    # An export starts a download (Playwright does not route download
+    # navigations): every download of every tab, and every tab opened.
+    downloads, opened = [], []
+    page.on("download", lambda d: downloads.append(d.url))
+    page.context.on("page", lambda p: (opened.append(p.url), p.on("download", lambda d: downloads.append(d.url))))
+    pages_before = len(page.context.pages)
+    held = start_held(page, analysis_id)
+
+    def link(where):
+        if where == "header":
+            panel = page.locator(".edit-header [data-ui-menu-panel]")
+            if not panel.is_visible():
+                page.locator(".edit-header [data-ui-menu-button]").click()
+        else:
+            if page.locator(".edit-header [data-ui-menu-panel]").is_visible():
+                page.locator(".edit-header [data-ui-menu-button]").click()  # close the header's menu
+            step_button(page, 5).click()
+        return dict(EXPORTS)[where](page)
+
+    for where, _ in EXPORTS:
+        for modifiers in (["Control"], ["Shift"], ["Alt"], ["Meta"]):
+            page.evaluate("() => document.querySelectorAll('#ui-toasts .ui-toast__close').forEach((b) => b.click())")
+            link(where).click(modifiers=modifiers, force=True)
+            expect(toast(page, "生成中のため出力できません", "warning")).to_be_visible()
+        page.evaluate("() => document.querySelectorAll('#ui-toasts .ui-toast__close').forEach((b) => b.click())")
+        link(where).click(button="middle", force=True)
+        expect(toast(page, "生成中のため出力できません", "warning")).to_be_visible()
+    page.wait_for_timeout(500)
+    assert downloads == [] and opened == []
+    assert len(page.context.pages) == pages_before  # no tab or window opened
+    release(page, held)
+    # Back to normal: both ways export again.
+    page.evaluate("() => document.querySelectorAll('#ui-toasts .ui-toast__close').forEach((b) => b.click())")
+    for where, _ in EXPORTS:
+        with page.expect_download() as download:
+            link(where).click()
+        assert download.value.suggested_filename.startswith(f"fta_{analysis_id}.")
+    assert len(downloads) == 2 and all("/export/" in url for url in downloads)  # the detector sees exports
+
+
+@SINGLE
+@pytest.mark.acceptance("E-G09")
+@pytest.mark.acceptance("E-G10")
+@pytest.mark.parametrize("ending", ["cancel", "save-failure", "page-error-before-the-log"])
+def test_E_G09_details_held_back_by_a_preparation_are_read_when_it_ends(page, e2e_server, page_watch, ending):
+    """R3: a factor never read is chosen while a preparation waits; the
+    preparation ends without generating (取りやめ, a failed save before it,
+    an exception of the page before the log began): no generation request,
+    and the factor's details are read and can be edited."""
+    page_watch.allow_console_error(r"status of 500")
+    analysis_id, a, b, c = setup(e2e_server, f"準備の終了と詳細：{ending}")
+    open_edit(page, analysis_id)
+    choose(page, a)
+    requests = generation_requests(page)
+    held = hold(page, f"**/analyses/{analysis_id}/top-event")
+    step_button(page, 1).click()
+    page.fill("#topEventInput", "保存中の頂上事象")
+    step_panel(page, 1).locator('[data-save-button="top-event"]').click()
+    pump(page, lambda: len(held) == 1)
+    if ending == "page-error-before-the-log":
+        # An exception of the page's own code when the log begins.
+        page.evaluate("""() => {
+          const replace = Element.prototype.replaceChildren;
+          Element.prototype.replaceChildren = function (...nodes) {
+            if (this.matches && this.matches('[data-gen-log-slot]') && nodes.length) throw new Error('E2E: 例外（検証用）');
+            return replace.apply(this, nodes);
+          };
+        }""")
+    start_preparing(page, 2)
+    gets = detail_gets(page)
+    select_button(page, "nav", c).click()  # never read: 取得待ち
+    expect(editor(page)).to_have_attribute("data-phase", "waiting")
+    if ending == "cancel":
+        gen_status(page).get_by_role("button", name="生成を取りやめる").click()
+        held[0].continue_()
+    elif ending == "save-failure":
+        held[0].fulfill(status=500, content_type="application/json", body='{"detail": "保存の失敗（検証用）"}')
+    else:
+        held[0].continue_()
+        expect(toast(page, "生成を開始できませんでした（画面の処理でエラーが発生しました。生成の要求は送っていません）",
+                     "error")).to_be_visible()
+    wait_phase(page, "idle")
+    expect_editor_ready(page, c)
+    expect(factor_field(page, "description")).to_have_value("Cの説明")
+    factor_field(page, "memo").fill("準備の後のメモ")
+    expect(factor_status(page)).to_have_text("入力中（未保存）")
+    page.wait_for_timeout(300)
+    assert gets == [c]
+    assert requests == [] and e2e_server.stub_calls() == []
+    if ending == "page-error-before-the-log":
+        assert page.evaluate("(key) => sessionStorage.getItem(key)", f"fta:genlog:v1:{analysis_id}") is None

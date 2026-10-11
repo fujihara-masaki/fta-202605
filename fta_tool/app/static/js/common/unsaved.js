@@ -64,7 +64,8 @@
 // Download links (download attribute) are never intercepted — except while
 // a generation is prepared, runs or is being finished (PR-6, J-01): then
 // in-page links and the export links are refused with the reason (nothing
-// half generated is exported, the page is not left).
+// half generated is exported, the page is not left); an export also when
+// it is clicked with a modifier key or the middle button.
 // Browser navigation (reload, back, closing the tab) gets the browser's own
 // confirmation via beforeunload, registered only while something is unsaved
 // or being saved, or a generation is under way (PR-6, E-G08: also without
@@ -120,7 +121,7 @@ function attempt(fn, fallback) {
 function stateOf(source) {
   let state = states.get(source);
   if (!state) {
-    state = { target: Object.freeze({ ...(source.target || {}) }), promise: null, lastFailure: null };
+    state = { target: Object.freeze({ ...(source.target || {}) }), promise: null, lastFailure: null, sent: 0 };
     states.set(source, state);
   }
   return state;
@@ -256,6 +257,7 @@ export async function saveSource(source) {
     return { ok: false, reason: invalid, invalid: true, notSent: true };
   }
   const key = keyOf(source);
+  state.sent += 1;
   // Set before the first await, so a click right after a blur sees it.
   state.promise = (async () => {
     let outcome;
@@ -293,6 +295,23 @@ export function inFlightSaves() {
       : Promise.resolve(attempt(() => source.whenIdle?.(), null)).then(() => ({ ok: true }), () => ({ ok: true }));
     return { id: source.id, label: labelOf(source), promise };
   });
+}
+
+// How many saves of the source were started (the save button and
+// 保存して移動 alike: both go through saveSource). PR-6: a read of the saved values
+// sent before a save started may be older than that save (factor-editor.js).
+export function saveCount(source) {
+  return stateOf(source).sent;
+}
+
+// Resolves when the source's save in flight (if any) has ended and its
+// result was committed.
+export async function whenSourceIdle(source) {
+  const state = stateOf(source);
+  while (state.promise) {
+    await state.promise.catch(() => null);
+    await Promise.resolve(); // saveSource clears the promise right after
+  }
 }
 
 // Every save in flight (including sources that track their own saves).
@@ -746,25 +765,38 @@ export function releaseNavigation() {
   navigationHold = null;
 }
 
+// An export link (download) while a generation is under way: refused for
+// every way it can be followed — a plain click, Ctrl/Meta/Shift/Alt with
+// it, and the middle button (auxclick) — since each would request the
+// export of a half generated analysis (PR-6 review, R2). Returns true when
+// the event was refused.
+function refuseExportDuringGeneration(event) {
+  if (!generationUnderWay()) return false;
+  const link = event.target instanceof Element ? event.target.closest('a[href][download]') : null;
+  if (!link) return false;
+  event.preventDefault();
+  notify(GENERATING_EXPORT, { type: 'warning' });
+  return true;
+}
+
 export function installLinkGuard() {
   if (linkGuardInstalled) return;
   linkGuardInstalled = true;
+  // The middle button fires auxclick, not click.
+  document.addEventListener('auxclick', (event) => {
+    if (event.defaultPrevented) return;
+    refuseExportDuringGeneration(event);
+  });
   document.addEventListener('click', (event) => {
-    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.defaultPrevented) return;
+    if (refuseExportDuringGeneration(event)) return; // before the checks below, which let modified clicks through
+    if (event.button !== 0) return;
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const link = event.target instanceof Element ? event.target.closest('a[href]') : null;
     if (!link) return;
     const target = (link.getAttribute('target') || '').toLowerCase();
     if (target && target !== '_self') return;
-    if (link.hasAttribute('download')) {
-      // An export: never asked about unsaved input (the page stays), but
-      // refused while a generation is under way (J-01).
-      if (generationUnderWay()) {
-        event.preventDefault();
-        notify(GENERATING_EXPORT, { type: 'warning' });
-      }
-      return;
-    }
+    if (link.hasAttribute('download')) return; // an export: the page stays, nothing is asked
     if (link.dataset.unsavedGuard === 'off') return;
     let url;
     try {

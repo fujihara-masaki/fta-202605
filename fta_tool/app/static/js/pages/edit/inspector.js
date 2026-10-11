@@ -401,9 +401,11 @@ export function renderInspector(app, { focusWarning = false, focusTitle = false 
 // After a generation (edit/generation.js): read the details of the factor
 // shown (the first read if it was waiting; else a second read that keeps a
 // draft). Nothing else is read.
-export function refetchAfterGeneration() {
+// pendingOnly: a preparation ended without generating (取りやめ, a failed
+// save, an exception): only what it held back is read (PR-6 review, R3).
+export function refetchAfterGeneration({ pendingOnly = false } = {}) {
   const current = currentEditor();
-  if (current) current.refetch();
+  if (current) current.refetch({ pendingOnly });
 }
 
 export function updateTopEventText(saved) {

@@ -24,13 +24,21 @@
 // Storage that cannot be used (private browsing, quota, blocked) keeps the
 // log on the page only and says so; generating and saving go on. Broken
 // stored data is dropped.
-// The log is shown only in the tab that made it: a tab mark (window.name)
-// is stored with it, so a tab that inherited a copy of this tab's
-// sessionStorage (window.open with an opener) does not show it. A browser
-// that copies window.name as well (e.g. duplicating a tab) may; this is not
-// a guarantee of where the log is shown, nor a history, nor a recovery of
-// drafts, nor a sure removal when the browser is closed (a restored session
-// may keep it).
+// The log is shown only in the tab that made it: the tab is identified by a
+// mark kept in window.name (it stays across reloads and navigations of the
+// same tab), stored with the log. A tab opened by window.open with an opener
+// gets a copy of this tab's sessionStorage but not its window.name, so it
+// does not show the log (and drops the copy): checked by E-G06. Duplicating
+// a tab with the browser's menu may copy window.name too; that is not
+// checked — if the log shows there, it differs from the acceptance
+// condition (plan 8.6-6) and is for the user to decide (fix it, or accept
+// it as a constraint). This is not a history, nor a recovery of drafts, nor
+// a sure removal when the browser is closed (a restored session may keep
+// it).
+// A write that fails (a full or blocked storage) removes the key, so a
+// reload never brings back the previous generation's log as if it were
+// this one; when the key cannot be removed either, the page says that an
+// earlier result may come back (PR-6 review, R6).
 
 import { el } from '../../common/dom.js';
 import { sessionStore } from '../../common/storage.js';
@@ -161,6 +169,7 @@ export function createGenLog(app) {
   let log = null; // the log shown (or null)
   let restored = false;
   let stored = true; // false: the storage could not be used for it
+  let staleKept = false; // the write failed and the previous log could not be removed
 
   function slot(level) {
     return document.querySelector(`[data-gen-log-slot="${level}"]`);
@@ -168,7 +177,14 @@ export function createGenLog(app) {
 
   function save() {
     if (!log) return;
-    stored = sessionStore.setJSON(genlogKey(app.analysisId), storedLog(log));
+    const key = genlogKey(app.analysisId);
+    stored = sessionStore.setJSON(key, storedLog(log));
+    staleKept = false;
+    if (!stored) {
+      // Never leave the previous generation's log to be restored as this one.
+      sessionStore.removeItem(key);
+      staleKept = sessionStore.getItem(key) !== null;
+    }
   }
 
   function parentName(row) {
@@ -225,7 +241,12 @@ export function createGenLog(app) {
         lines.push(row.message || '送信していません');
         break;
       case 'unknown':
-        lines.push('再読み込みの時点で生成中・待機中だったため、結果は確認できていません');
+        // An exception of the page's own code (its reason is stored with
+        // the row), or a reload while the row was under way.
+        lines.push(row.message || '再読み込みの時点で生成中・待機中だったため、結果は確認できていません');
+        if (row.observed !== null && row.observed > 0) {
+          lines.push(`更新後の表示では、この親の下に新しいAIの要因が${row.observed}件あります（応答では確認できていません）`);
+        }
         break;
       default:
         break;
@@ -237,7 +258,7 @@ export function createGenLog(app) {
   }
 
   function summary() {
-    const totals = { created: 0, failed: 0, excludedCandidates: 0, allExcluded: 0, none: 0, skipped: 0, done: 0 };
+    const totals = { created: 0, failed: 0, excludedCandidates: 0, allExcluded: 0, none: 0, skipped: 0, unknown: 0, done: 0 };
     for (const row of log.rows) {
       if (row.state === 'created') totals.created += row.created;
       if (row.state === 'failed') totals.created += row.partialCreated;
@@ -249,6 +270,7 @@ export function createGenLog(app) {
       }
       if (row.state === 'no-candidates') totals.none += 1;
       if (row.state === 'skipped') totals.skipped += 1;
+      if (row.state === 'unknown') totals.unknown += 1;
       if (!['waiting', 'running'].includes(row.state)) totals.done += 1;
     }
     return totals;
@@ -260,6 +282,7 @@ export function createGenLog(app) {
     if (totals.failed) parts.push(`失敗した親 ${totals.failed}件`);
     if (totals.allExcluded) parts.push(`全候補除外の親 ${totals.allExcluded}件`);
     if (totals.none) parts.push(`候補0件の親 ${totals.none}件`);
+    if (totals.unknown) parts.push(`結果不明の親 ${totals.unknown}件`);
     if (totals.skipped) parts.push(`送信しなかった親 ${totals.skipped}件`);
     if (totals.excludedCandidates) parts.push(`品質チェック・重複で除外した候補 ${totals.excludedCandidates}件`);
     return parts.join('・');
@@ -331,7 +354,9 @@ export function createGenLog(app) {
     el('p', { class: 'edit-genlog__scope', 'data-gen-log-scope': true },
       'この結果は、このタブで画面を開き直しても残ります（分析ごとに直近の1回分）。保存するのは結果の区分・件数・親のID・理由・時刻だけで、要因の内容や入力中の内容は保存しません。正式な履歴ではありません。「閉じる」で消えます。'),
     stored ? null : el('p', { class: 'edit-genlog__storage', 'data-gen-log-storage': true },
-      'ブラウザの保存領域を使えないため、この画面を開き直すと結果は消えます。'));
+      staleKept
+        ? 'ブラウザの保存領域に保存も削除もできなかったため、この画面を開き直すと、この結果は消え、以前の生成の結果が表示されることがあります（その実行時刻で区別できます）。'
+        : 'ブラウザの保存領域を使えないため、この画面を開き直すと結果は消えます。'));
     target.replaceChildren(section);
   }
 

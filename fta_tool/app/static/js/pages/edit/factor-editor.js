@@ -41,7 +41,15 @@
 //       overwritten), so saving later does not put back an older value of
 //       a field nobody edited. When the values read differ from those the
 //       draft started from, 「保存済みの値が変わっています」 is shown while
-//       the draft lasts. The source is not registered again. A failure of this second read is told as such
+//       the draft lasts. The source is not registered again.
+//       A save and a second read never cross (PR-6 review, R1): the read
+//       is sent only after a save in flight has ended, and an answer that
+//       arrives after a save was started (by 保存 or 保存して移動 — both
+//       count in saveSource) may be older than that save: it is dropped
+//       and the factor is read again once the save has ended. So the
+//       fields, the saved values (what 取消 restores and what the next save
+//       is compared with) and the cache never go back to values from
+//       before a successful save. A failure of this second read is told as such
 //       (the values shown and when they were read stay), never as a failure
 //       of the first load.
 // - markGone(): the factor is no longer on the page (removed elsewhere) —
@@ -60,8 +68,10 @@ import {
   lastFailure,
   refresh as refreshUnsaved,
   registerSource,
+  saveCount,
   saveSource,
   subscribe,
+  whenSourceIdle,
 } from '../../common/unsaved.js';
 import { changedKeys, createFactorSource, sameSavedValues } from './factor-source.js';
 
@@ -395,15 +405,30 @@ export function createFactorEditor(app, node, { onSaved, onLoaded } = {}) {
   }
 
   // A second read of a loaded factor (after a generation): see the header.
-  async function readAgain() {
+  const MAX_REREADS = 3;
+  async function readAgain(attempt = 0) {
     if (getGenerationPhase() !== 'idle' || !source) return;
     loadSeq += 1;
     const seq = loadSeq;
     refetching = true;
     refetchError = '';
     render();
+    await whenSourceIdle(source); // a save in flight first: the server then has its values
+    if (closed || seq !== loadSeq) return;
+    const savesBefore = saveCount(source);
     const result = await requestJson(`/nodes/${nodeId}`);
     if (closed || seq !== loadSeq) return;
+    if (saveCount(source) !== savesBefore || isSourceSaving(source)) {
+      // A save was started while this was read: the answer may be older.
+      if (attempt < MAX_REREADS) {
+        readAgain(attempt + 1);
+        return;
+      }
+      refetching = false;
+      refetchError = '保存と重なったため、取り直した内容を使いませんでした';
+      render();
+      return;
+    }
     refetching = false;
     if (!result.ok || !result.data || Number(result.data.id) !== nodeId
       || Number(result.data.analysis_id) !== Number(analysisId)) {
@@ -431,13 +456,16 @@ export function createFactorEditor(app, node, { onSaved, onLoaded } = {}) {
   }
 
   // After a generation: read the factor shown (once; see the header).
-  function refetch() {
+  // pendingOnly (a preparation that ended without generating, R3): only
+  // what was held back — 取得待ち, or the values read before shown from the
+  // cache; a factor read normally is not read again.
+  function refetch({ pendingOnly = false } = {}) {
     if (closed || getGenerationPhase() !== 'idle') return;
-    if (phase === 'waiting' || phase === 'failed') {
+    if (phase === 'waiting' || (phase === 'failed' && !pendingOnly)) {
       load();
       return;
     }
-    if (phase === 'ready') readAgain();
+    if (phase === 'ready' && (!pendingOnly || fromCache)) readAgain();
     // 'loading': the first read is still under way; its answer is used.
   }
 

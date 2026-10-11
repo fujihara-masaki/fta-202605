@@ -235,12 +235,29 @@ export function createGeneration(app, { step1, title, log }) {
     if (current === run) current = null;
   }
 
-  // Back to idle without generating (a failed preparation or 取りやめる).
-  function stopPreparing(run) {
+  // Back to idle: the restrictions are lifted, held-back partial updates
+  // run, and the details held back for the factor shown are read — all of
+  // a generation's details after one ran, only those held back when nothing
+  // was generated (pendingOnly). Never for a run that is no longer the
+  // current one (a cancelled preparation must not touch a later generation).
+  function toIdle(run, { pendingOnly }) {
+    const mine = current === run || current === null;
     release(run);
+    if (!mine) return;
     phaseChanged('idle');
     app.setGenerating(false);
     renderStatus(null);
+    try {
+      refetchAfterGeneration({ pendingOnly });
+    } catch {
+      // the inspector shows its own state
+    }
+  }
+
+  // Back to idle without generating (a failed preparation or 取りやめる; PR-6
+  // review R3: the details of a factor chosen meanwhile are read now).
+  function stopPreparing(run) {
+    toIdle(run, { pendingOnly: true });
   }
 
   function failPreparing(run, reason, focus = null) {
@@ -415,6 +432,27 @@ export function createGeneration(app, { step1, title, log }) {
     }
   }
 
+  // No row stays 待機中・生成中 once the generation ends (PR-6 review, R4):
+  // a row whose request was sent but whose answer was not judged (an
+  // exception of the page's own code) is 結果不明 — the server may have
+  // created factors — and a row never sent is 送信していません. Rows with a
+  // result keep it.
+  function settleRows(entry) {
+    for (const row of entry.rows) {
+      if (row.state === 'running') {
+        row.state = 'unknown';
+        row.message = entry.jsError
+          ? '画面の処理中にエラーが発生したため、この親の結果を確認できていません（要求は送信済みで、サーバーで作成された可能性があります。保存済みの内容を確かめてください）'
+          : 'この親の結果を確認できていません（要求は送信済みです）';
+      } else if (row.state === 'waiting') {
+        row.state = 'skipped';
+        row.message = entry.jsError
+          ? '画面の処理中にエラーが発生したため、送信していません'
+          : '送信していません';
+      }
+    }
+  }
+
   // After the update: what the data it brought says about each row.
   function checkRows(run, entry, applied) {
     entry.update = applied ? 'applied' : 'failed';
@@ -428,7 +466,7 @@ export function createGeneration(app, { step1, title, log }) {
         row.state = 'parent-gone';
         continue;
       }
-      if (row.state === 'created' && parentThere) {
+      if ((row.state === 'created' || row.state === 'unknown') && parentThere) {
         const before = run.snapshot.get(row.parentId === null ? 'top' : row.parentId) || new Set();
         const fresh = app.model.nodes.filter((node) => node.ai && !before.has(node.id)
           && (row.parentId === null ? node.parentId === null && node.level === 1 : node.parentId === row.parentId));
@@ -439,25 +477,33 @@ export function createGeneration(app, { step1, title, log }) {
   }
 
   // J-04: the summary, as a warning when something failed beside created
-  // factors.
+  // factors. Rows whose result is unknown (R4) are never told as success or
+  // as 候補0件.
   function notifySummary(run, entry) {
     const totals = log.summary();
     const label = run.label;
     const failed = totals.failed;
+    const unknown = totals.unknown;
     const many = entry.rows.length > 1;
-    if (totals.created > 0 && failed > 0) {
+    if (totals.created > 0 && unknown > 0) {
+      notify(`${label}：${totals.created}件作成しました。${failed ? `${failed}件の親で失敗し、` : ''}`
+        + `${unknown}件の親は結果を確認できていません（詳細は生成ログ）`, { type: 'warning' });
+    } else if (totals.created > 0 && failed > 0) {
       notify(many
         ? `${label}：${totals.created}件作成、${failed}件の親で失敗しました（詳細は生成ログ）`
         : `${label}：${totals.created}件作成しましたが、失敗もありました（詳細は生成ログ）`, { type: 'warning' });
     } else if (totals.created > 0) {
       const note = totals.excludedCandidates ? `（うち候補${totals.excludedCandidates}件は品質チェック・重複で除外）` : '';
       notify(`${label}：${totals.created}件作成しました${note}`, { type: 'success' });
+    } else if (unknown > 0) {
+      notify(`${label}：作成を確認できませんでした（${failed ? `${failed}件の親で失敗、` : ''}`
+        + `${unknown}件の親は結果不明。詳細は生成ログ）`, { type: 'error' });
     } else if (failed > 0) {
       notify(`${label}：作成できませんでした（${many ? `${failed}件の親で失敗。` : ''}詳細は生成ログ）`, { type: 'error' });
     } else if (totals.allExcluded > 0) {
       const reasons = [...new Set(entry.rows.flatMap((row) => (row.state === 'all-excluded' ? row.reasons : [])))];
       notify(`${label}：生成候補はすべて品質チェックなどで除外されました${reasons.length ? `（主な理由：${reasons.join('、')}）` : ''}`, { type: 'warning' });
-    } else if (totals.skipped > 0) {
+    } else if (totals.skipped > 0 && totals.none === 0) {
       notify(`${label}：送信できる親がなかったため、生成していません（詳細は生成ログ）`, { type: 'warning' });
     } else {
       notify(`${label}：生成候補がありませんでした（LLMが要因を返しませんでした）`, { type: 'warning' });
@@ -466,6 +512,7 @@ export function createGeneration(app, { step1, title, log }) {
 
   async function finish(run, entry) {
     if (pageHiding) return; // the page is going away: nothing to show or store
+    settleRows(entry); // before anything is drawn (drawing may fail too)
     try {
       phaseChanged('finishing');
       entry.status = 'finishing';
@@ -484,17 +531,17 @@ export function createGeneration(app, { step1, title, log }) {
       notifySummary(run, entry);
       if (entry.jsError) notify('生成の処理中に画面のエラーが発生しました。生成ログの内容が一部欠けている可能性があります。', { type: 'error' });
     } catch {
+      entry.jsError = true;
+      entry.status = 'done';
+      if (!entry.endedAt) entry.endedAt = new Date().toISOString();
+      try {
+        log.changed(); // stored first: a reload shows the settled rows
+      } catch {
+        // the log could not be drawn; it was stored if the storage works
+      }
       notify('生成の結果を反映する処理でエラーが発生しました。ページを再読み込みしてください。', { type: 'error' });
     } finally {
-      release(run);
-      phaseChanged('idle');
-      app.setGenerating(false);
-      renderStatus(null);
-      try {
-        refetchAfterGeneration();
-      } catch {
-        // the inspector shows its own state
-      }
+      toIdle(run, { pendingOnly: false });
     }
   }
 
@@ -506,6 +553,7 @@ export function createGeneration(app, { step1, title, log }) {
       run.index = 0;
       run.snapshot = new Map(prepared.parents.map((parentId) => [
         parentId === null ? 'top' : parentId, childIds(app.model, parentId)]));
+      run.logBegun = true;
       entry = log.begin({
         level: run.level, kind: run.request.kind, parents: prepared.parents, excludedParents: prepared.excluded,
       });
@@ -522,11 +570,18 @@ export function createGeneration(app, { step1, title, log }) {
       if (entry) {
         await finish(run, entry);
       } else {
-        release(run);
-        phaseChanged('idle');
-        app.setGenerating(false);
-        renderStatus(null);
-        notify('生成を開始できませんでした（画面の処理でエラーが発生しました）。', { type: 'error' });
+        // An exception before the log began (or while it began): nothing
+        // was sent. A log that was begun and stored for it is dropped, so a
+        // reload never shows rows that were never sent.
+        if (run.logBegun) {
+          try {
+            log.close();
+          } catch {
+            // the storage was cleared first (genlog.js close)
+          }
+        }
+        toIdle(run, { pendingOnly: true });
+        notify('生成を開始できませんでした（画面の処理でエラーが発生しました。生成の要求は送っていません）。', { type: 'error' });
       }
     }
   }

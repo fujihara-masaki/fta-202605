@@ -236,3 +236,49 @@ def test_E_G06_storage_that_cannot_be_used_keeps_the_page_working(page, e2e_serv
         page.locator(f'[data-role="work-item"][data-node-id="{a}"] [data-value="no"]').click()
         expect(page.locator("#ui-toasts .ui-toast[data-toast-type='success']").filter(has_text="評価を更新しました")).to_be_visible()
     assert e2e_server.judgement(a) == ("no" if trouble != "broken" else "yes")
+
+
+@SINGLE
+@pytest.mark.parametrize("trouble", ["write-fails", "write-and-remove-fail"])
+def test_E_G06_a_failed_write_never_brings_back_the_previous_log(page, e2e_server, trouble):
+    """R6: a log of an earlier generation is stored; the next one cannot be
+    written (a full storage). The earlier one is removed, so a reload does
+    not show it as the latest result. When it cannot be removed either, the
+    page says that an earlier result may come back (the limit)."""
+    analysis_id, a, b = setup(e2e_server, f"保存の失敗と古いログ：{trouble}")
+    open_edit(page, analysis_id)
+    generate(page)  # the earlier log: 二次要因の通常生成, stored
+    assert json.loads(stored(page, analysis_id))["kind"] == "normal"
+    page.evaluate("""(both) => {
+      const set = Storage.prototype.setItem;
+      const remove = Storage.prototype.removeItem;
+      Storage.prototype.setItem = function (key, value) {
+        if (String(key).startsWith('fta:genlog:')) throw new DOMException('full', 'QuotaExceededError');
+        return set.call(this, key, value);
+      };
+      if (both) {
+        Storage.prototype.removeItem = function (key) {
+          if (String(key).startsWith('fta:genlog:')) throw new DOMException('blocked', 'SecurityError');
+          return remove.call(this, key);
+        };
+      }
+    }""", trouble == "write-and-remove-fail")
+    page.locator(f'[data-group-parent="{a}"] .edit-group__header').get_by_role("button", name="AIで追加生成").click()
+    wait_phase(page, "idle", timeout=15)
+    log = gen_log(page)
+    expect(log).to_contain_text("生成ログ：二次要因の追加生成")
+    note = log.locator("[data-gen-log-storage]")
+    if trouble == "write-fails":
+        expect(note).to_have_text("ブラウザの保存領域を使えないため、この画面を開き直すと結果は消えます。")
+        assert stored(page, analysis_id) is None  # the earlier log was removed
+        page.reload()
+        expect(page.locator('.edit-steps [aria-current="step"]')).to_have_count(1)
+        expect(gen_log(page)).to_have_count(0)
+    else:
+        expect(note).to_contain_text("保存も削除もできなかったため")
+        expect(note).to_contain_text("以前の生成の結果が表示されることがあります")
+        page.reload()
+        step_button(page, 3).click()
+        # The limit, as the page said: the earlier (normal) generation comes back.
+        expect(gen_log(page)).to_contain_text("生成ログ：二次要因の通常生成")
+        expect(gen_log(page).locator("[data-gen-log-restored]")).to_be_visible()

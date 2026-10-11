@@ -125,8 +125,18 @@ $run = "C:\fta-check\runs\{0}-{1}-pr6-chrome" -f $sha.Substring(0,7), (Get-Date 
 Test-Path $run                                   # False であること
 New-Item -ItemType Directory -Path "$run\work", "$run\logs", "$run\screenshots" | Out-Null
 Test-Path "$src\.env"                            # False であること
+# 設定ファイルは BOM なしの UTF-8 で書く。Windows PowerShell 5.1 の Set-Content -Encoding UTF8 は
+# BOM を付け、スタブ（UTF-8 で読んで json.loads）が読めずに既定の create に戻るため使わない。
+$noBom = New-Object System.Text.UTF8Encoding($false)
+function Set-StubControl([string]$json) { [System.IO.File]::WriteAllText("$run\work\stub_control.json", $json, $noBom) }
+function Show-StubControl {
+  # スタブと同じ読み方（UTF-8 で読み、json.loads）で、mode・delay_seconds・by_parent を表示する
+  & $py -c "import json,pathlib,sys; d=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')); print('mode=%s delay_seconds=%s by_parent=%s' % (d.get('mode'), d.get('delay_seconds'), ascii(d.get('by_parent'))))" "$run\work\stub_control.json"
+  [System.IO.File]::ReadAllBytes("$run\work\stub_control.json")[0..2] -join ' '   # 先頭3バイト
+}
 # 遅延 20 秒（親ごと）。「要因B」を親にした要求だけ失敗させる（部分失敗の通知の確認用）。
-'{"mode": "delay", "delay_seconds": 20, "by_parent": {"要因B": "error"}}' | Set-Content -Encoding UTF8 "$run\work\stub_control.json"
+Set-StubControl '{"mode": "delay", "delay_seconds": 20, "by_parent": {"要因B": "error"}}'
+Show-StubControl
 $env:PYTHONPATH = $src
 $env:FTA_E2E_WORKDIR = "$run\work"
 $server = Start-Process -FilePath $py -PassThru -NoNewWindow `
@@ -139,7 +149,9 @@ Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8001/ | Select-Object Status
 
 - ブラウザを最大化し、`http://127.0.0.1:8001/analyses/new` で分析を1つ作る（タイトル「PR6確認」、頂上事象「決済処理が停止した」）。編集画面のヘッダーに「AI: e2e-stub」と出ること。
 - 「② 一次要因」の「手動追加」で一次要因「要因A」「要因B」「要因C」を追加し、A と B を Yes にする（C は未評価のまま）。
-- 遅延と失敗の設定は `"$run\work\stub_control.json"` を書き換えると、次の要求から変わります（サーバーの再起動は不要）。例：遅延をやめる `'{"mode": "create"}' | Set-Content -Encoding UTF8 "$run\work\stub_control.json"`。
+- `Show-StubControl` の表示が `mode=delay delay_seconds=20 by_parent={'\u8981\u56e0B': 'error'}`（`\u8981\u56e0B` は「要因B」）で、先頭3バイトが `123 34 109`（`{"m`）であること。`239 187 191` で始まる場合は BOM 付きで、スタブは設定を読めずに既定の create で動くため、確認を始めずに書き直す。Python がエラー（`JSONDecodeError` など）を出した場合も同じ。
+- 遅延と失敗の設定は `Set-StubControl` で書き換えると、次の要求から変わります（サーバーの再起動は不要）。書き換えた後も `Show-StubControl` で確かめる。例：遅延をやめる `Set-StubControl '{"mode": "create"}'; Show-StubControl`（`mode=create delay_seconds=None by_parent=None`）。
+- この書き込みと確認の手順は、開発環境（Linux の Python）で同じ読み方の確認（BOM 付きでは `json.loads` が失敗し、BOM なしでは読めること）をしただけで、**Windows PowerShell 5.1・7 では実行していません**。実機での結果を記録してください。
 - Edge の回では Chrome の回のフォルダ・DB を使いません（上の `$run` を新しく作る）。
 
 ### 5.2 実操作1：下書きがない状態での生成中の F5
@@ -175,13 +187,13 @@ PR-6 で変えた入力欄は、生成中のヘッダーのタイトル（保存
 
 ### 5.5 実操作3：別のタブで開いたときのログ（開き方ごと）
 
-自動 E2E（E-G06）は「アドレスを入力した新しいタブ相当（opener なし）」と「`window.open` で開いたタブ（保存領域が引き継がれる）」を確かめています。ブラウザの機能でのタブの開き方は、ここで確かめます。生成ログが出ているタブで、次の開き方ごとに、新しいタブの③に生成ログが**出るか出ないか**を記録します（期待：出ない。出た場合は不具合ではなく既知の制限の候補として記録し、画面のコピーを残す）。
+自動 E2E（E-G06）は「アドレスを入力した新しいタブ相当（opener なし）」と「`window.open` で開いたタブ（保存領域が引き継がれる）」を確かめています。ブラウザの機能でのタブの開き方は、ここで確かめます。生成ログが出ているタブで、次の開き方ごとに、新しいタブの③に生成ログが**出るか出ないか**を記録します（期待：出ない。出た場合は、計画 第8.6節の受入条件6「別タブでは出ない」との**差異**として、開き方・ブラウザ・画面のコピーを記録する。修正するか、制約として採用するかは利用者が判断する。既知の制限として受け入れ済みとは記録しない）。
 
 | 開き方 | 記録 |
 |---|---|
 | 新しいタブを開き、アドレス欄に同じ分析の URL を入力 | 出る／出ない |
 | 構造ナビなどのリンクではなく、ヘッダーの「分析一覧」を Ctrl+クリック → 一覧から同じ分析を開く | 出る／出ない |
-| タブを右クリック →「タブを複製」 | 出る／出ない（sessionStorage と window.name が複製されることがある） |
+| タブを右クリック →「タブを複製」 | 出る／出ない（ブラウザが sessionStorage と window.name を複製すると出る可能性がある。開発環境では未確認） |
 
 ### 5.6 後片付けと記録
 
