@@ -1,5 +1,6 @@
 import json
 import logging
+import mimetypes
 import os
 import pathlib
 import time
@@ -13,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from . import crud, models, schemas
+from . import crud, detail_view, models, schemas
 from .database import SessionLocal, engine, get_db
 from .services import generation_config
 from .services.ai_provider import GeneratedFactor, get_ai_provider
@@ -164,6 +165,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="FTA分析支援ツール", lifespan=lifespan)
 
+# The screens load their scripts as ES modules, which browsers only run when
+# served with a JavaScript MIME type. On Windows, Python's mimetypes table is
+# read from the registry and may map ".js" to "text/plain"; pin the standard
+# type so static files are served the same way on every OS.
+mimetypes.add_type("text/javascript", ".js")
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
@@ -173,7 +179,13 @@ templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request, db: Session = Depends(get_db)):
     analyses = crud.get_analyses(db)
-    return templates.TemplateResponse("index.html", {"request": request, "analyses": analyses})
+    # Factor count per analysis for the delete confirmation (J-13): one
+    # grouped query; the list does not show it as a column.
+    factor_counts = crud.count_nodes_by_analysis(db)
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "analyses": analyses, "factor_counts": factor_counts},
+    )
 
 
 @app.get("/analyses/new", response_class=HTMLResponse)
@@ -215,24 +227,14 @@ def analysis_detail(request: Request, analysis_id: int, db: Session = Depends(ge
         raise HTTPException(status_code=404, detail="分析が見つかりません")
 
     nodes = crud.get_nodes_by_analysis(db, analysis_id)
-
-    # Build tree structure for template
-    node_map = {n.id: n for n in nodes}
-    # level1: top level factors, grouped by parent
-    level1_nodes = [n for n in nodes if n.level == 1]
-    level2_nodes = [n for n in nodes if n.level == 2]
-    level3_nodes = [n for n in nodes if n.level == 3]
-
-    # Build parent->children dict for levels
-    children_of: dict[int, list] = {}
-    for node in nodes:
-        if node.parent_id:
-            children_of.setdefault(node.parent_id, []).append(node)
+    # Structure, parent-link categories, permissions and the embedded
+    # summary of the edit screen (app/detail_view.py).
+    view = _edit_view(db, analysis, nodes)
 
     ai_provider_name = os.environ.get("AI_PROVIDER", "mock")
 
-    # Analysis context (system/incident) for the collapsible editor near the
-    # top event. demo_points and unknown keys are kept server-side only.
+    # Analysis context (system/incident) for the editor of step ①.
+    # demo_points and unknown keys are kept server-side only.
     context_data = _parse_analysis_context(analysis.analysis_context, analysis_id)
     system_context = context_data.get("system_context")
     incident_context = context_data.get("incident_context")
@@ -244,15 +246,38 @@ def analysis_detail(request: Request, analysis_id: int, db: Session = Depends(ge
             "analysis": analysis,
             "system_context": system_context if isinstance(system_context, str) else "",
             "incident_context": incident_context if isinstance(incident_context, str) else "",
-            "nodes": nodes,
-            "level1_nodes": level1_nodes,
-            "level2_nodes": level2_nodes,
-            "level3_nodes": level3_nodes,
-            "children_of": children_of,
-            "node_map": node_map,
             "ai_provider_name": ai_provider_name,
+            "view": view,
         },
     )
+
+
+def _edit_view(db: Session, analysis, nodes) -> detail_view.DetailView:
+    """View data of the edit screen (plan 3.4, 5.9.5): categories of the
+    parent links, deletion and parent permissions, the embedded summary.
+
+    The two read-only lookups of crud.get_cross_analysis_links tell a missing
+    parent from a parent in another analysis and find factors of other
+    analyses below this one. If they fail the screen still opens; nothing is
+    then offered for deletion (the user's decision of 2026-09-29, 判断2).
+    """
+    try:
+        parents_elsewhere, children_elsewhere = crud.get_cross_analysis_links(db, analysis.id)
+        links = detail_view.CrossAnalysisLinks(parents_elsewhere, children_elsewhere)
+    except Exception:  # noqa: BLE001 - the page still opens; deletion is disabled
+        # Nothing to undo: the lookups only read, and the session is closed at
+        # the end of the request. A rollback here would expire the analysis
+        # and every factor already read: each would be read again one by one,
+        # and the page would fail if one had been removed meanwhile.
+        logger.exception("親子関係の確認に必要な情報を取得できませんでした | analysis_id=%s", analysis.id)
+        links = None
+    factor_counts = {
+        "1": _get_factor_count(1),
+        "2": _get_factor_count(2),
+        "3": _get_factor_count(3),
+        "additional": _get_factor_count("additional"),
+    }
+    return detail_view.build_detail_view(analysis, nodes, links, factor_counts=factor_counts)
 
 
 @app.post("/analyses/{analysis_id}/title")

@@ -1,0 +1,136 @@
+/* ===== Analysis list (A) ===== */
+
+.list-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-5) 120px;
+}
+
+.list-page__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.list-page__title {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  line-height: 1.3;
+}
+.list-page__title:focus {
+  outline: none;
+}
+.list-page__title:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+.list-page__meta {
+  margin-top: var(--space-1);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* ----- Table columns ----- */
+.list-table__title-col {
+  min-width: 240px;
+  width: 30%;
+}
+.list-table__top-event-col {
+  min-width: 200px;
+}
+.list-table__date-col {
+  width: 1%;
+}
+.list-table__actions-col {
+  width: 1%;
+}
+.list-table__date {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+.list-table__top-event {
+  color: var(--color-text-muted);
+}
+.list-table__clamp {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+.list-table__empty-value {
+  color: var(--color-text-muted);
+}
+
+/* Title cell: link + ✎, or the inline rename editor */
+.title-view {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+.title-view[hidden] {
+  display: none;
+}
+.title-view__link {
+  padding-top: 4px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.rename-editor {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  gap: var(--space-1) var(--space-2);
+  align-items: center;
+}
+.rename-editor__actions {
+  display: flex;
+  gap: var(--space-1);
+}
+.rename-editor__help,
+.rename-editor__error {
+  grid-column: 1 / -1;
+}
+.rename-editor__error[hidden] {
+  display: none;
+}
+
+/* Actions cell: 編集 / 出力▾ / 削除 on one line */
+.list-table__actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ----- Empty state ----- */
+.list-empty {
+  padding: 56px var(--space-5);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  text-align: center;
+}
+.list-empty[hidden] {
+  display: none;
+}
+.list-empty__title {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+}
+.list-empty__text {
+  max-width: 560px;
+  margin: var(--space-2) auto var(--space-5);
+  color: var(--color-text-muted);
+}
+.list-empty__title:focus {
+  outline: none;
+}
+.list-empty__title:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}

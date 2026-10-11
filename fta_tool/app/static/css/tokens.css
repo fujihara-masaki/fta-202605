@@ -1,0 +1,70 @@
+/* ===== Design tokens (light theme only: J-27) =====
+ * Colors, spacing and type used by the redesigned screens and the shared
+ * chrome (header, notifications, dialogs, menus). Fonts are the device's own
+ * fonts only; no web font is downloaded (J-28).
+ */
+:root {
+  /* Surfaces */
+  --color-bg: #f4f6f8;
+  --color-surface: #ffffff;
+  --color-surface-muted: #eef2f6;
+  --color-surface-hover: #f6f9fc;
+  --color-border: #d3dae1;
+  --color-border-strong: #72808d;
+
+  /* Text (all >= 4.5:1 on --color-surface) */
+  --color-text: #1d2b38;
+  --color-text-muted: #51606e;
+  --color-text-inverse: #ffffff;
+
+  /* Brand / actions */
+  --color-primary: #1f6aa8;
+  --color-primary-hover: #185587;
+  --color-primary-soft: #e6f0f9;
+  --color-danger: #b3261e;
+  --color-danger-hover: #8f1e18;
+  --color-danger-soft: #fcebe9;
+  --color-success: #1d7a45;
+  --color-success-soft: #e5f4eb;
+  --color-warning: #8f5300;
+  --color-warning-soft: #fff3de;
+  --color-focus: #0b57d0;
+
+  /* Header */
+  --color-header-bg: #1a2a3a;
+  --color-header-text: #ffffff;
+  --color-header-link: #cfe0ef;
+  --header-height: 52px;
+
+  /* Type */
+  --font-sans: "BIZ UDPGothic", "Yu Gothic UI", "Meiryo", "Hiragino Sans",
+    "Hiragino Kaku Gothic ProN", sans-serif;
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+  --line-height: 1.6;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* Shape */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --shadow-sm: 0 1px 3px rgba(20, 35, 50, 0.08);
+  --shadow-md: 0 4px 14px rgba(20, 35, 50, 0.14);
+  --shadow-lg: 0 12px 32px rgba(20, 35, 50, 0.24);
+
+  /* Layers (dialogs use the browser's top layer instead) */
+  --z-header: 100;
+  --z-menu: 150;
+  --z-toast: 400;
+  --z-skip-link: 500;
+}
