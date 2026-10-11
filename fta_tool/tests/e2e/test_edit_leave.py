@@ -11,8 +11,11 @@ own confirmation only (reload: dismissed keeps the input, accepted leaves);
 nothing unsaved: no question at all.
 
 E-E20 — the save coordinator's contract (js/common/unsaved.js), with a
-factor source made by js/pages/edit/factor-source.js (the inspector that will
-use it is PR-5: here the test registers it, as PR-5's inspector will):
+factor source made by js/pages/edit/factor-source.js that the test registers
+itself, as a stand-in (the page is opened on the top event, so the real
+inspector has no editor and no source of its own). Since PR-5 the real
+inspector uses the same function; E-E14〜E-E18 (test_edit_inspector.py,
+test_edit_switch.py) check it through the inspector's own controls:
 validation of every source before anything is sent, the order 要因 → 頂上事象 →
 参考情報, the target fixed when editing started (whatever is selected later),
 a failure that does not stop the other sources, 再試行 for the failed ones
@@ -43,6 +46,17 @@ from tests.e2e.edit_helpers import (
 from tests.e2e.support import expect, record_dialogs
 
 pytestmark = pytest.mark.e2e
+
+
+def wait_for_phase(page, phase: str, timeout: float = 20.0) -> None:
+    """Poll the save coordinator's generation phase, letting the page run."""
+    import time
+    deadline = time.monotonic() + timeout
+    script = "async () => (await import('/static/js/common/unsaved.js')).getGenerationPhase()"
+    while page.evaluate(script) != phase:
+        if time.monotonic() > deadline:
+            raise AssertionError(f"the generation phase did not become {phase}")
+        page.wait_for_timeout(50)
 
 
 def expect_stays(page, e2e_server, analysis_id) -> None:
@@ -243,7 +257,8 @@ def test_E_E12_title_being_saved_asks_the_browser_too(page, e2e_server):
 REGISTER_FACTOR = """async ([analysisId, nodeId, title]) => {
   const unsaved = await import('/static/js/common/unsaved.js');
   const { createFactorSource } = await import('/static/js/pages/edit/factor-source.js');
-  // A stand-in for PR-5's inspector draft: the factor whose editing started.
+  // A stand-in for the inspector's draft (PR-5's editor uses the same
+  // function): the factor whose editing started.
   const draft = { title, memo: '契約の確認のメモ' };
   const app = { analysisId, gone: false };
   const source = createFactorSource({
@@ -259,6 +274,9 @@ REGISTER_FACTOR = """async ([analysisId, nodeId, title]) => {
 }"""
 
 
+TOP = "#sel=top&step=1&view=work"
+
+
 def register_factor(page, analysis_id, node_id, title):
     return page.evaluate(REGISTER_FACTOR, [analysis_id, node_id, title])
 
@@ -267,7 +285,7 @@ def register_factor(page, analysis_id, node_id, title):
 def test_E_E20_every_source_is_validated_before_anything_is_sent(page, e2e_server):
     analysis_id = e2e_server.create_analysis("契約：検査", top_event="頂上")
     a = e2e_server.add_level1(analysis_id, "一次要因A")
-    open_edit(page, analysis_id)
+    open_edit(page, analysis_id, TOP)  # no editor of the real inspector
     sent = post_paths(page)
     register_factor(page, analysis_id, a, "一次要因A")
     page.evaluate("() => { window.__e2eFactorDraft.title = '  '; }")  # invalid: required
@@ -289,7 +307,7 @@ def test_E_E20_order_and_the_target_fixed_when_editing_started(page, e2e_server)
     analysis_id = e2e_server.create_analysis("契約：順番と対象", top_event="頂上")
     a = e2e_server.add_level1(analysis_id, "一次要因A")
     b = e2e_server.add_level1(analysis_id, "一次要因B")
-    open_edit(page, analysis_id)
+    open_edit(page, analysis_id, TOP)  # no editor of the real inspector
     sent = post_paths(page)
     target = register_factor(page, analysis_id, a, "一次要因A")
     assert target == {"analysisId": analysis_id, "nodeId": a}
@@ -313,7 +331,7 @@ def test_E_E20_order_and_the_target_fixed_when_editing_started(page, e2e_server)
 def test_E_E20_a_failure_does_not_stop_the_others_and_retry_sends_it_only(page, e2e_server, page_watch):
     analysis_id = e2e_server.create_analysis("契約：一部失敗", top_event="頂上")
     a = e2e_server.add_level1(analysis_id, "一次要因A")
-    open_edit(page, analysis_id)
+    open_edit(page, analysis_id, TOP)  # no editor of the real inspector
     page_watch.allow_console_error(r"status of 500")
     sent = post_paths(page)
     route = f"**/nodes/{a}/update"
@@ -403,7 +421,9 @@ def test_E_E20_nothing_is_accepted_while_a_generation_runs(page, e2e_server):
 
     # Once the generation and its update are done, leaving works again.
     expect(step_panel(page, 2).locator('[data-role="work-item"]')).to_have_count(4, timeout=15000)
-    page.wait_for_function("async () => (await import('/static/js/common/unsaved.js')).getGenerationPhase() === 'idle'")
+    # (PR-5: polled here — a wait_for_function with an async predicate gets a
+    # Promise, which is truthy at once, so it never waited.)
+    wait_for_phase(page, "idle")
     page.keyboard.press("Enter")  # the title, now
     expect(page.locator("#analysisTitle")).to_have_text("生成中のタイトル")
     leave_link(page).click()

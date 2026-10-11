@@ -1,9 +1,10 @@
 {#- Inspector (right pane). js/pages/edit/inspector.js fills it for the
     selected factor or the top event: breadcrumb, tags, parent-link notice,
-    judgement, quality warning, the saved details (read from GET /nodes/{id}
-    when it opens; display only in PR-3), children and the actions that
-    still call the legacy functions (詳細を編集, AIで追加生成, 手動追加,
-    削除). Never replaced by a partial update. -#}
+    judgement, quality warning, the factor's editor (PR-5: read from
+    GET /nodes/{id} when it opens, saved with 保存; js/pages/edit/
+    factor-editor.js), children (AIで追加生成 still the legacy function,
+    手動追加 the dialog) and 削除 (the dialog). Never replaced by a partial
+    update: the editor and its draft stay. -#}
 <aside class="edit-pane edit-inspector" id="edit-inspector" aria-labelledby="edit-inspector-heading" tabindex="-1">
   <h2 class="edit-pane__heading" id="edit-inspector-heading">インスペクタ</h2>
   <div class="edit-pane__scroll" data-scroll="inspector">

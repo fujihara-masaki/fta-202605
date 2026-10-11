@@ -1,17 +1,25 @@
-// Inspector (right pane), display only in PR-3 (plan 7.2): breadcrumb,
-// tags (J-14), the parent-link notice (J-25), judgement (saved at once),
-// quality warning (UI-17), the saved details, children, and the actions that
-// still call the legacy functions of app.js (詳細を編集, AIで追加生成,
-// 手動追加, 削除). Deletion and child actions are offered as the server
-// computed them (app/detail_view.py): a disabled button shows its reason.
+// Inspector (right pane): breadcrumb, tags (J-14), the parent-link notice
+// (J-25), judgement (saved at once), quality warning (UI-17), the factor's
+// editor (PR-5: edit/factor-editor.js — title, description, memo and the
+// direct-cause fields, saved with 保存), children with AI additional
+// generation (still the legacy function of app.js until PR-6) and the manual
+// add dialog, and 削除 (the in-page dialog, edit/delete-dialog.js). Deletion
+// and child actions are offered as the server computed them
+// (app/detail_view.py): a disabled button shows its reason.
 //
-// The details come from GET /nodes/{id} when the inspector opens (plan
-// 3.4-4) — never from what an earlier selection showed: the fields are
-// cleared first, and only the answer for the latest selection is used.
+// The editor holds the draft. renderInspector() draws the rest again (after
+// a judgement, a save, a partial update) and puts the same editor element
+// back, with the focus and the text selection where they were, so neither
+// a partial update nor a new drawing drops the input. A new editor (and a
+// new GET /nodes/{id}) is made only when another factor is shown, i.e. after
+// the switch was confirmed (edit.js requestSelect, R-01); the old editor's
+// source leaves the save coordinator only then. When the edited factor is no
+// longer in the data (removed elsewhere) while it has a draft, the editor
+// stays with its input and the reason it cannot be saved (plan 5.2).
 // Text is always inserted as text (common/dom.js).
 
 import { el } from '../../common/dom.js';
-import { requestJson } from '../../common/http.js';
+import { createFactorEditor } from './factor-editor.js';
 import {
   ancestry,
   childrenOf,
@@ -23,24 +31,8 @@ import {
   levelName,
 } from './model.js';
 
-const DIRECT_CAUSE_FULL = {
-  unknown: '未評価',
-  likely: '直接要因の可能性が高い',
-  unlikely: '直接要因の可能性が低い',
-  direct: '直接要因',
-  not_direct: '直接要因でない',
-};
-
-const DETAIL_FIELDS = [
-  ['description', '説明'],
-  ['memo', 'メモ'],
-  ['direct_cause_status', '直接要因評価'],
-  ['direct_cause_comment', '評価コメント'],
-  ['evidence', '根拠'],
-  ['prevention_idea', '再発防止策の候補'],
-];
-
-let sequence = 0;
+let editor = null; // the editor of the factor shown, or null
+let editorHooks = {};
 
 function body() {
   return document.querySelector('[data-inspector-body]');
@@ -146,7 +138,7 @@ function topContent(app) {
         roots.length
           ? actionButton(app, '一次要因を追加生成', { 'data-action': 'legacy-generate-additional', 'data-level': '1' }, { generate: true })
           : null,
-        actionButton(app, '一次要因を手動追加', { 'data-action': 'legacy-add', 'data-level': '1' })),
+        actionButton(app, '一次要因を手動追加', { 'data-action': 'add', 'data-level': '1' })),
     ]),
   ];
 }
@@ -162,21 +154,14 @@ function notice(app, node) {
       }, root.title)));
     }
   }
-  lines.push(el('p', {}, 'この要因を親にした生成・手動追加はできません。内容の確認と「詳細を編集」での保存はできます。'));
+  lines.push(el('p', {}, 'この要因を親にした生成・手動追加はできません。内容の確認と、このインスペクタでの内容の保存はできます。'));
   return el('div', { class: 'edit-inspector__notice', role: 'note', 'data-integrity-notice': true }, lines);
 }
 
-function detailsSection(app, node) {
-  const list = el('dl', { class: 'edit-details', 'data-details': true, hidden: true },
-    DETAIL_FIELDS.map(([key, label]) => [el('dt', {}, label), el('dd', { 'data-detail': key })]));
-  return section('要因の内容', [
-    el('p', { class: 'edit-inspector__status', role: 'status', 'data-detail-status': true }, '保存されている内容を読み込んでいます…'),
-    list,
-    el('div', { class: 'edit-inspector__actions' },
-      actionButton(app, '詳細を編集', { 'data-action': 'legacy-detail', 'data-node-id': node.id })),
-    el('p', { class: 'edit-inspector__reason' },
-      '「詳細を編集」で、タイトル・説明・メモ・直接要因評価・評価コメント・根拠・再発防止策を編集できます。'),
-  ], { 'data-inspector-details': true });
+// The editor of the factor (edit/factor-editor.js); the same element is put
+// back every time the inspector is drawn again.
+function detailsSection(current) {
+  return section('要因の内容', [current.element], { 'data-inspector-details': true });
 }
 
 // Children of the factor (links select them), and — for 一次・二次 — AI
@@ -195,33 +180,59 @@ function childrenSection(app, node) {
         'data-action': 'legacy-generate-additional', 'data-parent-id': node.id, 'data-level': level,
       }, { blocked: reason, generate: true, describedBy }),
       actionButton(app, '手動追加', {
-        'data-action': 'legacy-add', 'data-parent-id': node.id, 'data-level': level,
+        'data-action': 'add', 'data-parent-id': node.id, 'data-level': level,
       }, { blocked: reason, describedBy })));
     if (reason) content.push(el('p', { class: 'edit-inspector__reason', id: 'inspector-children-reason' }, reason));
   }
   return section(`子要因（${items.length}件）`, content, { 'data-inspector-children': true });
 }
 
-// 削除 as the server computed it for the data of this page (判断2); the
-// legacy deleteNode checks the same result again before it asks or sends.
+// 削除 as the server computed it for the data of this page (判断2): the
+// number of descendants is the server's walk of what the delete API removes
+// (delete.scope counts the factor itself), never the rows shown here. The
+// dialog (edit/delete-dialog.js) checks the same answer again when it opens
+// and before it sends.
 function deleteSection(app, node) {
   const allowed = Boolean(node.delete && node.delete.allowed);
   const reason = allowed ? '' : (node.delete && node.delete.reason) || '削除できるか確認できていません。';
+  const scope = allowed ? Number(node.delete.scope) : NaN;
+  let text = reason;
+  if (allowed) {
+    if (Number.isInteger(scope) && scope > 1) {
+      text = `子孫の要因 ${scope - 1}件もすべて削除されます（画面を表示した時点の件数）。この操作は取り消せません。`;
+    } else if (scope === 1) {
+      text = 'この要因に子孫の要因はありません（画面を表示した時点）。削除は取り消せません。';
+    } else {
+      text = '子孫の要因もすべて削除されます。この操作は取り消せません。';
+    }
+  }
   return el('section', { class: 'edit-inspector__section', 'data-inspector-delete': true },
     el('div', { class: 'edit-inspector__actions' },
-      actionButton(app, 'この要因を削除', { 'data-action': 'legacy-delete', 'data-node-id': node.id },
+      actionButton(app, 'この要因を削除', { 'data-action': 'delete', 'data-node-id': node.id },
         { blocked: reason, variant: 'ui-btn--danger-outline', describedBy: 'inspector-delete-reason' })),
-    el('p', { class: 'edit-inspector__reason', id: 'inspector-delete-reason', 'data-delete-reason': true },
-      allowed ? '子孫の要因もすべて削除されます。この操作は取り消せません。' : reason));
+    el('p', { class: 'edit-inspector__reason', id: 'inspector-delete-reason', 'data-delete-reason': true }, text));
 }
 
-function nodeContent(app, node) {
+function breadcrumb(app, node) {
   const { chain, underTopEvent } = ancestry(app.model, node);
   const items = [underTopEvent ? { label: '頂上事象', select: 'top' } : { label: '親子関係に不整合がある要因' }];
   for (const ancestor of chain) items.push({ label: ancestor.title, nodeId: ancestor.id });
   items.push({ label: node.title, current: true });
+  return crumbs(items);
+}
+
+function warningSection(current) {
+  let text = '読み込んでいます…';
+  if (current.phase === 'ready') text = current.data.warning_flags ? current.data.warning_flags : '（品質警告はありません）';
+  else if (current.phase === 'failed') text = '品質警告を読み込めませんでした。';
+  return section('品質警告', [
+    el('p', { class: 'edit-inspector__warning', 'data-warning-text': true }, text),
+  ], { 'data-inspector-warning': true });
+}
+
+function nodeContent(app, node, current) {
   return [
-    crumbs(items),
+    breadcrumb(app, node),
     el('h3', { class: 'edit-inspector__title', tabindex: '-1', 'data-inspector-title': true }, node.title),
     tags(node),
     node.kind === 'ok' ? null : notice(app, node),
@@ -229,49 +240,22 @@ function nodeContent(app, node) {
       judgementToggle(node),
       el('p', { class: 'edit-inspector__reason' }, '選んだ時点で保存されます（直接要因評価とは別の値です）。'),
     ]),
-    node.warning
-      ? section('品質警告', [
-        el('p', { class: 'edit-inspector__warning', 'data-warning-text': true }, '読み込んでいます…'),
-      ], { 'data-inspector-warning': true })
-      : null,
-    detailsSection(app, node),
+    node.warning ? warningSection(current) : null,
+    detailsSection(current),
     childrenSection(app, node),
     deleteSection(app, node),
   ].filter(Boolean);
 }
 
-async function loadDetails(app, node, token, { focusWarning }) {
-  const result = await requestJson(`/nodes/${node.id}`);
-  if (token !== sequence) return; // a later selection owns the inspector now
-  const root = body();
-  if (!root) return;
-  const status = root.querySelector('[data-detail-status]');
-  const list = root.querySelector('[data-details]');
-  const warning = root.querySelector('[data-warning-text]');
-  if (!result.ok || !result.data || result.data.id !== node.id) {
-    if (status) {
-      status.textContent = `保存されている内容を読み込めませんでした：${result.reason || '応答が正しくありません'}`;
-      status.dataset.kind = 'error';
-    }
-    if (warning) warning.textContent = '品質警告を読み込めませんでした。';
-    return;
-  }
-  const data = result.data;
-  for (const [key] of DETAIL_FIELDS) {
-    const cell = list ? list.querySelector(`[data-detail="${key}"]`) : null;
-    if (!cell) continue;
-    let value = data[key] ?? '';
-    if (key === 'direct_cause_status') value = DIRECT_CAUSE_FULL[value] || value;
-    const empty = !String(value).trim();
-    cell.textContent = empty ? '（未入力）' : value;
-    cell.dataset.empty = empty ? 'true' : 'false';
-  }
-  if (list) list.hidden = false;
-  if (status) status.textContent = '保存されている内容です。';
-  if (warning) {
-    warning.textContent = data.warning_flags ? data.warning_flags : '（品質警告はありません）';
-    if (focusWarning) focusWarningSection();
-  }
+// The edited factor is no longer in the data (removed elsewhere) but its
+// draft stays: the input and why it cannot be saved (plan 5.2).
+function goneContent(current) {
+  return [
+    el('h3', { class: 'edit-inspector__title', tabindex: '-1', 'data-inspector-title': true }, current.savedTitle()),
+    el('p', { class: 'edit-inspector__notice', role: 'alert', 'data-factor-gone': true },
+      '編集中の要因が見つかりません。入力内容は保存できません（別のタブなどで削除された可能性があります）。'),
+    detailsSection(current),
+  ];
 }
 
 function focusWarningSection() {
@@ -281,28 +265,111 @@ function focusWarningSection() {
   heading.focus({ preventScroll: true });
 }
 
+// The element of the editor that has the focus, and its text selection, so
+// they come back after the editor was put back.
+function captureFocus() {
+  const active = document.activeElement;
+  if (!editor || !active || !editor.element.contains(active)) return null;
+  const range = typeof active.selectionStart === 'number'
+    ? { start: active.selectionStart, end: active.selectionEnd, direction: active.selectionDirection } : null;
+  return { element: active, range };
+}
+
+function restoreCaptured(captured) {
+  if (!captured || !captured.element.isConnected) return;
+  captured.element.focus({ preventScroll: true });
+  if (captured.range) {
+    try {
+      captured.element.setSelectionRange(captured.range.start, captured.range.end, captured.range.direction);
+    } catch {
+      // not a text control
+    }
+  }
+}
+
+export function currentEditor() {
+  return editor && !editor.closed ? editor : null;
+}
+
+// The draft's save source of the factor shown (null while loading or when
+// the load failed: nothing to protect yet).
+export function currentFactorSource() {
+  const current = currentEditor();
+  return current ? current.source : null;
+}
+
+function closeEditor() {
+  if (editor) editor.close();
+  editor = null;
+}
+
+// Drop the draft of the editor (its factor or an ancestor was deleted).
+export function dropEditor() {
+  closeEditor();
+}
+
+export function setEditorHooks(hooks) {
+  editorHooks = hooks || {};
+}
+
+function onLoaded(app, current, focusWarning) {
+  if (current !== editor) return;
+  const warning = document.querySelector('[data-inspector-body] [data-warning-text]');
+  if (warning) {
+    if (current.phase === 'ready') warning.textContent = current.data.warning_flags || '（品質警告はありません）';
+    else warning.textContent = '品質警告を読み込めませんでした。';
+  }
+  if (focusWarning || current.pendingFocusWarning) {
+    current.pendingFocusWarning = false;
+    focusWarningSection();
+  }
+}
+
 export function renderInspector(app, { focusWarning = false, focusTitle = false } = {}) {
   const root = body();
   if (!root) return;
-  sequence += 1;
-  const token = sequence;
+  const captured = captureFocus();
   if (app.state.sel === 'top') {
+    closeEditor();
     root.replaceChildren(...topContent(app));
   } else {
-    const node = getNode(app.model, app.state.sel);
-    if (!node) {
+    const id = Number(app.state.sel);
+    const node = getNode(app.model, id);
+    const same = editor && editor.nodeId === id && editor.analysisId === app.analysisId;
+    if (same && !node) {
+      editor.markGone('node');
+      root.replaceChildren(...goneContent(editor));
+    } else if (!node) {
+      closeEditor();
       root.replaceChildren(el('p', { class: 'edit-inspector__status' }, '要因が選ばれていません。'));
       return;
+    } else if (same) {
+      root.replaceChildren(...nodeContent(app, node, editor));
+      editor.render();
+      if (focusWarning) {
+        if (editor.phase === 'loading') editor.pendingFocusWarning = true;
+        else focusWarningSection();
+      }
+    } else {
+      closeEditor();
+      const created = createFactorEditor(app, node, {
+        onSaved: (nodeId, fields) => editorHooks.onSaved?.(nodeId, fields),
+        onLoaded: (current) => onLoaded(app, current, focusWarning),
+      });
+      editor = created;
+      root.replaceChildren(...nodeContent(app, node, created));
+      created.load();
+      if (focusWarning) focusWarningSection();
     }
-    root.replaceChildren(...nodeContent(app, node));
-    loadDetails(app, node, token, { focusWarning });
-    if (focusWarning) focusWarningSection();
   }
+  restoreCaptured(captured);
   if (app.gone) {
     // The analysis is gone (edit/refresh.js): nothing can be saved any more.
-    root.querySelectorAll('[data-action="judgement"], [data-action^="legacy-"]').forEach((button) => {
-      button.disabled = true;
-    });
+    root.querySelectorAll('[data-action="judgement"], [data-action^="legacy-"], [data-action="add"], [data-action="delete"]')
+      .forEach((button) => {
+        button.disabled = true;
+      });
+    if (editor) editor.render();
   }
   if (focusTitle) {
     const title = root.querySelector('[data-inspector-title]');

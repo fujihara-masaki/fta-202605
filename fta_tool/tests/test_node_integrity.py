@@ -475,6 +475,12 @@ def test_T07_the_walk_is_not_cut_at_the_display_depth(env):
     view = env.view(a)
     assert view.by_id[root].delete_allowed
     assert view.by_id[root].delete_scope == 7  # the whole chain, beyond depth 3
+    # PR-5: the same number reaches the page (the delete dialog shows 6
+    # descendants, never what the display's three levels show); none where
+    # the screen offers no delete.
+    data = {node["id"]: node for node in view.data["nodes"]}
+    assert data[root]["delete"] == {"allowed": True, "reason": "", "scope": 7}
+    assert data[chain[1]]["delete"]["allowed"] is False and data[chain[1]]["delete"]["scope"] is None
 
     env.node(b, 3, chain[-1])  # a factor of B below the deepest link
     view = env.view(a)

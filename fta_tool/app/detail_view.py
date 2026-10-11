@@ -441,7 +441,10 @@ def build_detail_view(analysis, nodes: list, links: Optional[CrossAnalysisLinks]
                 "anomalyRoot": v.anomaly_root,
                 "canParent": v.can_parent,
                 "parentReason": v.parent_reason,
-                "delete": {"allowed": v.delete_allowed, "reason": v.delete_reason},
+                # scope: the factors of this analysis the delete removes,
+                # the factor itself included (None when not allowed); the
+                # dialog shows scope - 1 descendants (PR-5, J-13).
+                "delete": {"allowed": v.delete_allowed, "reason": v.delete_reason, "scope": v.delete_scope},
             }
             for v in ordered
         ],

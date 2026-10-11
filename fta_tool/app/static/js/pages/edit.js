@@ -17,16 +17,31 @@
 //   inline (edit/title.js), ⑤'s counts (view.js applySummary) and the
 //   generation's connection to the shared save coordinator
 //   (edit/generation.js, js/common/unsaved.js), which also guards leaving
-//   the page.
+//   the page;
+// - PR-5: the inspector's editor of the factor (edit/factor-editor.js), and
+//   every R-01 route (the select buttons, the top event, 要確認, the
+//   breadcrumb, child links, the selection after a manual add) through one
+//   guarded switch, requestSelect(): the inspector's unsaved draft is asked
+//   about (common/unsaved.js requestSwitch) before anything changes; the
+//   manual-add and delete dialogs (edit/add-dialog.js, delete-dialog.js).
+//   Generation still runs through app.js (PR-6).
 // Text from the user or the LLM is only ever inserted as text.
 
 import { el } from '../common/dom.js';
 import { notify } from '../common/notify.js';
+import { requestSwitch } from '../common/unsaved.js';
 import { installBridge } from './edit/bridge.js';
 import { applyFilter, clearFilter, currentFilter, initFilter } from './edit/filter.js';
-import { renderInspector, updateTopEventText } from './edit/inspector.js';
+import {
+  currentFactorSource,
+  renderInspector,
+  setEditorHooks,
+  updateTopEventText,
+} from './edit/inspector.js';
+import { openAddDialog } from './edit/add-dialog.js';
+import { openDeleteDialog } from './edit/delete-dialog.js';
 import { requestJudgement } from './edit/judgement.js';
-import { createRefresher } from './edit/refresh.js';
+import { createRefresher, successorOf } from './edit/refresh.js';
 import { createStep1 } from './edit/step1.js';
 import { createTitleEditor } from './edit/title.js';
 import { createGeneration } from './edit/generation.js';
@@ -133,19 +148,98 @@ function start(root, model) {
     writeHash(app.state);
   };
 
+  // Show a factor (or the top event). Only after the switch was allowed:
+  // the R-01 routes call requestSelect. Choosing the factor already shown
+  // (or its 要確認) keeps its editor and draft: nothing is drawn again.
+  // Every choice the user makes on an R-01 route counts (even the factor
+  // already shown): a selection asked for before it (after a manual add) is
+  // then not made (edit/refresh.js).
+  app.selectionIntent = 0;
+
   app.select = (sel, { source = null, focusWarning = false } = {}) => {
     const node = sel === 'top' ? null : getNode(app.model, sel);
     if (sel !== 'top' && !node) return;
+    const next = node ? String(node.id) : 'top';
+    const same = next === app.state.sel;
     const step = node ? stepForNode(node) : 1;
     const stepChanged = step !== app.state.step;
-    app.state.sel = node ? String(node.id) : 'top';
+    app.state.sel = next;
     app.state.step = step;
     applySelection(app);
     applyStep(app);
     if (stepChanged && app.state.view === 'work' && scrollers.center) scrollers.center.scrollTop = 0;
     writeHash(app.state);
-    renderInspector(app, { focusWarning });
+    if (!same || focusWarning) renderInspector(app, { focusWarning });
     revealSelection(app, source);
+  };
+
+  // Every R-01 route (plan 5.1): a switch to another factor or to the top
+  // event first asks about the inspector's unsaved draft (3 choices; during
+  // a generation 2, J-01). Resolves to true when the selection changed.
+  app.requestSelect = (sel, { source = null, focusWarning = false, invoker = null } = {}) => {
+    const next = sel === 'top' ? 'top' : String(Number(sel));
+    if (next === app.state.sel) {
+      app.select(sel, { source, focusWarning });
+      return Promise.resolve(true);
+    }
+    if (next !== 'top' && !getNode(app.model, next)) return Promise.resolve(false);
+    const opener = invoker || document.activeElement;
+    return requestSwitch({
+      source: currentFactorSource(),
+      invoker: opener,
+      fallbackFocus: successorOf(opener),
+      proceed: () => app.select(sel, { source, focusWarning }),
+    });
+  };
+
+  // The selection after a manual add (edit/refresh.js), one at a time: the
+  // latest added factor is the target. While its check is open (the three
+  // choices for an unsaved draft), the selection after a later add only
+  // replaces the target — it is not dropped because the check is busy, and
+  // the earlier factor is not selected over it. Before switching, the
+  // target is judged again: if the user chose anything meanwhile
+  // (selectionIntent), nothing is selected. 編集を続ける keeps the selection
+  // and the draft, and drops the target.
+  // The answer covers every add sent until then (adds are numbered when they
+  // are sent, app.nextAddSeq), including one whose update is still being
+  // fetched: after 編集を続ける none of them selects (no second check);
+  // after 破棄して移動 the selection made here does not stop a later one
+  // (edit/refresh.js isAutoSelection), so the last add is selected.
+  let addSeq = 0;
+  app.nextAddSeq = () => {
+    addSeq += 1;
+    return addSeq;
+  };
+  let autoTarget = null;
+  let autoRunning = false;
+  let autoSelected = null; // { sel, intent }: the selection made here
+  let declined = null; // { intent, upTo }: 編集を続ける for the adds up to upTo
+  app.isAutoSelection = (intent) => Boolean(autoSelected)
+    && autoSelected.intent === intent && autoSelected.sel === String(app.state.sel);
+  app.autoSelect = (nodeId, intent, seq) => {
+    if (declined && declined.intent === intent && Number.isInteger(seq) && seq <= declined.upTo) return;
+    autoTarget = { id: Number(nodeId), intent };
+    if (autoRunning) return;
+    autoRunning = true;
+    let switched = false;
+    const opener = document.activeElement;
+    requestSwitch({
+      source: currentFactorSource(),
+      invoker: opener,
+      fallbackFocus: successorOf(opener),
+      proceed: () => {
+        switched = true;
+        const target = autoTarget;
+        if (target && target.intent === app.selectionIntent && getNode(app.model, target.id)) {
+          app.select(target.id, {});
+          autoSelected = { sel: String(app.state.sel), intent: target.intent };
+        }
+      },
+    }).finally(() => {
+      if (!switched && autoTarget) declined = { intent: autoTarget.intent, upTo: addSeq };
+      autoRunning = false;
+      autoTarget = null;
+    });
   };
 
   app.afterJudgement = () => {
@@ -157,8 +251,6 @@ function start(root, model) {
   const refresher = createRefresher(app, { scrollers });
   app.refresh = (options = {}) => refresher.request(options);
   app.whenRefreshed = () => refresher.whenIdle();
-  app.describeFocus = refresher.describeFocus;
-  app.restoreFocus = refresher.restoreFocus;
 
   app.setGenerating = (on) => {
     app.generating = on;
@@ -197,6 +289,33 @@ function start(root, model) {
   const generation = createGeneration(app, { step1, title });
   app.beginGeneration = (level) => generation.begin(level);
 
+  // The one success handling of a factor's save (the inspector's 保存 and
+  // 保存して移動): called synchronously by the source's commit(), after the
+  // request ended. The data and what is counted from it change at once; the
+  // server-rendered parts follow by a partial update, which is only asked
+  // for here and never awaited (it waits for writes in flight itself, and the
+  // save does not wait for it). A failure of the display is not a failure of
+  // the save: it is told separately and never sends the save again.
+  setEditorHooks({
+    onSaved(nodeId, fields) {
+      try {
+        const node = getNode(app.model, nodeId);
+        if (node) {
+          node.title = fields.title;
+          node.description = fields.description;
+          node.memo = Boolean(fields.memo);
+          node.directCause = fields.direct_cause_status;
+        }
+        applyCounts(app);
+        applyFilter(app);
+        if (app.state.sel === String(nodeId)) renderInspector(app);
+      } catch {
+        notify('要因は保存しましたが、画面の表示を更新できませんでした。ページを再読み込みしてください。', { type: 'error' });
+      }
+      app.refresh();
+    },
+  });
+
   installBridge(app);
   initFilter(app, session.filter);
   applyView(app);
@@ -220,18 +339,11 @@ function start(root, model) {
     if (app.gone) return;
     const level = Number(button.dataset.level);
     const parentId = button.dataset.parentId ? Number(button.dataset.parentId) : null;
-    const nodeId = button.dataset.nodeId ? Number(button.dataset.nodeId) : null;
     const legacy = window;
     if (action === 'legacy-generate' && typeof legacy.generateFactors === 'function') {
       legacy.generateFactors(app.analysisId, level);
     } else if (action === 'legacy-generate-additional' && typeof legacy.generateAdditional === 'function') {
       legacy.generateAdditional(app.analysisId, parentId, level);
-    } else if (action === 'legacy-add' && typeof legacy.showAddNodeModal === 'function') {
-      legacy.showAddNodeModal(app.analysisId, parentId, level);
-    } else if (action === 'legacy-detail' && typeof legacy.openNodeDetail === 'function') {
-      legacy.openNodeDetail(nodeId);
-    } else if (action === 'legacy-delete' && typeof legacy.deleteNode === 'function') {
-      legacy.deleteNode(nodeId, app.analysisId);
     }
   };
 
@@ -264,10 +376,20 @@ function start(root, model) {
     if (!button || button.disabled) return;
     const action = button.dataset.action;
     if (action === 'select') {
-      app.select(button.dataset.select === 'top' ? 'top' : button.dataset.nodeId, {
+      app.selectionIntent += 1;
+      app.requestSelect(button.dataset.select === 'top' ? 'top' : button.dataset.nodeId, {
         source: SOURCES[button.dataset.role] || null,
         focusWarning: button.dataset.focus === 'warning',
+        invoker: button,
       });
+    } else if (action === 'add') {
+      if (!app.gone) {
+        openAddDialog(app, {
+          parentId: button.dataset.parentId || null, level: Number(button.dataset.level), invoker: button,
+        });
+      }
+    } else if (action === 'delete') {
+      if (!app.gone) openDeleteDialog(app, Number(button.dataset.nodeId), { invoker: button });
     } else if (action === 'step') {
       app.setStep(Number(button.dataset.step));
     } else if (action === 'judgement') {

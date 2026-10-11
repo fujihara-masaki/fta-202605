@@ -47,6 +47,9 @@ import pytest
 from tests.e2e import acceptance
 from tests.e2e.edit_helpers import (
     chip,
+    editor,
+    factor_field,
+    factor_save,
     expect_selected,
     inspector,
     inspector_title,
@@ -194,10 +197,10 @@ def test_E_E02_the_inspector_shows_the_saved_details_of_the_latest_choice(page, 
     e2e_server.update_node(a, memo="Aのメモ", evidence="Aの根拠", direct_cause_status="likely")
     open_edit(page, analysis_id)
     expect_selected(page, a, "一次要因A")
-    details = page.locator("[data-details]")
-    expect(details.locator('[data-detail="memo"]')).to_have_text("Aのメモ")
-    expect(details.locator('[data-detail="evidence"]')).to_have_text("Aの根拠")
-    expect(details.locator('[data-detail="direct_cause_status"]')).to_have_text("直接要因の可能性が高い")
+    # PR-5: the saved details fill the inspector's editor (was a read-only list).
+    expect(factor_field(page, "memo")).to_have_value("Aのメモ")
+    expect(factor_field(page, "evidence")).to_have_value("Aの根拠")
+    expect(factor_field(page, "direct_cause_status")).to_have_value("likely")
     expect(page.locator(".edit-inspector__tags")).to_contain_text("直接要因評価：可能性高")
     expect(page.locator(".edit-inspector__tags")).to_contain_text("メモあり")
 
@@ -207,10 +210,12 @@ def test_E_E02_the_inspector_shows_the_saved_details_of_the_latest_choice(page, 
     select_button(page, "nav", c).click()
     expect(inspector_title(page)).to_have_text("三次要因C")
     expect(page.locator("[data-detail-status]")).to_contain_text("読み込んでいます")
-    expect(details.locator('[data-detail="memo"]')).to_have_text("")  # nothing of A left behind
+    expect(factor_field(page, "memo")).to_have_value("")  # nothing of A left behind
+    expect(factor_field(page, "memo")).to_be_disabled()   # nor anything to type over (PR-5)
+    expect(factor_save(page)).to_be_disabled()
     select_button(page, "nav", d).click()
     expect(inspector_title(page)).to_have_text("一次要因D")
-    expect(page.locator("[data-detail-status]")).to_have_text("保存されている内容です。")
+    expect(editor(page)).to_have_attribute("data-phase", "ready")
     held[0].fulfill(json={
         "id": c, "analysis_id": analysis_id, "parent_id": b, "level": 3, "title": "三次要因C",
         "description": "", "memo": "古い応答のメモ", "user_judgement": "unknown", "direct_cause_status": "unknown",
@@ -218,7 +223,8 @@ def test_E_E02_the_inspector_shows_the_saved_details_of_the_latest_choice(page, 
     })
     page.wait_for_timeout(300)
     expect(inspector_title(page)).to_have_text("一次要因D")
-    expect(page.locator('[data-details] [data-detail="memo"]')).not_to_have_text("古い応答のメモ")
+    expect(factor_field(page, "memo")).not_to_have_value("古い応答のメモ")
+    expect(editor(page)).to_have_attribute("data-node-id", str(d))
 
 
 # ----- E-E03 ----------------------------------------------------------------
@@ -467,7 +473,7 @@ def test_E_E09_demo_points_hidden_and_markup_stays_text(page, e2e_server):
     expect(select_button(page, "table", broken)).to_have_text(f"不整合{markup}")
     expect(page.locator("#edit-nav")).to_contain_text("頂上<b>太字</b>")
     expect(inspector_title(page)).to_have_text(f"一次{markup}")
-    expect(page.locator('[data-details] [data-detail="memo"]')).to_have_text(f"メモ{script}")
+    expect(factor_field(page, "memo")).to_have_value(f"メモ{script}")  # PR-5: in the editor, as text
     expect(page.locator(f'[data-role="child"][data-node-id="{b}"]')).to_have_text(f"二次{script}")
     page.locator(f'[data-role="child"][data-node-id="{b}"]').click()
     expect(page.locator("[data-warning-text]")).to_have_text(f"警告{markup}")
@@ -532,7 +538,7 @@ def main_controls(page, factor: int) -> list:
     controls += [page.locator("#edit-filter-text"), select_button(page, "nav", factor),
                  select_button(page, "work", factor),
                  judgement_button(item(page, "work", factor), factor, "yes"),
-                 inspector(page).get_by_role("button", name="詳細を編集"),
+                 factor_save(page),  # PR-5: the editor's 保存 (詳細を編集 before)
                  inspector(page).get_by_role("button", name="この要因を削除"),
                  page.locator(".edit-header").get_by_role("link", name="一覧へ")]
     return controls

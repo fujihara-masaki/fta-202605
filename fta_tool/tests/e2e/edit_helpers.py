@@ -180,3 +180,93 @@ def post_paths(page) -> list[str]:
 
     page.on("request", record)
     return sent
+
+
+# ----- PR-5: the inspector's editor, the manual-add and delete dialogs ---------
+
+FACTOR_FIELDS = ("title", "description", "memo", "direct_cause_status", "direct_cause_comment",
+                 "evidence", "prevention_idea")
+DELETE_DIALOG = "要因を削除しますか？"
+ADD_DIALOG = "要因を手動追加"
+GENERATING_SWITCH = "生成中は保存できません。生成が終わると保存できます。"
+
+
+def editor(page):
+    return inspector(page).locator("[data-factor-editor]")
+
+
+def factor_field(page, key: str):
+    return inspector(page).locator(f'[data-factor-field="{key}"]')
+
+
+def factor_save(page):
+    return inspector(page).locator("[data-factor-save]")
+
+
+def factor_cancel(page):
+    return inspector(page).locator("[data-factor-cancel]")
+
+
+def factor_status(page):
+    return inspector(page).locator("[data-factor-status]")
+
+
+def factor_message(page):
+    return inspector(page).locator("[data-factor-message]")
+
+
+def expect_editor_ready(page, node_id) -> None:
+    """The inspector's editor is the factor's and its saved values arrived."""
+    expect(editor(page)).to_have_attribute("data-node-id", str(node_id))
+    expect(editor(page)).to_have_attribute("data-phase", "ready")
+    expect(factor_field(page, "title")).to_be_enabled()
+
+
+def fill_factor(page, **fields) -> None:
+    for key, value in fields.items():
+        field = factor_field(page, key)
+        if key == "direct_cause_status":
+            field.select_option(value)
+        else:
+            field.fill(value)
+
+
+def choose(page, node_id, role: str = "nav") -> None:
+    """Choose a factor (an R-01 route) and wait until its editor is ready."""
+    select_button(page, role, node_id).click()
+    expect_editor_ready(page, node_id)
+
+
+def delete_dialog(page):
+    return page.get_by_role("dialog", name=DELETE_DIALOG)
+
+
+def add_dialog(page):
+    return page.get_by_role("dialog", name=ADD_DIALOG)
+
+
+def delete_factor(page) -> None:
+    """この要因を削除 → 削除する in the dialog."""
+    inspector(page).get_by_role("button", name="この要因を削除").click()
+    dialog = delete_dialog(page)
+    expect(dialog).to_be_visible()
+    dialog.get_by_role("button", name="削除する").click()
+    expect(dialog).to_have_count(0)
+
+
+def add_factor(page, button, title: str, description: str = "") -> None:
+    """Open the manual-add dialog with `button`, fill it and add."""
+    button.click()
+    dialog = add_dialog(page)
+    expect(page.locator("#add-factor-title")).to_be_focused()
+    page.fill("#add-factor-title", title)
+    if description:
+        page.fill("#add-factor-description", description)
+    dialog.get_by_role("button", name="追加する").click()
+    expect(dialog).to_have_count(0)
+
+
+def force_click(locator) -> None:
+    """Click a disabled button as a stale control would (the page's own check
+    must refuse it)."""
+    locator.evaluate("(el) => { el.disabled = false; el.click(); }")

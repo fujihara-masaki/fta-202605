@@ -616,9 +616,15 @@ def test_T04_edit_regions_steps_tabs_and_moved_inputs(client):
     assert [(a.attrs["href"], "download" in a.attrs) for a in step5] == [
         (f"/analyses/{analysis_id}/export/{fmt}", True) for fmt in ("json", "csv", "markdown")]
 
-    # The legacy dialogs stay until PR-5 / PR-6.
-    for element_id in ("nodeDetailModal", "addNodeModal", "loadingOverlay"):
-        root.find(id=element_id)
+    # PR-5 replaced the legacy detail and manual-add modals (the inspector's
+    # editor and the in-page dialogs); the generation overlay stays until PR-6.
+    root.find(id="loadingOverlay")
+    for element_id in ("nodeDetailModal", "addNodeModal"):
+        assert not root.find_all(id=element_id), element_id
+    assert not root.find_all(**{"data-action": "legacy-add"})
+    assert not root.find_all(**{"data-action": "legacy-detail"})
+    assert not root.find_all(**{"data-action": "legacy-delete"})
+    assert root.find_all("button", **{"data-action": "add", "data-level": "1"})  # ② 手動追加: the dialog
 
     # Scripts: the module and the legacy script by URL; the only inline
     # script is the embedded data.
@@ -657,8 +663,12 @@ def test_T04_embedded_summary_shape_and_content(client, monkeypatch):
         None, 1, "一次</script><script>alert(1)</script>", "説明A")
     assert (first["judgement"], first["directCause"], first["ai"], first["warning"], first["memo"]) == (
         "yes", "likely", True, False, True)
-    assert (first["kind"], first["canParent"], first["delete"]) == ("ok", True, {"allowed": True, "reason": ""})
+    # delete.scope (PR-5): what the server's walk found the delete would
+    # remove, the factor itself included (the dialog shows scope - 1 descendants).
+    assert (first["kind"], first["canParent"], first["delete"]) == (
+        "ok", True, {"allowed": True, "reason": "", "scope": 2})
     second = nodes[child_id]
+    assert second["delete"] == {"allowed": True, "reason": "", "scope": 1}
     assert (second["parentId"], second["warning"], second["memo"], second["ai"]) == (root_id, True, False, False)
 
     # Never in the page: demo_points and the memo text (only whether there is one).

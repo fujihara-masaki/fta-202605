@@ -1,16 +1,24 @@
-// Partial update (plan 3.4-5). After a manual add, a delete, a detail save
+// Partial update (plan 3.4-5). After a manual add, a delete, a factor's save
 // or a generation, the same URL (GET /analyses/{id}) is fetched again and
 // only the regions marked data-region (work steps, structure navigation,
 // work lists, tree, table) and the embedded summary are replaced. Step ① is
 // never replaced, so typed input stays; the inspector is not taken from the
-// answer but drawn again from the new data for the selection (it holds no
-// draft in PR-3) and reads the saved details again. Selection, step, tab,
-// filter and scroll positions stay (after a manual add the new factor is
-// selected, unless another one was chosen before the update was applied —
-// it waits while a generation runs; after a delete its parent; either is
-// brought into view); the focus goes back to the same element (data-node-id
-// and role), or to its parent's row or the list heading when it is gone
-// (plan 5.7). No new API.
+// answer but drawn again from the new data for the selection, and its
+// factor editor (PR-5) is put back as it is — the draft, the focus and the
+// saved values stay; nothing is read again for the same factor.
+// Selection, step, tab, filter and scroll positions stay. After a manual
+// add the new factor is selected through the R-01 check (app.requestSelect:
+// an unsaved draft is asked about first), unless the user chose anything
+// (even the same factor again) before the update was applied — it waits
+// while a generation runs; after a
+// delete its parent (the draft it affected was dropped by the delete
+// dialog); either is brought into view. The focus goes back to the same
+// element (data-node-id and role), or to its parent's row or the list
+// heading when it is gone (plan 5.7). No new API.
+// A factor removed elsewhere: the selection moves to its nearest remaining
+// ancestor — except when the inspector holds a draft for it, which stays
+// with its input and the reason it cannot be saved (never moved to another
+// factor; plan 5.2).
 //
 // An old answer never rolls the page back (plan 3.4-5, P-3):
 // - one fetch at a time; requests while one runs are merged into one more;
@@ -31,16 +39,18 @@
 // state comes back from the hash and sessionStorage), otherwise
 // 「最新の表示に更新できませんでした」 is shown and the input stays. Typed input
 // is what the shared save coordinator counts as unsaved or being saved (①,
-// the header title: PR-4), the open title editor and an open legacy dialog.
+// the header title: PR-4; the inspector's draft: PR-5), the open title
+// editor and the manual-add dialog with input.
 // whenIdle() resolves when no update runs or waits (the end of a
 // generation, edit/generation.js).
 
 import { el } from '../../common/dom.js';
 import { requestText } from '../../common/http.js';
 import { notify } from '../../common/notify.js';
-import { hasUnsaved, isSaving } from '../../common/unsaved.js';
-import { renderInspector } from './inspector.js';
-import { getNode, readModel, stepForNode } from './model.js';
+import { hasUnsaved, isLeavingPage, isSaving } from '../../common/unsaved.js';
+import { hasAddDialogInput } from './add-dialog.js';
+import { currentEditor, renderInspector } from './inspector.js';
+import { getNode, isAtOrBelow, readModel, stepForNode } from './model.js';
 import { writeHash } from './state.js';
 import { applyCounts, applySelection, applyStep, applyView, revealSelection } from './view.js';
 import { applyFilter } from './filter.js';
@@ -61,6 +71,23 @@ function selectorFor(element) {
   return parts.length ? parts.join('') : null;
 }
 
+// A function that finds the element again after a partial update replaced
+// it (the same data-* in the same region or the inspector), or null when the
+// element carries nothing to find it by (plan 5.7; PR-5: the dialogs give
+// the focus back to the successor of the control that opened them).
+export function successorOf(element) {
+  if (!element || !element.dataset) return null;
+  const selector = selectorFor(element);
+  if (!selector) return null;
+  const region = element.closest('[data-region]');
+  const scope = region ? `[data-region="${region.dataset.region}"] ` : (
+    element.closest('[data-inspector-body]') ? '[data-inspector-body] ' : '');
+  return () => {
+    if (element.isConnected) return element;
+    return [...document.querySelectorAll(`${scope}${selector}`)].find((node) => isShown(node) && !node.disabled) || null;
+  };
+}
+
 // Where the focus is, if it is in a part that will be replaced.
 function describeFocus() {
   const active = document.activeElement;
@@ -70,6 +97,7 @@ function describeFocus() {
   if (!region && !inspector) return null;
   const holder = active.closest('[data-node-id]');
   return {
+    element: active,
     scope: region ? `[data-region="${region.dataset.region}"]` : '[data-inspector-body]',
     selector: selectorFor(active),
     nodeId: holder ? holder.dataset.nodeId : null,
@@ -96,6 +124,12 @@ function isShown(element) {
 // when the parent went too), else the heading of the list.
 function restoreFocus(app, focus, previousModel) {
   if (!focus) return;
+  // The element itself is still there (the inspector's editor is put back
+  // as it is, PR-5): it keeps the focus.
+  if (focus.element && focus.element.isConnected && isShown(focus.element)) {
+    if (document.activeElement !== focus.element) focus.element.focus({ preventScroll: true });
+    return;
+  }
   if (focus.selector) {
     const target = document.querySelector(`${focus.scope} ${focus.selector}`);
     if (isShown(target) && !target.disabled) {
@@ -122,28 +156,14 @@ function restoreFocus(app, focus, previousModel) {
   if (isShown(heading)) heading.focus({ preventScroll: true });
 }
 
-// Typed input that a reload would lose (step ① and the header title as the
-// save coordinator sees them, the open title editor, an open legacy dialog).
+// Typed input that a reload would lose (step ①, the header title and the
+// inspector's draft as the save coordinator sees them, the open title
+// editor, the manual-add dialog with input).
 function hasTypedInput() {
   if (hasUnsaved() || isSaving()) return true;
   const titleEditor = document.querySelector('[data-title-editor]');
   if (titleEditor && !titleEditor.hidden) return true;
-  for (const id of ['nodeDetailModal', 'addNodeModal']) {
-    const dialog = document.getElementById(id);
-    if (dialog && !dialog.classList.contains('hidden')) return true;
-  }
-  return false;
-}
-
-function isAtOrBelow(model, selected, ancestorId) {
-  const seen = new Set();
-  let current = selected;
-  while (current && !seen.has(current.id)) {
-    if (current.id === ancestorId) return true;
-    seen.add(current.id);
-    current = current.parentId === null ? null : getNode(model, current.parentId);
-  }
-  return false;
+  return hasAddDialogInput();
 }
 
 function merge(pending, options) {
@@ -174,7 +194,7 @@ export function createRefresher(app, { scrollers }) {
       page.prepend(el('p', { class: 'edit-gone', role: 'alert' },
         '分析が見つかりません（削除された可能性があります）。この画面では保存・生成・削除ができません。一覧へ戻ってください。'));
     }
-    page.querySelectorAll('[data-action="judgement"], [data-action^="legacy-"], [data-generate]').forEach((button) => {
+    page.querySelectorAll('[data-action="judgement"], [data-action^="legacy-"], [data-action="add"], [data-action="delete"], [data-generate]').forEach((button) => {
       button.disabled = true;
       button.dataset.blockedReason = '分析が見つかりません';
     });
@@ -184,10 +204,14 @@ export function createRefresher(app, { scrollers }) {
     // The header title: ✎ off; an open editor keeps its input (read-only)
     // and saves nothing more (edit/title.js).
     if (app.title) app.title.stop();
+    // The inspector's editor keeps its input and sends nothing more.
+    const editor = currentEditor();
+    if (editor) editor.markGone('analysis');
     notify('分析が見つかりません（削除された可能性があります）', { type: 'error' });
   }
 
   function failed(result) {
+    if (isLeavingPage()) return; // the page is being left (保存して移動): no reload, no message
     if (!hasTypedInput()) {
       app.saveSession();
       window.location.reload();
@@ -227,20 +251,37 @@ export function createRefresher(app, { scrollers }) {
     app.model = model;
     app.writes.confirmed.clear();
 
-    // What to select now.
+    // What to select now (a new factor after a manual add: below, through
+    // the R-01 check, once this update has been applied).
     const before = { sel: app.state.sel, step: app.state.step };
     const selected = app.state.sel === 'top' ? null : getNode(previousModel, app.state.sel);
-    if (options.select !== undefined && getNode(model, options.select)
-      && (options.selectFrom === undefined || options.selectFrom === app.state.sel)) {
-      const node = getNode(model, options.select);
-      app.state.sel = String(node.id);
-      app.state.step = stepForNode(node);
-    } else if (options.deleted !== undefined && selected && isAtOrBelow(previousModel, selected, Number(options.deleted))) {
+    const editor = currentEditor();
+    const keepsDraft = Boolean(editor) && editor.nodeId === Number(app.state.sel) && editor.hasDraft();
+    // Only if the user has chosen nothing since the add (any choice, even of
+    // the same factor again: A → B → A); the number was recorded when the
+    // update was asked for and is never taken again (retries, a generation
+    // holding the update back).
+    // A newer add asked for its own update meanwhile (waiting in `pending`):
+    // that one selects its factor, this older one selects nothing.
+    // The selection changed since the request only by the selection of an
+    // earlier add (edit.js autoSelect, same selectIntent: 破棄して移動 chosen
+    // while this update was being fetched): this later add still selects.
+    const superseded = Boolean(pending) && pending.select !== undefined;
+    const selectNew = options.select !== undefined && !superseded && getNode(model, options.select)
+      && options.selectIntent === app.selectionIntent
+      && (options.selectFrom === undefined || options.selectFrom === app.state.sel
+        || (Boolean(app.isAutoSelection) && app.isAutoSelection(options.selectIntent)));
+    if (options.deleted !== undefined && selected && !keepsDraft
+      && isAtOrBelow(previousModel, selected, Number(options.deleted))) {
       const deleted = getNode(previousModel, options.deleted);
       const parent = deleted && deleted.parentId !== null && deleted.parentId !== deleted.id
         ? getNode(model, deleted.parentId) : null;
       app.state.sel = parent ? String(parent.id) : 'top';
       app.state.step = parent ? stepForNode(parent) : 1;
+    } else if (selected && !getNode(model, selected.id) && keepsDraft) {
+      // Removed elsewhere while its draft is in the inspector: the selection,
+      // the input and the reason it cannot be saved stay (inspector.js).
+      if (!editor.gone) notify('編集中の要因が見つからないため、入力内容を保存できません（別のタブなどで削除された可能性があります）', { type: 'error' });
     } else if (selected && !getNode(model, selected.id)) {
       // Removed elsewhere (another tab): its nearest remaining ancestor.
       let current = selected;
@@ -279,6 +320,13 @@ export function createRefresher(app, { scrollers }) {
     }
     restoreFocus(app, focus, previousModel);
     app.saveSession();
+    if (selectNew && app.autoSelect) {
+      // The added factor, as its route of R-01: asked about an unsaved
+      // draft first; 編集を続ける keeps the selection (the factor stays added).
+      // A later add while that check is open becomes the target
+      // (edit.js autoSelect).
+      app.autoSelect(Number(options.select), options.selectIntent, options.addSeq);
+    }
   }
 
   // Put the requests off until the generation has ended (flush).
@@ -357,9 +405,12 @@ export function createRefresher(app, { scrollers }) {
   return {
     request(options = {}) {
       if (app.gone) return;
-      // The factor to select is selected only if the selection is still the
-      // one of now when the update is applied (a newer choice stays).
-      const asked = options.select !== undefined ? { ...options, selectFrom: app.state.sel } : options;
+      // The factor to select is selected only if the user has chosen nothing
+      // since now (app.selectionIntent counts every choice of the user) and
+      // the selection is still the one of now (a newer choice stays).
+      const asked = options.select !== undefined
+        ? { ...options, selectFrom: app.state.sel, selectIntent: app.selectionIntent }
+        : options;
       if (running || app.generating) {
         pending = merge(pending, asked);
         return;

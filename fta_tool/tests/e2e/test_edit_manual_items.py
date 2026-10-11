@@ -9,8 +9,9 @@ this automatic run with a few checks by eye (the user's decision of
          next one is. (test_edit_refresh.py changes it through the API.)
 * E-E03  item 3: back to 未 from the inspector, counts and targets follow.
 * E-E04  item 4: 「Noのみ」「未評価のみ」.
-* E-E07  item 6: deleting a 一次要因 names it in the confirmation, selects
-         the top event (①) and keeps what was typed in ①.
+* E-E07  item 6: deleting a 一次要因 names it in the confirmation (PR-5: the
+         in-page dialog with the number of descendants), selects the top
+         event (①) and keeps what was typed in ①.
 * E-E08  section 7: a 二次要因 of every inconsistent category refuses
          「AIで追加生成」 and 「手動追加」 with the reason, both shown (二次F, a
          parent in another analysis, included); a 三次要因 has neither.
@@ -30,7 +31,12 @@ import time
 import pytest
 
 from tests.e2e.edit_helpers import (
+    choose,
     chip,
+    delete_dialog,
+    factor_field,
+    factor_save,
+    factor_status,
     expect_selected,
     inspector,
     inspector_title,
@@ -60,12 +66,6 @@ def mark_page(page) -> None:
 
 def same_page(page) -> bool:
     return page.evaluate("() => window.__pr3NoReload === 'kept'")
-
-
-def open_detail(page) -> None:
-    """The legacy detail dialog; app.js focuses its first field 50 ms after opening."""
-    inspector(page).get_by_role("button", name="詳細を編集").click()
-    expect(page.locator("#modalTitle")).to_be_focused()
 
 
 def wait_for(page, check, timeout: float = 10.0) -> None:
@@ -108,25 +108,25 @@ def test_E_E19_two_tabs_a_judgement_changed_in_the_other_tab(page, e2e_server):
     expect(toast(other, "評価を更新しました", "success", exact=True)).to_have_count(1)
     wait_until(lambda: e2e_server.judgement(a) == "no")
 
-    # Back in tab A, not reloaded: a detail save of B. The partial update
-    # after it cannot tell tab B's value from an old answer: not applied,
-    # one message, and the memo is saved all the same (known issue).
+    # Back in tab A, not reloaded: a save of B in the inspector (PR-5; the
+    # detail dialog before). The partial update after it cannot tell tab B's
+    # value from an old answer: not applied, one message, and the memo is
+    # saved all the same (known issue).
     page.bring_to_front()
     mark_page(page)
-    select_button(page, "nav", b).click()
-    open_detail(page)
-    page.fill("#modalMemo", "別タブ確認1")
-    page.locator("#modalSaveBtn").click()
+    choose(page, b)
+    factor_field(page, "memo").fill("別タブ確認1")
+    factor_save(page).click()
     stale = toast(page, STALE, "error", exact=True)
     expect(stale).to_have_count(1)
     expect(chip(nav, a)).to_have_text("Yes")
     wait_until(lambda: e2e_server.get_node(b)["memo"] == "別タブ確認1")
-    open_detail(page)
-    expect(page.locator("#modalMemo")).to_have_value("別タブ確認1")  # the dialog reads what the server has
+    expect(factor_status(page)).to_have_attribute("data-state", "saved")
+    expect(factor_field(page, "memo")).to_have_value("別タブ確認1")  # the saved value; the update did not roll it back
 
     # The next save: its update is applied and shows tab B's value; no new message.
-    page.fill("#modalMemo", "別タブ確認2")
-    page.locator("#modalSaveBtn").click()
+    factor_field(page, "memo").fill("別タブ確認2")
+    factor_save(page).click()
     expect(chip(nav, a)).to_have_text("No")
     expect(judgement_button(item(page, "work", a), a, "no")).to_have_attribute("aria-pressed", "true")
     expect(chip(page.locator("#edit-panel-tree"), a)).to_have_text("No")
@@ -209,9 +209,12 @@ def test_E_E07_deleting_a_primary_factor_selects_the_top_event(page, e2e_server)
     page.on("dialog", lambda dialog: (messages.append(dialog.message), dialog.accept()))
 
     inspector(page).get_by_role("button", name="この要因を削除").click()
-    expect(toast(page, "削除しました", "success", exact=True)).to_be_visible()
-    assert messages == ["要因「手動確認で追加した要因」を削除しますか？\n"
-                        "この要因の子要因もすべて削除されます。この操作は取り消せません。"]
+    dialog = delete_dialog(page)
+    expect(dialog.locator("[data-delete-title]")).to_have_text("手動確認で追加した要因")
+    expect(dialog.locator("[data-delete-count]")).to_have_text("この要因の子孫 1件も一緒に削除されます（合計 2件）。")
+    dialog.get_by_role("button", name="削除する").click()
+    expect(toast(page, "要因「手動確認で追加した要因」を削除しました", "success", exact=True)).to_be_visible()
+    assert messages == []  # no browser confirm() any more (PR-5)
     expect(inspector_title(page)).to_have_text("頂上事象")
     expect(top_button(page, "nav")).to_have_attribute("aria-current", "true")
     expect(step_button(page, 1)).to_have_attribute("aria-current", "step")
@@ -263,7 +266,7 @@ def test_each_pane_scrolls_on_its_own(page, e2e_server, viewport):
         e2e_server.add_level1(analysis_id, f"一次要因{n:02d}", f"一次要因{n:02d}の説明")
     open_edit(page, analysis_id)
     expect_selected(page, first, "一次要因01")
-    expect(page.locator('[data-details] [data-detail="memo"]')).to_have_text(long_text)  # the details are in
+    expect(factor_field(page, "memo")).to_have_value(long_text)  # the details are in (PR-5: the editor)
 
     width = page.evaluate("() => document.documentElement.clientWidth")
     assert width == viewport["width"]

@@ -15,8 +15,10 @@ deletion walk cannot be completed) are injected through stub_control.json
 * PR3-DELETE-SCOPE  a factor of another analysis directly or further below
          blocks the factor and every ancestor (consistent ones included);
          a walk that cannot be completed, or lookups that fail, block
-         deletion; when blocked, no delete request is sent — neither from
-         the button nor from app.js's deleteNode called directly; a missing
+         deletion; when blocked, no delete request is sent and no dialog
+         opens — neither from the button nor from a stale button that was
+         enabled again (PR-5: the in-page dialog checks again when it opens
+         and when it is confirmed); a missing
          parent / 「上位に不整合あり」 factor is deleted with exactly its
          subtree, a level-mismatched descendant included (the user's
          additional decision of 2026-09-29), while such a descendant is
@@ -26,7 +28,9 @@ deletion walk cannot be completed) are injected through stub_control.json
          parent, never one for an inconsistent parent; with none left
          nothing is sent; the counts of targets and exclusions are shown;
          additional generation and manual add below an inconsistent parent
-         are refused before a request (buttons and direct calls), and never
+         are refused before a request (buttons, stale buttons, direct calls
+         of app.js; PR-5: the manual-add dialog asks again before it sends),
+         and never
          sent without a parent; below a consistent parent they work whatever
          its judgement.
 
@@ -43,6 +47,10 @@ from urllib.parse import urlparse
 import pytest
 
 from tests.e2e.edit_helpers import (
+    add_dialog,
+    delete_dialog,
+    delete_factor,
+    force_click,
     inspector,
     inspector_title,
     item,
@@ -64,7 +72,12 @@ REASON_SCOPE_INCOMPLETE = "削除される範囲をすべて確認できなか�
 REASON_FOREIGN_DESCENDANT = ("この要因の子孫に別の分析の要因が含まれるため、この画面では削除できません"
                              "（削除すると別の分析の要因も削除されます）。")
 PARENT_REASON_INCONSISTENT = "親子関係に不整合があるため、この要因の下には要因を追加・生成できません。"
-DELETE_ALLOWED_TEXT = "子孫の要因もすべて削除されます。この操作は取り消せません。"
+NO_DESCENDANTS_TEXT = "この要因に子孫の要因はありません（画面を表示した時点）。削除は取り消せません。"
+
+
+def descendants_text(count: int) -> str:
+    """The inspector's line under 「この要因を削除」 (PR-5: the server's count)."""
+    return f"子孫の要因 {count}件もすべて削除されます（画面を表示した時点の件数）。この操作は取り消せません。"
 MISSING = 999999  # a parent id that no factor has
 
 
@@ -98,10 +111,11 @@ def expect_delete_blocked(page, node_id: int, title: str, reason: str) -> None:
     expect(delete_reason(page)).to_have_text(reason)
 
 
-def call_delete(page, node_id: int, analysis_id: int) -> None:
-    """app.js's deleteNode called directly, as a stale button or another
-    route would."""
-    page.evaluate("([id, aid]) => deleteNode(id, aid)", [node_id, analysis_id])
+def call_delete(page) -> None:
+    """The delete button enabled again and clicked, as a stale button would
+    (PR-5; app.js's deleteNode is gone): opening the dialog checks again."""
+    force_click(delete_button(page))
+    expect(delete_dialog(page)).to_have_count(0)
 
 
 # ----- E-E08 --------------------------------------------------------------------
@@ -175,7 +189,7 @@ def test_E_E08_every_category_is_named_in_its_group(page, e2e_server):
     expect(notice).to_contain_text(labels["M"][1])
     expect(inspector(page).locator(".edit-crumbs li").first).to_have_text("親子関係に不整合がある要因")
     expect(delete_button(page)).to_be_enabled()
-    expect(delete_reason(page)).to_have_text(DELETE_ALLOWED_TEXT)
+    expect(delete_reason(page)).to_have_text(descendants_text(1))  # M2, from the server's walk
     for name in ("AIで追加生成", "手動追加"):
         expect(inspector(page).get_by_role("button", name=name, exact=True)).to_be_disabled()
     expect(inspector(page).locator("#inspector-children-reason")).to_have_text(PARENT_REASON_INCONSISTENT)
@@ -223,7 +237,7 @@ def test_other_analysis_below_blocks_the_factor_and_every_ancestor(page, e2e_ser
         expect_delete_blocked(page, node_id, title, REASON_FOREIGN_DESCENDANT)
         expect(inspector(page).locator("[data-integrity-notice]")).to_have_count(0)  # its own link is fine
         delete_button(page).click(force=True)  # a disabled button does nothing
-        call_delete(page, node_id, analysis_id)
+        call_delete(page)
         expect(toast(page, REASON_FOREIGN_DESCENDANT, "error")).to_be_visible()
     page.wait_for_timeout(300)
     assert deletes == [] and dialogs == []
@@ -233,11 +247,12 @@ def test_other_analysis_below_blocks_the_factor_and_every_ancestor(page, e2e_ser
     # A factor with nothing of another analysis below: deleted with its subtree.
     select(page, safe, "一次要因S")
     expect(delete_button(page)).to_be_enabled()
-    delete_button(page).click()
+    expect(delete_reason(page)).to_have_text(descendants_text(1))
+    delete_factor(page)
     expect(select_button(page, "nav", safe)).to_have_count(0)
     wait_until(lambda: safe not in e2e_server.node_ids())
     assert before - e2e_server.node_ids() == {safe, safe_child}
-    assert dialogs == ["confirm"] and len(deletes) == 1
+    assert dialogs == [] and len(deletes) == 1  # the in-page dialog, never confirm()
 
 
 @pytest.mark.acceptance("PR3-DELETE-SCOPE")
@@ -253,7 +268,7 @@ def test_a_walk_that_cannot_be_completed_blocks_deletion(page, e2e_server):
     before = e2e_server.node_ids()
 
     expect_delete_blocked(page, p1, "一次要因P1", REASON_SCOPE_INCOMPLETE)  # three factors, the walk stops at two
-    call_delete(page, p1, analysis_id)
+    call_delete(page)
     expect(toast(page, REASON_SCOPE_INCOMPLETE, "error")).to_be_visible()
     page.wait_for_timeout(300)
     assert deletes == [] and dialogs == [] and e2e_server.node_ids() == before
@@ -278,7 +293,7 @@ def test_failed_lookups_block_every_deletion_and_the_page_still_opens(page, e2e_
         f"（親を確認できませんでした：ID {MISSING}）")
     for node_id, title in ((a, "一次要因A"), (b, "二次要因B"), (m, "親を確認できない要因M")):
         expect_delete_blocked(page, node_id, title, REASON_LOOKUP_FAILED)
-        call_delete(page, node_id, analysis_id)
+        call_delete(page)
         expect(toast(page, REASON_LOOKUP_FAILED, "error")).to_be_visible()
     page.wait_for_timeout(300)
     assert deletes == [] and dialogs == [] and e2e_server.node_ids() == before
@@ -306,13 +321,14 @@ def test_missing_parent_and_upper_factors_are_deleted_with_exactly_their_subtree
     # The level-mismatched descendant is never offered itself (the additional
     # decision of 2026-09-29) …
     expect_delete_blocked(page, m3, "M2の下の階層不一致の要因M3", REASON_NOT_VERIFIED)
-    call_delete(page, m3, analysis_id)
+    call_delete(page)
     expect(toast(page, REASON_NOT_VERIFIED, "error")).to_be_visible()
     page.wait_for_timeout(300)
     assert deletes == [] and dialogs == [] and e2e_server.node_ids() == before
 
     select(page, n2, "Nの下の要因N2")  # 「上位に不整合あり」
-    delete_button(page).click()
+    expect(delete_reason(page)).to_have_text(NO_DESCENDANTS_TEXT)
+    delete_factor(page)
     expect(select_button(page, "nav", n2)).to_have_count(0)
     wait_until(lambda: n2 not in e2e_server.node_ids())
     assert before - e2e_server.node_ids() == {n2}
@@ -320,14 +336,17 @@ def test_missing_parent_and_upper_factors_are_deleted_with_exactly_their_subtree
     # … and goes with its deletable ancestor: 親不在 M, its child and the
     # mismatched grandchild, nothing else.
     select(page, m, "親不在の要因M")
-    expect(delete_reason(page)).to_have_text(DELETE_ALLOWED_TEXT)
+    expect(delete_reason(page)).to_have_text(descendants_text(2))  # M2 and the mismatched M3, below the display depth
     delete_button(page).click()
+    expect(delete_dialog(page).locator("[data-delete-count]")).to_have_text(
+        "この要因の子孫 2件も一緒に削除されます（合計 3件）。")
+    delete_dialog(page).get_by_role("button", name="削除する").click()
     expect(select_button(page, "nav", m)).to_have_count(0)
     expect(select_button(page, "nav", m3)).to_have_count(0)
     wait_until(lambda: m not in e2e_server.node_ids())
     assert before - e2e_server.node_ids() == {n2, m, m2, m3}
     assert kept_elsewhere <= e2e_server.node_ids(other) and a in e2e_server.node_ids() and n in e2e_server.node_ids()
-    assert dialogs == ["confirm", "confirm"] and len(deletes) == 2
+    assert dialogs == [] and len(deletes) == 2
 
 
 # ----- PR3-GEN-PARENTS ---------------------------------------------------------------
@@ -406,25 +425,35 @@ def test_additional_generation_and_manual_add_below_inconsistent_parents_are_ref
             expect(inspector(page).get_by_role("button", name=name, exact=True)).to_be_disabled()
         expect(inspector(page).locator("#inspector-children-reason")).to_have_text(PARENT_REASON_INCONSISTENT)
 
-    # Direct calls are refused before anything is sent (or opened).
+    # Direct calls and stale buttons are refused before anything is sent
+    # (or opened). The stale manual-add button of M (PR-5: the dialog checks
+    # when it opens).
     page.evaluate("([aid, id]) => generateAdditional(aid, id, 3)", [analysis_id, u])
     expect(toast(page, PARENT_REASON_INCONSISTENT, "error")).to_be_visible()
-    page.evaluate("([aid, id]) => showAddNodeModal(aid, id, 3)", [analysis_id, m])
-    expect(page.locator("#addNodeModal")).to_be_hidden()
+    force_click(inspector(page).get_by_role("button", name="手動追加", exact=True))  # M is selected
+    expect(add_dialog(page)).to_have_count(0)
     page.evaluate("([aid]) => generateAdditional(aid, null, 2)", [analysis_id])
     expect(toast(page, "親要因が指定されていないため、追加・生成できません", "error")).to_be_visible()
 
-    # The manual-add dialog opened for A but pointed at M before sending.
+    # The manual-add dialog opened for A, whose link became inconsistent
+    # before 追加する (another tab; the page was updated meanwhile): asked
+    # again, nothing is sent, the input stays in the dialog.
     select(page, a, "一次要因A")
     inspector(page).get_by_role("button", name="手動追加", exact=True).click()
-    expect(page.locator("#addNodeTitle")).to_be_focused()
-    page.evaluate("(id) => { document.getElementById('addNodeParentId').value = String(id); }", m)
-    page.fill("#addNodeTitle", "送られてはいけない要因")
-    page.locator("#addNodeModal").get_by_role("button", name="追加").click()
-    expect(toast(page, PARENT_REASON_INCONSISTENT, "error")).to_be_visible()
+    expect(page.locator("#add-factor-title")).to_be_focused()
+    page.fill("#add-factor-title", "送られてはいけない要因")
+    e2e_server.set_parent(a, MISSING)
+    page.evaluate("() => window.ftaEditBridge.refresh({})")
+    expect(page.locator(f'.edit-anomalies--nav [data-role="nav-item"][data-node-id="{a}"]')).to_have_count(1)
+    add_dialog(page).get_by_role("button", name="追加する").click()
+    expect(add_dialog(page).locator(".ui-dialog__error")).to_have_text(PARENT_REASON_INCONSISTENT)
+    expect(page.locator("#add-factor-title")).to_have_value("送られてはいけない要因")
     page.wait_for_timeout(300)
     assert bodies == [] and adds == [] and e2e_server.node_ids() == before
-    page.locator("#addNodeModal").get_by_role("button", name="キャンセル").click()
+    add_dialog(page).get_by_role("button", name="キャンセル").click()
+    e2e_server.set_parent(a, None)
+    page.evaluate("() => window.ftaEditBridge.refresh({})")
+    expect(page.locator(f'.edit-anomalies--nav [data-role="nav-item"][data-node-id="{a}"]')).to_have_count(0)
 
     # Below the consistent A (未評価) additional generation works (J-16).
     add_more = inspector(page).get_by_role("button", name="AIで追加生成", exact=True)
