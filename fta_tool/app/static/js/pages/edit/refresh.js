@@ -42,12 +42,18 @@
 // the header title: PR-4; the inspector's draft: PR-5), the open title
 // editor and the manual-add dialog with input.
 // whenIdle() resolves when no update runs or waits (the end of a
-// generation, edit/generation.js).
+// generation, edit/generation.js); outcome() tells how the last one ended
+// (applied / failed / gone / given up) with its number, so the generation
+// knows whether the data it checks its results against is the server's
+// after the generation (mark() before asking for the update).
+// PR-6: the reload of a failed update (nothing typed) happens also while a
+// generation is being finished; the generation log was stored before, and
+// the browser's confirmation of that phase is not shown for it.
 
 import { el } from '../../common/dom.js';
 import { requestText } from '../../common/http.js';
 import { notify } from '../../common/notify.js';
-import { hasUnsaved, isLeavingPage, isSaving } from '../../common/unsaved.js';
+import { hasUnsaved, isLeavingPage, isSaving, markPageLeaving } from '../../common/unsaved.js';
 import { hasAddDialogInput } from './add-dialog.js';
 import { currentEditor, renderInspector } from './inspector.js';
 import { getNode, isAtOrBelow, readModel, stepForNode } from './model.js';
@@ -179,6 +185,13 @@ export function createRefresher(app, { scrollers }) {
   let pending = null;
   let sequence = 0;
   let idleWaiters = [];
+  let outcomeSeq = 0;
+  let lastOutcome = null; // { seq, kind: 'applied' | 'failed' | 'gone' }
+
+  function record(kind) {
+    outcomeSeq += 1;
+    lastOutcome = { seq: outcomeSeq, kind };
+  }
 
   function settle() {
     if (running || (pending && !app.gone)) return;
@@ -188,13 +201,14 @@ export function createRefresher(app, { scrollers }) {
   }
 
   function stopOperations() {
+    record('gone');
     app.gone = true;
     const page = app.root;
     if (!page.querySelector('.edit-gone')) {
       page.prepend(el('p', { class: 'edit-gone', role: 'alert' },
         '分析が見つかりません（削除された可能性があります）。この画面では保存・生成・削除ができません。一覧へ戻ってください。'));
     }
-    page.querySelectorAll('[data-action="judgement"], [data-action^="legacy-"], [data-action="add"], [data-action="delete"], [data-generate]').forEach((button) => {
+    page.querySelectorAll('[data-action="judgement"], [data-action^="generate"], [data-action="add"], [data-action="delete"], [data-generate]').forEach((button) => {
       button.disabled = true;
       button.dataset.blockedReason = '分析が見つかりません';
     });
@@ -211,9 +225,11 @@ export function createRefresher(app, { scrollers }) {
   }
 
   function failed(result) {
+    record('failed');
     if (isLeavingPage()) return; // the page is being left (保存して移動): no reload, no message
     if (!hasTypedInput()) {
       app.saveSession();
+      markPageLeaving();
       window.location.reload();
       return;
     }
@@ -304,6 +320,7 @@ export function createRefresher(app, { scrollers }) {
     applyCounts(app);
     applyFilter(app);
     if (app.applyStep1State) app.applyStep1State(); // the step status and ③・④'s notes were replaced
+    if (app.afterRefresh) app.afterRefresh(); // PR-6: the log's badges, the generation's restrictions
     writeHash(app.state);
     renderInspector(app);
     if (scrollers.nav) scrollers.nav.scrollTop = scroll.nav;
@@ -381,14 +398,17 @@ export function createRefresher(app, { scrollers }) {
             // changed elsewhere since (another tab). Kept, they would refuse
             // every later update until a reload.
             app.writes.confirmed.clear();
+            record('failed');
             notify('表示を最新にできませんでした。ページを再読み込みしてください。', { type: 'error' });
             return;
           }
           continue;
         }
         apply(doc, model, options);
+        record('applied');
         return;
       }
+      record('failed');
       notify('表示を最新にできませんでした。ページを再読み込みしてください。', { type: 'error' });
     } finally {
       running = false;
@@ -431,6 +451,8 @@ export function createRefresher(app, { scrollers }) {
       if (!running && (!pending || app.gone)) return Promise.resolve();
       return new Promise((resolve) => idleWaiters.push(resolve));
     },
+    mark: () => outcomeSeq,
+    outcome: () => lastOutcome,
     describeFocus: () => describeFocus(),
     restoreFocus: (focus) => restoreFocus(app, focus, app.model),
   };

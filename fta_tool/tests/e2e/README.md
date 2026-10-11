@@ -30,7 +30,7 @@ Claude Code のリモート実行環境（Linux）では、このブラウザが
 | インストール済みの Chrome での必須受入検証 | 上の `--e2e-preflight` を `--e2e-required` に替える | **失敗** |
 
 - `--e2e-required` の代わりに環境変数 `FTA_E2E_REQUIRED=1` でも必須受入検証になります。`--e2e-env` の代わりに `FTA_E2E_ENV` も使えます。
-- 必須受入検証では、`acceptance.py` の `REQUIRED_IDS`（PR-5 時点の累積：E-L01〜E-L08、E-X01、E-N01〜E-N06、PR1-BASE-*、PR1-STUB、PR2-IME、PR2-NO-SAMPLES、E-E01〜E-E09、E-E19、PR3-LEGACY-OPS、PR3-LEGACY-NOTIFY、PR3-LAYOUT、PR3-DELETE-SCOPE、PR3-GEN-PARENTS、PR-4 で追加した E-E10〜E-E13・E-E20・PR4-LAYOUT、PR-5 で追加した E-E14〜E-E18・PR5-LAYOUT。計 48 項目）の各項目について、対応するテストがすべて実行されて成功することを求めます。スキップしたテストは失敗として報告し、`-k` などで実行しなかった項目は「未実施」として失敗にします。PR1-COMPAT-NEW（移行前の新規作成画面の互換確認）は PR-2 で E-N01〜E-N06 に、PR1-COMPAT-EDIT（移行前の分析編集画面の互換確認）は PR-3 で E-E01〜 と PR3-LEGACY-OPS に置き換えました。
+- 必須受入検証では、`acceptance.py` の `REQUIRED_IDS`（PR-5 時点の累積：E-L01〜E-L08、E-X01、E-N01〜E-N06、PR1-BASE-*、PR1-STUB、PR2-IME、PR2-NO-SAMPLES、E-E01〜E-E09、E-E19、PR3-LEGACY-OPS、PR3-LEGACY-NOTIFY、PR3-LAYOUT、PR3-DELETE-SCOPE、PR3-GEN-PARENTS、PR-4 で追加した E-E10〜E-E13・E-E20・PR4-LAYOUT、PR-5 で追加した E-E14〜E-E18・PR5-LAYOUT、PR-6 で追加した E-G01〜E-G12。計 60 項目）の各項目について、対応するテストがすべて実行されて成功することを求めます。スキップしたテストは失敗として報告し、`-k` などで実行しなかった項目は「未実施」として失敗にします。PR1-COMPAT-NEW（移行前の新規作成画面の互換確認）は PR-2 で E-N01〜E-N06 に、PR1-COMPAT-EDIT（移行前の分析編集画面の互換確認）は PR-3 で E-E01〜 と PR3-LEGACY-OPS に置き換えました。
 - テンプレートの構造テスト（T-01〜T-04、`tests/test_ui_templates.py`）と不正な親子関係の区分・削除範囲のテスト（T-07、`tests/test_node_integrity.py`。テストごとの一時 DB）は通常の pytest で実行します。必須受入検証では、通常の pytest と E2E の両方の結果を記録してください。
 - 失敗の調査には pytest-playwright のオプションが使えます：`--headed`（画面を表示）、`--slowmo 200`、`--screenshot only-on-failure --tracing retain-on-failure --output <絶対パス>`。
 - **`--output` には、新しいフォルダを指定してください。** pytest-playwright 0.7.1 は、開始時に `--output`（既定は実行したフォルダの `test-results`）を削除します。pytest の `--basetemp` も、開始時に中身を消します。どちらにも、過去の記録や手動確認のフォルダを指定しないでください。
@@ -46,7 +46,7 @@ Claude Code のリモート実行環境（Linux）では、このブラウザが
 ## インストール済みの Google Chrome・Microsoft Edge で実行する（2026-10-03）
 
 **2026-10-06 の利用者の方針**：2026-10-06 の利用者の方針により、PR-4 以降は Windows の Chrome・Edge とも、可能な範囲を自動 E2E で確認し、自動化で確認できない変更箇所だけを実操作・目視で確認する。
-同じテストを `--browser-channel chrome`（Chrome Stable）と `--browser-channel msedge`（Edge Stable）で順に実行します（Windows では `scripts/run_browser_e2e.ps1 -Channel chrome` / `-Channel msedge`）。ブラウザごとに、準備確認（`-Mode Preflight`）が成功してから全必須 E2E（`-Mode Full`）へ進みます。準備確認の成功と診断（`-Mode Diagnose`）は、全必須 E2E の合格ではありません。記録には、指定した channel と実際に起動したブラウザ（作成元・版・実行ファイル）を、画面寸法のケース名（例：edge-1912x914。寸法の名前で、ブラウザとは別）と分けて書きます。PR-4 の手順と、実操作・目視に残す項目は [manual-check-pr4.md](../../docs/manual-check-pr4.md)、PR-5 は [manual-check-pr5.md](../../docs/manual-check-pr5.md) です（PR-5 の旧ダイアログ前提のテストは、新しいインスペクタ・ダイアログの操作に書き換え、保証していた内容を引き継いだ。対応は計画書 第14.5節）。PR-3 の Edge の手動確認・Chrome の自動確認の記録は、その時点の結果として残します。
+同じテストを `--browser-channel chrome`（Chrome Stable）と `--browser-channel msedge`（Edge Stable）で順に実行します（Windows では `scripts/run_browser_e2e.ps1 -Channel chrome` / `-Channel msedge`）。ブラウザごとに、準備確認（`-Mode Preflight`）が成功してから全必須 E2E（`-Mode Full`）へ進みます。準備確認の成功と診断（`-Mode Diagnose`）は、全必須 E2E の合格ではありません。記録には、指定した channel と実際に起動したブラウザ（作成元・版・実行ファイル）を、画面寸法のケース名（例：edge-1912x914。寸法の名前で、ブラウザとは別）と分けて書きます。PR-4 の手順と、実操作・目視に残す項目は [manual-check-pr4.md](../../docs/manual-check-pr4.md)、PR-5 は [manual-check-pr5.md](../../docs/manual-check-pr5.md)、PR-6 は [manual-check-pr6.md](../../docs/manual-check-pr6.md) です（PR-5 の旧ダイアログ前提のテストは、新しいインスペクタ・ダイアログの操作に書き換え、保証していた内容を引き継いだ。対応は計画書 第14.5節。PR-6 の旧生成処理・オーバーレイ前提のテストの移管は計画書 第14.6節）。PR-3 の Edge の手動確認・Chrome の自動確認の記録は、その時点の結果として残します。
 
 `--browser chromium --browser-channel chrome`（Edge は `msedge`）で、Playwright 同梱の Chromium ではなく、インストール済みのブラウザを使います。
 `playwright install chrome` などは使いません（Playwright の文書のとおり、既存のインストールを上書きするため）。
@@ -88,7 +88,7 @@ Windows の開発環境でも同じ手順で実行できます（`pip install -r
 | ファイル | 内容 |
 |---|---|
 | `conftest.py` | テスト用サーバー（セッションで1回起動）、テストごとの DB とスタブの初期化、画面寸法、ブラウザ起動（channel、起動したブラウザの記録、起動できないときの案内）、ページの監視（テストの終わりと後片付け）、既知の例外（favicon の 404）の記録、Windows での失敗時の保存先の名前、失敗したテストの画面（撮れなかった理由の記録） |
-| `stub_server.py` | 本体アプリをスタブの AI プロバイダで起動する（`python -m tests.e2e.stub_server --port N`、作業ディレクトリは `FTA_E2E_WORKDIR`）。スタブの動作は `FTA_E2E_STUB_MODE` またはテストが書く `stub_control.json`（`create`・`delay`・`no_candidates`・`error`）。編集画面の親子関係の確認への障害の注入も同じファイルで指定する（`"integrity": "lookup_error"`：確認用の問い合わせが失敗する、`"integrity_scope_limit": N`：削除範囲の走査を N 件で打ち切る。データは変えない）。診断のときだけ、`FTA_E2E_ACCESS_LOG` のファイルに要求ごとの受信・応答の開始と終了・相手の切断を書く（メソッド・パス・時刻・User-Agent の種類・接続元のポート番号だけ。クエリ・ヘッダー・本文は書かない。テストでは使わない） |
+| `stub_server.py` | 本体アプリをスタブの AI プロバイダで起動する（`python -m tests.e2e.stub_server --port N`、作業ディレクトリは `FTA_E2E_WORKDIR`）。スタブの動作は `FTA_E2E_STUB_MODE` またはテストが書く `stub_control.json`（`create`・`delay`・`no_candidates`・`error`、PR-6 で `warning`（品質警告付きの作成）・`all_excluded`（全候補除外）と、親ごとに区分を変える `by_parent` を追加。PR-6 の手順書は、実操作・目視の遅延と部分失敗にも同じスタブを使う）。編集画面の親子関係の確認への障害の注入も同じファイルで指定する（`"integrity": "lookup_error"`：確認用の問い合わせが失敗する、`"integrity_scope_limit": N`：削除範囲の走査を N 件で打ち切る。データは変えない）。診断のときだけ、`FTA_E2E_ACCESS_LOG` のファイルに要求ごとの受信・応答の開始と終了・相手の切断を書く（メソッド・パス・時刻・User-Agent の種類・接続元のポート番号だけ。クエリ・ヘッダー・本文は書かない。テストでは使わない） |
 | `support.py` | サーバーの操作（既存 API でのデータ作成、DB の参照、テスト用 DB への不整合データの直接書き込み、`stub_control.json` の変更）、ページの監視（既知の例外：favicon の 404 の判定。ブラウザの記録は CDP で読む）、ダイアログの記録、画面の保存（撮れなかった理由を返す） |
 | `diagnose_navigation.py` | 最初の画面遷移の診断（テストではない。合否は判定しない）。新しい一時サーバーの同じ URL を、Python（httpx）・Playwright のブラウザ（最小の構成とテストと同じ構成。止まるときはサンドボックスありの起動も）・Playwright を使わない起動で開き、サーバーの記録とブラウザの NetLog の要約を `diagnose-report.md` に書く。Windows の設定は読み取るだけ（プロキシの設定の有無とポリシーの名前。値は書かない） |
 | `edit_helpers.py` | 分析編集画面のテストで共通の要素の指定と確認（選択の一致、共通の通知の指定など） |
@@ -101,6 +101,9 @@ Windows の開発環境でも同じ手順で実行できます（`pip install -r
 | `test_edit_integrity.py` | 不正な親子関係の表示（E-E08）、削除範囲（PR3-DELETE-SCOPE）、生成・追加の親（PR3-GEN-PARENTS） |
 | `test_legacy_compat.py` | 分析編集で暫定的に旧処理（app.js）を使う操作と、その通知（PR3-LEGACY-OPS、PR3-LEGACY-NOTIFY） |
 | `test_console_check.py` | ページの確認の既知の例外（favicon の 404）の境界を、実ブラウザの記録で確かめる（同じサーバーの script・CSS・画像・API・クエリ付き・ページが読む `/favicon.ico` の 404 は除かれない）。受入 ID はなし（すべての E2E が通る確認そのものの検査） |
+| `test_edit_generation.py` | 生成（PR-6）：一次の生成と自動保存（E-G01）、二次・三次の対象と親ごとの要求（E-G02）、8つの結果区分・品質警告・部分失敗・通知（E-G03）、生成後の部分更新（E-G05）、追加生成（E-G07） |
+| `test_edit_generation_run.py` | 生成中（PR-6）：操作の制限と削除の3か所（E-G04）、生成中のブラウザ離脱の確認（E-G08）、生成準備の待機・失敗・取りやめ・10秒の説明（E-G09）、詳細の取得待ちと再取得（E-G10）、保存の抑止と2択（E-G11）、各終了経路での制限の解除（E-G12） |
+| `test_edit_generation_log.py` | 生成ログの保持（PR-6、E-G06）：sessionStorage の内容、再読み込み後の復元、別の分析と別タブ（開き方ごと）、閉じる、保存領域が使えない場合 |
 | `test_edit_manual_items.py` | PR-3 の手動確認の項目のうち、それまでの E2E が確かめていなかった部分（2026-10-03。実際の2つのタブでの評価の変更後の復帰、未評価に戻す、No・未評価の絞り込み、一次要因の削除後の選択、不整合の全区分の追加の無効と理由、各ペインのスクロール、生成中の親ごとの表示）。対応表は手順書の第11節 |
 
 テスト基盤そのもの（準備確認、記録、起動失敗の案内、ポート、失敗時の保存先と実際に残った証跡、既知の例外の境界と記録）は `tests/test_e2e_infrastructure.py`、診断（サーバーの記録、NetLog の要約と伏せる情報、記録の分類）は `tests/test_diagnose_navigation.py`、Windows 用のスクリプト（実行前の確認、記録フォルダ、終了コード、実行環境の区分と OS、残っていたプロセスの記録、診断の実行）は `tests/test_run_browser_e2e_script.py` が確かめます（ブラウザは使いません）。

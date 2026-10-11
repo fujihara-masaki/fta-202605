@@ -290,7 +290,10 @@ def test_each_pane_scrolls_on_its_own(page, e2e_server, viewport):
 # ----- PR3-LEGACY-OPS: item 9 -------------------------------------------------------------
 
 @pytest.mark.acceptance("PR3-LEGACY-OPS")
-def test_generation_marks_each_parent_until_the_partial_update(page, e2e_server):
+def test_generation_marks_each_parent_and_keeps_it_after_the_update(page, e2e_server):
+    """PR-3 item 9: each parent shows how its generation went. PR-3 showed
+    the legacy 「生成中…」「+N件」 until the partial update replaced them; since
+    PR-6 the badge of the generation log (E-G03) stays after the update."""
     analysis_id = e2e_server.create_analysis("生成の件数の表示", top_event="頂上")
     a = e2e_server.add_level1(analysis_id, "一次要因A")
     b = e2e_server.add_level1(analysis_id, "一次要因B")
@@ -310,17 +313,17 @@ def test_generation_marks_each_parent_until_the_partial_update(page, e2e_server)
     mark_page(page)
 
     def mark(node_id):
-        return page.locator(f'[data-gen-host="{node_id}"] .gen-status-badge')
+        return page.locator(f'[data-gen-host="{node_id}"] [data-gen-badge]')
 
     step_panel(page, 3).get_by_role("button", name="Yesの一次要因から二次要因を生成").click()
-    expect(toast(page, "2件の親要因から順に生成中...", "success", exact=True)).to_be_visible()
+    expect(toast(page, "二次要因の通常生成を開始しました：対象の親 2件", "info")).to_be_visible()
     wait_for(page, lambda: bool(held))  # A is done, B is being generated
-    expect(mark(a)).to_have_text("+3件")
+    expect(mark(a)).to_have_text("作成 3件")
     expect(mark(b)).to_have_text("生成中…")
 
     held[0].continue_()
-    expect(toast(page, "合計6件の要因を生成しました", "success", exact=True)).to_be_visible()
+    expect(toast(page, "二次要因の通常生成：6件作成しました", "success", exact=True)).to_be_visible()
     for parent_id in (a, b):
         expect(page.locator(f'[data-group-parent="{parent_id}"] [data-role="work-item"]')).to_have_count(3)
-    expect(page.locator(".gen-status-badge")).to_have_count(0)  # replaced by the partial update (PR-3 interim)
+        expect(mark(parent_id)).to_have_text("作成 3件")  # kept after the partial update (PR-6)
     assert same_page(page)

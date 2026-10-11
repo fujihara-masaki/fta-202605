@@ -22,6 +22,28 @@
 //   (common/text.js), so typing and restoring is not unsaved.
 // - Saving is refused while a generation is prepared, runs or is finished
 //   (J-01): the reason is shown, the input stays.
+// - PR-6 (J-01, plan 5.9.1 「詳細の取得」): no GET /nodes/{id} is sent while a
+//   generation is prepared, runs or is being finished (a single worker would
+//   answer only after it). A factor chosen then is either
+//     waiting  (取得待ち) — nothing of its details is known: the fields stay
+//              empty and disabled (never the previous factor's values), the
+//              inspector shows what the embedded data knows;
+//     cached   — its details were read before the generation began: the saved
+//              values and when they were read are shown (only saved values
+//              are kept, never a draft, and only for this purpose).
+//   After the generation, refetch() reads the factor shown again (one
+//   request; an older answer is dropped by its number):
+//     - never loaded (waiting, or the first load failed): the first load;
+//     - loaded: a second read. The values read become the saved values
+//       (what 入力中（未保存） compares with, what 取消 restores and what a
+//       later 保存 is compared with). Fields the user did not change take
+//       the values read; fields the user changed keep the input (never
+//       overwritten), so saving later does not put back an older value of
+//       a field nobody edited. When the values read differ from those the
+//       draft started from, 「保存済みの値が変わっています」 is shown while
+//       the draft lasts. The source is not registered again. A failure of this second read is told as such
+//       (the values shown and when they were read stay), never as a failure
+//       of the first load.
 // - markGone(): the factor is no longer on the page (removed elsewhere) —
 //   the input stays (read-only), its reason is shown, nothing is sent and the
 //   target is never changed to another factor.
@@ -41,7 +63,30 @@ import {
   saveSource,
   subscribe,
 } from '../../common/unsaved.js';
-import { createFactorSource } from './factor-source.js';
+import { changedKeys, createFactorSource, sameSavedValues } from './factor-source.js';
+
+// The saved values of the factors read on this page, by analysis and factor:
+// { data, at }. Used only to show a factor chosen during a generation (no
+// request then); never a draft.
+const detailCache = new Map();
+const cacheKey = (analysisId, nodeId) => `${Number(analysisId)}:${Number(nodeId)}`;
+
+export function cachedDetails(analysisId, nodeId) {
+  return detailCache.get(cacheKey(analysisId, nodeId)) || null;
+}
+
+function remember(analysisId, nodeId, data) {
+  const at = new Date();
+  detailCache.set(cacheKey(analysisId, nodeId), { data: { ...data }, at });
+  return at;
+}
+
+export function timeText(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+export const WAITING_TEXT = '詳細（説明・メモ・直接要因評価など）は生成の完了後に取得します（取得待ち）。それまでは表示・編集できません。';
 
 export const GONE_FACTOR_REASON = '編集中の要因が見つからないため、入力内容を保存できません（別のタブなどで削除された可能性があります）。必要な内容は控えてから、別の要因を選ぶか一覧へ戻ってください。';
 export const GONE_ANALYSIS_REASON = '分析が見つからないため、入力内容を保存できません（削除された可能性があります）。';
@@ -65,6 +110,7 @@ const FIELDS = [
 ];
 
 const STATUS_TEXT = {
+  waiting: '取得待ち',
   loading: '読み込み中…',
   failed: '読み込めませんでした',
   saving: '保存中…',
@@ -95,7 +141,13 @@ export function createFactorEditor(app, node, { onSaved, onLoaded } = {}) {
   const nodeId = Number(node.id);
   const analysisId = app.analysisId;
   const prefix = `factor-${nodeId}`;
-  let phase = 'loading'; // loading | ready | failed
+  let phase = 'loading'; // waiting | loading | ready | failed
+  let loadSeq = 0; // numbers every read: only the answer to the latest is used
+  let fetchedAt = null; // when the saved values shown were read
+  let fromCache = false; // shown from the values read before a generation
+  let refetching = false;
+  let refetchError = '';
+  let changedNotice = false; // the values read again differ from those the draft started from
   let gone = null; // null | 'node' | 'analysis'
   let closed = false;
   let data = null;
@@ -121,6 +173,12 @@ export function createFactorEditor(app, node, { onSaved, onLoaded } = {}) {
   const retry = el('button', { type: 'button', class: 'ui-btn ui-btn--sm', 'data-factor-reload': true, hidden: true },
     '再読み込み');
   const message = el('p', { class: 'edit-editor__message', role: 'alert', 'data-factor-message': true });
+  // PR-6: when the saved values shown were read, and what a second read
+  // after a generation found.
+  const readLine = el('p', { class: 'edit-inspector__status', 'data-detail-read': true, hidden: true });
+  const refetchButton = el('button', {
+    type: 'button', class: 'ui-btn ui-btn--sm', 'data-factor-refetch': true, hidden: true,
+  }, '取り直す');
   const saveButton = el('button', {
     type: 'button', class: 'ui-btn ui-btn--sm ui-btn--primary', 'data-factor-save': true, disabled: true,
   }, '保存');
@@ -136,6 +194,8 @@ export function createFactorEditor(app, node, { onSaved, onLoaded } = {}) {
     status),
   loadLine,
   retry,
+  readLine,
+  refetchButton,
   el('div', { class: 'edit-editor__fields' }, rows),
   el('div', { class: 'edit-editor__bar' },
     message,
@@ -180,7 +240,8 @@ export function createFactorEditor(app, node, { onSaved, onLoaded } = {}) {
     if (blocked && phase === 'ready') state = 'gone';
     status.dataset.state = state;
     status.textContent = STATUS_TEXT[state];
-    status.className = `ui-status ui-status--${state === 'gone' || state === 'failed' ? 'dirty' : state}`;
+    const look = { gone: 'dirty', failed: 'dirty', waiting: 'saving' }[state] || state;
+    status.className = `ui-status ui-status--${look}`;
     element.dataset.phase = blocked ? 'gone' : phase;
 
     for (const input of Object.values(inputs)) {
@@ -190,7 +251,7 @@ export function createFactorEditor(app, node, { onSaved, onLoaded } = {}) {
     }
     // While the save is in flight 保存・取消 refuse (aria-disabled, so the
     // focus stays on 保存); otherwise they are disabled when they cannot act.
-    saveButton.disabled = phase !== 'ready' || Boolean(blocked);
+    saveButton.disabled = phase !== 'ready' || Boolean(blocked) || generating;
     saveButton.setAttribute('aria-disabled', saving ? 'true' : 'false');
     saveButton.textContent = saving ? '保存中…' : '保存';
     saveButton.setAttribute('aria-busy', saving ? 'true' : 'false');
@@ -215,8 +276,30 @@ export function createFactorEditor(app, node, { onSaved, onLoaded } = {}) {
     message.textContent = text;
     message.dataset.kind = kind;
     message.hidden = !text;
+    renderReadLine(dirty);
     inputs.title.setAttribute('aria-invalid',
       phase === 'ready' && source && source.validate() ? 'true' : 'false');
+  }
+
+  function renderReadLine(dirty) {
+    let text = '';
+    let kind = 'info';
+    if (phase === 'ready' && refetching) {
+      text = '保存されている内容を取り直しています…（入力中の内容はそのままです）';
+    } else if (phase === 'ready' && refetchError) {
+      text = `生成後に保存済みの内容を取り直せませんでした：${refetchError}。表示している保存済みの内容は ${timeText(fetchedAt)} に読み込んだものです。`;
+      kind = 'error';
+    } else if (phase === 'ready' && changedNotice && dirty) {
+      text = '保存済みの値が変わっています（入力を始めたときの値と、生成後に取り直した値が違います）。入力中の内容はそのままです。「取消」を押すと取り直した保存済みの値に戻ります。';
+      kind = 'warning';
+    } else if (phase === 'ready' && fromCache && fetchedAt) {
+      text = `生成の前（${timeText(fetchedAt)}）に読み込んだ保存済みの内容です。生成の完了後に取り直します。`;
+    }
+    readLine.textContent = text;
+    readLine.dataset.kind = kind;
+    readLine.hidden = !text;
+    refetchButton.hidden = !(phase === 'ready' && refetchError && !refetching);
+    refetchButton.disabled = getGenerationPhase() !== 'idle';
   }
 
   function register(values) {
@@ -227,10 +310,14 @@ export function createFactorEditor(app, node, { onSaved, onLoaded } = {}) {
       read,
       saved: values,
       onDiscard: () => {
+        changedNotice = false;
         fill(source.savedValues());
         render();
       },
       onSaved: (fields) => {
+        changedNotice = false;
+        if (data) data = { ...data, ...fields };
+        fetchedAt = remember(analysisId, nodeId, data || fields);
         render();
         if (onSaved) onSaved(nodeId, fields);
       },
@@ -240,7 +327,36 @@ export function createFactorEditor(app, node, { onSaved, onLoaded } = {}) {
     unsubscribe = subscribe(render);
   }
 
+  // Nothing is read while a generation is under way: 取得待ち until refetch().
+  function wait() {
+    phase = 'waiting';
+    loadSeq += 1; // an answer to an earlier read is not used
+    retry.hidden = true;
+    loadLine.hidden = false;
+    loadLine.dataset.kind = 'info';
+    loadLine.textContent = WAITING_TEXT;
+    render();
+  }
+
+  // During a generation: the saved values read before it began.
+  function showCached(entry) {
+    data = { ...entry.data };
+    fill(data);
+    phase = 'ready';
+    fromCache = true;
+    fetchedAt = entry.at;
+    loadLine.hidden = true;
+    loadLine.textContent = '';
+    register(data);
+    render();
+    if (onLoaded) onLoaded(editor);
+  }
+
   async function load() {
+    if (getGenerationPhase() !== 'idle') {
+      wait();
+      return;
+    }
     phase = 'loading';
     loadError = '';
     retry.hidden = true;
@@ -248,8 +364,10 @@ export function createFactorEditor(app, node, { onSaved, onLoaded } = {}) {
     loadLine.dataset.kind = '';
     loadLine.textContent = '保存されている内容を読み込んでいます…';
     render();
+    loadSeq += 1;
+    const seq = loadSeq;
     const result = await requestJson(`/nodes/${nodeId}`);
-    if (closed) return; // another factor (or a later editor of this one) owns the inspector now
+    if (closed || seq !== loadSeq) return; // another factor (or a later read) owns the inspector now
     if (!result.ok || !result.data || Number(result.data.id) !== nodeId
       || Number(result.data.analysis_id) !== Number(analysisId)) {
       phase = 'failed';
@@ -267,11 +385,60 @@ export function createFactorEditor(app, node, { onSaved, onLoaded } = {}) {
     data = result.data;
     fill(data);
     phase = 'ready';
+    fromCache = false;
+    fetchedAt = remember(analysisId, nodeId, data);
     loadLine.hidden = true;
     loadLine.textContent = '';
     register(data);
     render();
     if (onLoaded) onLoaded(editor);
+  }
+
+  // A second read of a loaded factor (after a generation): see the header.
+  async function readAgain() {
+    if (getGenerationPhase() !== 'idle' || !source) return;
+    loadSeq += 1;
+    const seq = loadSeq;
+    refetching = true;
+    refetchError = '';
+    render();
+    const result = await requestJson(`/nodes/${nodeId}`);
+    if (closed || seq !== loadSeq) return;
+    refetching = false;
+    if (!result.ok || !result.data || Number(result.data.id) !== nodeId
+      || Number(result.data.analysis_id) !== Number(analysisId)) {
+      refetchError = result.ok ? '応答が正しくありません' : result.reason;
+      render();
+      if (result.status === 404) app.refresh(); // the structure tells whether it is gone
+      return;
+    }
+    const startedFrom = source.savedValues();
+    const edited = new Set(changedKeys(read(), startedFrom)); // the user's input
+    data = result.data;
+    fromCache = false;
+    fetchedAt = remember(analysisId, nodeId, data);
+    const changed = !sameSavedValues(data, startedFrom);
+    source.rebase(data);
+    const typed = read();
+    const next = source.savedValues();
+    for (const key of edited) next[key] = typed[key];
+    fill(next);
+    changedNotice = changed && edited.size > 0;
+    if (changedNotice) announce('保存済みの値が変わっています。入力中の内容はそのままです。');
+    refreshUnsaved();
+    render();
+    if (onLoaded) onLoaded(editor);
+  }
+
+  // After a generation: read the factor shown (once; see the header).
+  function refetch() {
+    if (closed || getGenerationPhase() !== 'idle') return;
+    if (phase === 'waiting' || phase === 'failed') {
+      load();
+      return;
+    }
+    if (phase === 'ready') readAgain();
+    // 'loading': the first read is still under way; its answer is used.
   }
 
   async function save() {
@@ -311,6 +478,7 @@ export function createFactorEditor(app, node, { onSaved, onLoaded } = {}) {
 
   function cancel() {
     if (phase !== 'ready' || !source || isSourceSaving(source) || goneReason()) return;
+    changedNotice = false;
     fill(source.savedValues());
     refreshUnsaved();
     render();
@@ -319,7 +487,10 @@ export function createFactorEditor(app, node, { onSaved, onLoaded } = {}) {
   saveButton.addEventListener('click', save);
   cancelButton.addEventListener('click', cancel);
   retry.addEventListener('click', () => {
-    if (phase === 'failed') load();
+    if (phase === 'failed') load(); // during a generation: 取得待ち instead of a request
+  });
+  refetchButton.addEventListener('click', () => {
+    if (phase === 'ready' && refetchError) readAgain();
   });
   for (const input of Object.values(inputs)) {
     input.addEventListener('input', () => refreshUnsaved());
@@ -336,6 +507,9 @@ export function createFactorEditor(app, node, { onSaved, onLoaded } = {}) {
     analysisId,
     element,
     load,
+    wait,
+    showCached,
+    refetch,
     render,
     get phase() {
       return phase;

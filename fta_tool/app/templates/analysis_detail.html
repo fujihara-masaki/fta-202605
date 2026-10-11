@@ -10,9 +10,13 @@
     ① with its save status, ⑤'s counts and export table, and leaving the
     page through the shared save coordinator (js/common/unsaved.js).
     PR-5: the inspector's editor of a factor, the manual-add and delete
-    dialogs, and the R-01 check when the factor is switched. Generation
-    still runs through the legacy app.js (replaced in PR-6); style.css keeps
-    only what those legacy parts use. -#}
+    dialogs, and the R-01 check when the factor is switched. PR-6:
+    generation (js/pages/edit/generation.js) with its status line above the
+    work area (data-gen-status: preparing / running / finishing, with
+    生成を取りやめる while preparing), the generation log and the
+    restrictions of a generation; the legacy app.js and the overlay of the
+    一次 generation are gone. style.css is still loaded; its unused rules
+    are removed in PR-7. -#}
 {% block screen_styles %}<link rel="stylesheet" href="/static/css/edit.css"><link rel="stylesheet" href="/static/style.css">{% endblock %}
 {% block body_class %}ui-page edit-body{% endblock %}
 {% block skip_links %}
@@ -51,6 +55,7 @@
           <span class="visually-hidden" id="edit-filter-help">作業リストと一覧表では一致しない要因を隠し、構造ナビとツリーでは一致する要因を強調します。生成の対象は変わりません。</span>
         </div>
       </div>
+      <div class="edit-genstatus" data-gen-status data-phase="idle" hidden></div>
       <div class="edit-pane__scroll" data-scroll="center">
         <section class="edit-view" role="tabpanel" id="edit-panel-work" aria-labelledby="edit-tab-work" data-view-panel="work" tabindex="0">
           {% include "edit/_work.html" %}
@@ -68,17 +73,11 @@
   </div>
 </div>
 
-{% include "edit/_legacy_dialogs.html" %}
-
 <script type="application/json" id="analysis-data">{{ view.data | tojson }}</script>
 {% endblock %}
 
-{#- app.js still runs the legacy parts; its messages go to the shared
-    notifications (showToast → window.ftaEditBridge.notify), so the old
-    #toast element of base.html is not rendered here. -#}
-{% block legacy_scripts %}
-<script src="/static/app.js"></script>
-{% endblock %}
+{#- No legacy script since PR-6 (generation moved to js/pages/edit). -#}
+{% block legacy_scripts %}{% endblock %}
 
 {% block extra_scripts %}
 <script type="module" src="/static/js/pages/edit.js"></script>

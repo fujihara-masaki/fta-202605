@@ -61,10 +61,14 @@
 //      sources only; after a partial success 破棄して移動 says that the saved
 //      ones stay saved and only the failed input is dropped.
 //      編集を続ける and Esc close the dialog and give the focus back.
-// Download links (download attribute) are never intercepted.
+// Download links (download attribute) are never intercepted — except while
+// a generation is prepared, runs or is being finished (PR-6, J-01): then
+// in-page links and the export links are refused with the reason (nothing
+// half generated is exported, the page is not left).
 // Browser navigation (reload, back, closing the tab) gets the browser's own
 // confirmation via beforeunload, registered only while something is unsaved
-// or being saved, so back/forward caching is not blocked otherwise. The
+// or being saved, or a generation is under way (PR-6, E-G08: also without
+// any draft), so back/forward caching is not blocked otherwise. The
 // three choices cannot be offered there. Drafts are never stored in the
 // browser, so nothing is recovered after a crash.
 //
@@ -89,6 +93,8 @@ export const SOURCE_ORDER = {
 export const GENERATION_PHASES = ['idle', 'preparing', 'running', 'finishing'];
 export const SLOW_WAIT_MS = 10000;
 export const GENERATING_REASON = '生成の準備中・生成中・結果の反映中は保存できません。生成が終わるまでお待ちください（入力中の内容は保持されています）。';
+export const GENERATING_LEAVE = '生成中のため移動できません。完了までお待ちください（入力中の内容は保持されています）。';
+export const GENERATING_EXPORT = '生成中のため出力できません（生成途中の内容を出力しないため）。完了までお待ちください。';
 const SAVING_REASON = '送信中の保存があります。保存が終わってから選んでください（送信した保存は取り消しません）。';
 const UNEXPECTED_REASON = '保存中に予期しないエラーが発生しました';
 const SLOW_MESSAGE = 'サーバーが別の処理（生成など）を実行中の可能性があります。保存が終わるまで待っています（送信した保存は取り消しません）。';
@@ -181,8 +187,13 @@ export function subscribe(fn) {
   return () => listeners.delete(fn);
 }
 
+function generationUnderWay() {
+  return generationPhase !== 'idle';
+}
+
 function onBeforeUnload(event) {
-  if (!hasUnsaved() && !isSaving()) return undefined;
+  if (leavingPage) return undefined; // the page itself is moving on (after its checks)
+  if (!hasUnsaved() && !isSaving() && !generationUnderWay()) return undefined;
   event.preventDefault();
   // Legacy browsers need returnValue set to show the prompt.
   event.returnValue = '';
@@ -191,7 +202,7 @@ function onBeforeUnload(event) {
 
 // Call after any input / save state change of a source.
 export function refresh() {
-  const needed = hasUnsaved() || isSaving();
+  const needed = hasUnsaved() || isSaving() || generationUnderWay();
   if (needed && !beforeUnloadRegistered) {
     window.addEventListener('beforeunload', onBeforeUnload);
     beforeUnloadRegistered = true;
@@ -268,6 +279,20 @@ export async function saveSource(source) {
     state.promise = null;
     refresh();
   }
+}
+
+// The saves in flight now, each with its label and a promise of its outcome
+// ({ ok, reason }) — what the preparation of a generation waits for and
+// names (PR-6, plan 5.9.1 step 1-2). A source that tracks its own saves
+// (whenIdle) reports ok once idle: its failure is its own to show.
+export function inFlightSaves() {
+  return [...sources.values()].filter(isSourceSaving).map((source) => {
+    const state = stateOf(source);
+    const promise = state.promise
+      ? state.promise.then(normalizeOutcome, () => ({ ok: false, reason: UNEXPECTED_REASON }))
+      : Promise.resolve(attempt(() => source.whenIdle?.(), null)).then(() => ({ ok: true }), () => ({ ok: true }));
+    return { id: source.id, label: labelOf(source), promise };
+  });
 }
 
 // Every save in flight (including sources that track their own saves).
@@ -594,6 +619,13 @@ export function requestLeave(href, { invoker = null } = {}) {
   });
 }
 
+// The page reloads itself with nothing typed (a failed partial update,
+// edit/refresh.js): no browser confirmation for it, also while a generation
+// is being finished (its log was stored first; the reload starts idle).
+export function markPageLeaving() {
+  leavingPage = true;
+}
+
 // True once the page is being left after the check (PR-5: a partial update
 // asked for by a save of 保存して移動 must not reload the page then).
 export function isLeavingPage() {
@@ -721,9 +753,19 @@ export function installLinkGuard() {
     if (event.defaultPrevented || event.button !== 0) return;
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const link = event.target instanceof Element ? event.target.closest('a[href]') : null;
-    if (!link || link.hasAttribute('download') || link.dataset.unsavedGuard === 'off') return;
+    if (!link) return;
     const target = (link.getAttribute('target') || '').toLowerCase();
     if (target && target !== '_self') return;
+    if (link.hasAttribute('download')) {
+      // An export: never asked about unsaved input (the page stays), but
+      // refused while a generation is under way (J-01).
+      if (generationUnderWay()) {
+        event.preventDefault();
+        notify(GENERATING_EXPORT, { type: 'warning' });
+      }
+      return;
+    }
+    if (link.dataset.unsavedGuard === 'off') return;
     let url;
     try {
       url = new URL(link.href, window.location.href);
@@ -734,6 +776,14 @@ export function installLinkGuard() {
     const here = window.location;
     const samePage = url.origin === here.origin && url.pathname === here.pathname && url.search === here.search;
     if (samePage && url.hash) return; // in-page anchor such as the skip link
+    if (generationUnderWay()) {
+      // J-01: no in-page move while a generation is prepared, runs or is
+      // being finished (no 保存して移動 either); the browser's own
+      // navigation gets its confirmation (beforeunload).
+      event.preventDefault();
+      notify(GENERATING_LEAVE, { type: 'warning' });
+      return;
+    }
     if (navigationHold) {
       event.preventDefault();
       notify(navigationHold, { type: 'info' });

@@ -916,3 +916,147 @@
 .ui-dialog--form .ui-field .ui-input {
   width: 100%;
 }
+
+/* ----- PR-6: generation ----- */
+/* Status line of a generation under way, above the work area (visible on
+   every tab and step; hidden when idle). No viewport-dependent rule. */
+.edit-genstatus {
+  flex: none;
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--color-warning);
+  background: var(--color-warning-soft);
+  font-size: var(--font-size-sm);
+}
+.edit-genstatus[hidden] {
+  display: none;
+}
+.edit-genstatus__slow {
+  font-weight: 700;
+}
+.edit-genstatus__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+/* The three ways to add factors in the operation bar (J-06). */
+.edit-opbar__kinds {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+.edit-opbar__kinds > div {
+  display: grid;
+  grid-template-columns: 6.5em minmax(0, 1fr);
+  gap: var(--space-2);
+}
+.edit-opbar__kinds dt {
+  font-weight: 700;
+}
+.edit-opbar__kinds dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+/* The generation log of a level (below its operation bar). */
+.edit-genlog {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  font-size: var(--font-size-sm);
+}
+.edit-genlog__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.edit-genlog__title {
+  margin: 0;
+  font-size: var(--font-size-md);
+}
+.edit-genlog__when,
+.edit-genlog__scope,
+.edit-genlog__storage {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.edit-genlog__restored,
+.edit-genlog__note {
+  padding: var(--space-1) var(--space-2);
+  border-left: 3px solid var(--color-warning);
+  background: var(--color-warning-soft);
+}
+.edit-genlog__rows {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.edit-genlog__row {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-2);
+  align-items: baseline;
+  overflow-wrap: anywhere;
+}
+.edit-genlog__details {
+  grid-column: 2;
+  margin: 0;
+  padding-left: var(--space-4);
+  color: var(--color-text-muted);
+}
+.edit-genlog__badge,
+.edit-genbadge {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.edit-genlog__badge[data-category="created"],
+.edit-genbadge[data-category="created"] {
+  border-color: var(--color-success);
+  background: var(--color-success-soft);
+}
+.edit-genlog__badge[data-category="failed"],
+.edit-genlog__badge[data-category="network"],
+.edit-genlog__badge[data-category="parent-gone"],
+.edit-genlog__badge[data-category="analysis-gone"],
+.edit-genlog__badge[data-category="server-error"],
+.edit-genbadge[data-category="failed"],
+.edit-genbadge[data-category="network"],
+.edit-genbadge[data-category="parent-gone"],
+.edit-genbadge[data-category="analysis-gone"],
+.edit-genbadge[data-category="server-error"] {
+  border-color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+.edit-genlog__badge[data-category="all-excluded"],
+.edit-genlog__badge[data-category="no-candidates"],
+.edit-genbadge[data-category="all-excluded"],
+.edit-genbadge[data-category="no-candidates"] {
+  border-color: var(--color-warning);
+  background: var(--color-warning-soft);
+}
+/* The inspector's editor while its details wait for the end of a generation. */
+.edit-editor[data-phase="waiting"] .edit-editor__fields {
+  opacity: 0.6;
+}
+.edit-inspector__status[data-kind="warning"],
+.edit-inspector__status[data-kind="error"] {
+  font-weight: 700;
+}
+/* Links held back while a generation is under way. */
+a[aria-disabled="true"][data-gen-locked] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

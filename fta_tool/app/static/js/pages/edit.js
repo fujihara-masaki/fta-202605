@@ -10,9 +10,8 @@
 // - work steps ①〜⑤ (a guide; the order is not enforced), view tabs
 //   (WAI-ARIA tabs, arrow keys), judgement, filter;
 // - state in the URL hash and sessionStorage (plan 5.5), restored on reload;
-// - the bridge the legacy app.js uses for detail editing, manual add,
-//   delete and generation (still the old processing in PR-3), whose results
-//   are shown by a partial update instead of a reload (edit/refresh.js);
+// - the results of changes shown by a partial update instead of a reload
+//   (edit/refresh.js; window.ftaEditBridge.refresh reaches it from outside);
 // - PR-4: ① with its save status (edit/step1.js), the header title edited
 //   inline (edit/title.js), ⑤'s counts (view.js applySummary) and the
 //   generation's connection to the shared save coordinator
@@ -24,7 +23,12 @@
 //   guarded switch, requestSelect(): the inspector's unsaved draft is asked
 //   about (common/unsaved.js requestSwitch) before anything changes; the
 //   manual-add and delete dialogs (edit/add-dialog.js, delete-dialog.js).
-//   Generation still runs through app.js (PR-6).
+// - PR-6: generation (edit/generation.js, replacing the legacy app.js and its
+//   overlay): the phases idle → preparing → running → finishing, the
+//   restrictions while one is under way (edit/restrict.js), the generation
+//   log and its badges kept per analysis in sessionStorage
+//   (edit/genlog.js), and the details of the factor shown read again after
+//   it (edit/inspector.js).
 // Text from the user or the LLM is only ever inserted as text.
 
 import { el } from '../common/dom.js';
@@ -45,6 +49,8 @@ import { createRefresher, successorOf } from './edit/refresh.js';
 import { createStep1 } from './edit/step1.js';
 import { createTitleEditor } from './edit/title.js';
 import { createGeneration } from './edit/generation.js';
+import { createGenLog } from './edit/genlog.js';
+import { applyRestrictions } from './edit/restrict.js';
 import { getNode, readModel, stepForNode } from './edit/model.js';
 import { loadSession, saveSession, stateFromHash, VIEWS, writeHash } from './edit/state.js';
 import {
@@ -246,19 +252,22 @@ function start(root, model) {
     applyFilter(app);
   };
 
-  // Show the result of a legacy change (manual add: {select}, delete:
+  // Show the result of a change (manual add: {select}, delete:
   // {deleted}) by a partial update; none while a generation runs, one after.
   const refresher = createRefresher(app, { scrollers });
   app.refresh = (options = {}) => refresher.request(options);
   app.whenRefreshed = () => refresher.whenIdle();
+  app.refreshMark = () => refresher.mark();
+  app.lastRefresh = () => refresher.outcome();
 
+  // Partial updates are held back while a generation is prepared and runs
+  // (one follows: edit/generation.js). The buttons follow the generation's
+  // phase (edit/restrict.js), not this flag.
   app.setGenerating = (on) => {
-    app.generating = on;
-    document.querySelectorAll('[data-generate]').forEach((button) => {
-      button.disabled = on || button.hasAttribute('data-blocked-reason');
-    });
-    if (!on) refresher.flush();
+    app.generating = Boolean(on);
+    if (!app.generating) refresher.flush();
   };
+  app.applyRestrictions = () => applyRestrictions(app);
 
   // A save the page shows at once (a judgement, the top event of ①): no
   // partial update is fetched meanwhile, and one fetched before is not
@@ -286,8 +295,16 @@ function start(root, model) {
   step1 = createStep1(app);
   const title = createTitleEditor(app);
   app.title = title;
-  const generation = createGeneration(app, { step1, title });
-  app.beginGeneration = (level) => generation.begin(level);
+  const genlog = createGenLog(app);
+  app.genlog = genlog;
+  const generation = createGeneration(app, { step1, title, log: genlog });
+  app.generation = generation;
+  // After every partial update: the badges of the log next to the parents'
+  // headings, and the generation's restrictions on the new buttons.
+  app.afterRefresh = () => {
+    genlog.renderBadges();
+    applyRestrictions(app);
+  };
 
   // The one success handling of a factor's save (the inspector's 保存 and
   // 保存して移動): called synchronously by the source's commit(), after the
@@ -324,6 +341,8 @@ function start(root, model) {
   applyCounts(app);
   app.applyStep1State();
   renderInspector(app);
+  genlog.restore(); // the latest result of this tab, from before a reload (plan 5.9.2)
+  applyRestrictions(app);
 
   if (savedScroll) {
     if (scrollers.nav) scrollers.nav.scrollTop = Number(savedScroll.nav) || 0;
@@ -335,16 +354,15 @@ function start(root, model) {
 
   // ----- events --------------------------------------------------------
 
-  const runLegacy = (action, button) => {
-    if (app.gone) return;
-    const level = Number(button.dataset.level);
-    const parentId = button.dataset.parentId ? Number(button.dataset.parentId) : null;
-    const legacy = window;
-    if (action === 'legacy-generate' && typeof legacy.generateFactors === 'function') {
-      legacy.generateFactors(app.analysisId, level);
-    } else if (action === 'legacy-generate-additional' && typeof legacy.generateAdditional === 'function') {
-      legacy.generateAdditional(app.analysisId, parentId, level);
-    }
+  // A generation button: normal (data-action="generate") or additional
+  // ("generate-additional", below data-parent-id or, for 一次, the top
+  // event). The generation checks everything again itself.
+  const startGeneration = (action, button) => {
+    generation.start({
+      kind: action === 'generate-additional' ? 'additional' : 'normal',
+      level: Number(button.dataset.level),
+      parentId: button.dataset.parentId ? Number(button.dataset.parentId) : null,
+    });
   };
 
   // Skip links move the focus without touching the hash, which holds the
@@ -367,6 +385,10 @@ function start(root, model) {
       return;
     }
     if (!root.contains(target)) return;
+    if (target.closest('[data-gen-log-close]')) {
+      genlog.close();
+      return;
+    }
     const tab = target.closest('[data-view-tab]');
     if (tab) {
       app.setView(tab.dataset.viewTab);
@@ -396,8 +418,8 @@ function start(root, model) {
       requestJudgement(app, Number(button.dataset.nodeId), button.dataset.value);
     } else if (action === 'filter-clear') {
       clearFilter(app);
-    } else if (action.startsWith('legacy-')) {
-      runLegacy(action, button);
+    } else if (action === 'generate' || action === 'generate-additional') {
+      startGeneration(action, button);
     }
   });
 

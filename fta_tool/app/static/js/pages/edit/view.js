@@ -6,6 +6,7 @@
 import { generationTargets, getNode, judgementLabel, stepCounts, SUMMARY_COLUMNS, summaryCounts } from './model.js';
 
 const ITEM_SELECTOR = '[data-role$="-item"]';
+const TARGET_NAMES_SHOWN = 5;
 
 export function applySelection(app) {
   document.querySelectorAll('[data-action="select"][aria-current]').forEach((element) => {
@@ -58,7 +59,8 @@ export function applyView(app) {
   });
 }
 
-// Step statuses (②〜④), the targets of the normal generation (③・④) and
+// Step statuses (②〜④), the targets of the normal generation (③・④: their
+// number and names, from the data whatever the filter shows) and
 // the counts of ⑤, counted from the embedded data.
 export function applyCounts(app) {
   applySummary(app);
@@ -73,6 +75,13 @@ export function applyCounts(app) {
     const { targets, excluded } = generationTargets(app.model, level);
     const count = document.querySelector(`[data-target-count="${level}"]`);
     if (count) count.textContent = String(targets.length);
+    // J-06: the parents by name (the first few, then 「ほか n件」).
+    const names = document.querySelector(`[data-target-names="${level}"]`);
+    if (names) {
+      const shown = targets.slice(0, TARGET_NAMES_SHOWN).map((node) => `「${node.title}」`).join('');
+      const more = targets.length - TARGET_NAMES_SHOWN;
+      names.textContent = targets.length ? `：${shown}${more > 0 ? ` ほか ${more}件` : ''}` : '';
+    }
     const box = document.querySelector(`[data-target-excluded="${level}"]`);
     if (box) {
       box.hidden = excluded.length === 0;
