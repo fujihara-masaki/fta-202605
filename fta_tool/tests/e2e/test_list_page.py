@@ -7,6 +7,7 @@ events (isComposing / keyCode 229); a real IME is a manual check.
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 
 import pytest
@@ -70,6 +71,36 @@ def start_rename(page, analysis_id, text=None):
     return field
 
 
+def list_state(e2e_server) -> list[tuple]:
+    """id, title, created_at, updated_at of every analysis, as stored (for a
+    failure message: the page shows the times to the minute only)."""
+    return e2e_server.query("SELECT id, title, created_at, updated_at FROM analyses ORDER BY id")
+
+
+def set_update_order(e2e_server, *analysis_ids) -> None:
+    """Give the analyses distinct updated_at, oldest first, one second apart
+    and all before the newest stored value, so that the list's order (newest
+    first, plan: crud.get_analyses) is decided by the test, and a later change
+    through the app (a rename, a new factor) is newer than each of them.
+    Analyses created one right after the other can be stored with the same
+    updated_at (the clock's resolution: about 1-16 ms on Windows up to Python
+    3.12), and the order of equal values is not specified (Windows Chrome,
+    2026-10-13/14: E-L01 and E-L07 failed on such a tie)."""
+    newest = max(dt.datetime.fromisoformat(row[3]) for row in list_state(e2e_server))
+    for back, analysis_id in enumerate(reversed(analysis_ids), start=1):
+        e2e_server.set_updated_at(analysis_id, (newest - dt.timedelta(seconds=back)).isoformat(sep=" ", timespec="microseconds"))
+
+
+def boxes_overlap(one, two) -> bool:
+    return (one["x"] < two["x"] + two["width"] and two["x"] < one["x"] + one["width"]
+            and one["y"] < two["y"] + two["height"] and two["y"] < one["y"] + one["height"])
+
+
+def row_order(page) -> list[int]:
+    return [int(value) for value in page.locator("tr[data-analysis-id]").evaluate_all(
+        "rows => rows.map((row) => row.dataset.analysisId)")]
+
+
 def title_requests(page, analysis_id):
     sent = []
     page.on("request", lambda r: sent.append(r) if r.method == "POST" and r.url.endswith(f"/analyses/{analysis_id}/title") else None)
@@ -83,11 +114,18 @@ def test_E_L01_order_and_open_analysis(page, e2e_server):
     a = e2e_server.create_analysis("分析A", top_event="Aの頂上事象")
     b = e2e_server.create_analysis("分析B", top_event="Bの頂上事象")
     c = e2e_server.create_analysis("分析C")
-    e2e_server.rename(a, "分析A（更新）")  # A becomes the most recently updated
+    # Updated in the order A, B, C (distinct times, never a tie), then the
+    # rename makes A the most recently updated: newest first is A, C, B —
+    # neither the order of the ids nor of creation.
+    set_update_order(e2e_server, a, b, c)
+    e2e_server.rename(a, "分析A（更新）")
+    stored = {row[0]: dt.datetime.fromisoformat(row[3]) for row in list_state(e2e_server)}
+    assert stored[a] > stored[c] > stored[b], list_state(e2e_server)  # the rename updated it
 
     open_list(page)
     titles = page.locator("tr[data-analysis-id] [data-title-link]")
-    expect(titles).to_have_text(["分析A（更新）", "分析C", "分析B"])
+    expect(titles, f"更新日時の新しい順ではありません（DB の値：{list_state(e2e_server)}）").to_have_text(
+        ["分析A（更新）", "分析C", "分析B"])
     expect(page.locator(".list-page__meta")).to_have_text("3件・更新日時の新しい順")
     expect(page.get_by_role("navigation", name="メインメニュー").get_by_role("link", name="分析一覧")).to_have_attribute("aria-current", "page")
     for analysis_id in (a, b, c):
@@ -519,7 +557,9 @@ def test_E_L07_export_menu_keyboard_and_links(page, e2e_server):
     analysis_id = e2e_server.create_analysis("出力の分析", top_event="頂上事象")
     e2e_server.add_level1(analysis_id, "出力される要因")
     other = e2e_server.create_analysis("別の出力")
+    set_update_order(e2e_server, analysis_id, other)  # rows: other, then this one
     open_list(page)
+    assert row_order(page) == [other, analysis_id], list_state(e2e_server)
 
     button = export_button(page, analysis_id)
     panel = export_panel(page, analysis_id)
@@ -550,11 +590,17 @@ def test_E_L07_export_menu_keyboard_and_links(page, e2e_server):
     expect(links.nth(0)).to_be_focused()
     page.keyboard.press("Escape")
 
-    # Only one menu at a time; a click outside closes it.
+    # Only one menu at a time; a click outside closes it. The menu of the
+    # lower row opens below it: the button of the row above stays free and is
+    # clicked directly (to a row below the open menu: the next test).
     button.click()
+    expect(panel).to_be_visible()
+    assert not boxes_overlap(export_button(page, other).bounding_box(), panel.bounding_box())
     export_button(page, other).click()
     expect(panel).to_be_hidden()
     expect(export_panel(page, other)).to_be_visible()
+    expect(button).to_have_attribute("aria-expanded", "false")
+    expect(export_button(page, other)).to_have_attribute("aria-expanded", "true")
     page.locator("h1").click()
     expect(export_panel(page, other)).to_be_hidden()
 
@@ -567,6 +613,56 @@ def test_E_L07_export_menu_keyboard_and_links(page, e2e_server):
     with open(download.path(), "rb") as handle:
         assert handle.read() == e2e_server.export(analysis_id, "json")
     expect(panel).to_be_hidden()
+
+
+@pytest.mark.acceptance("E-L07")
+def test_E_L07_only_one_menu_switching_down_and_up(page, e2e_server):
+    """An open menu is a popup over the rows below it: their buttons under it
+    are covered (a click there lands on the menu, as on any popup), and Esc or
+    a click outside closes it (above). The button of a row beyond the menu is
+    clicked directly: that menu opens and the first one closes; and back up."""
+    ids = [e2e_server.create_analysis(f"出力の行{number}") for number in range(1, 11)]
+    set_update_order(e2e_server, *reversed(ids))  # rows: 行1 (newest) … 行10
+    open_list(page)
+    assert row_order(page) == ids, list_state(e2e_server)
+    top = ids[0]
+    export_button(page, top).click()
+    panel = export_panel(page, top)
+    expect(panel).to_be_visible()
+    panel_box = panel.bounding_box()
+    viewport = page.viewport_size
+    covered, below = [], None
+    for analysis_id in ids[1:]:
+        box = export_button(page, analysis_id).bounding_box()
+        if boxes_overlap(box, panel_box):
+            covered.append(analysis_id)
+        elif box["y"] >= panel_box["y"] + panel_box["height"] and box["y"] + box["height"] <= viewport["height"]:
+            below = analysis_id
+            break
+    assert covered and below is not None, (panel_box, viewport, covered)
+    # What is under the open menu is the menu itself (a popup), not the button.
+    box = export_button(page, covered[0]).bounding_box()
+    assert page.evaluate("([x, y, id]) => Boolean(document.elementFromPoint(x, y)?.closest(`#export-menu-${id}`))",
+                         [box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, top])
+
+    export_button(page, below).click()  # down: a row below the open menu
+    expect(panel).to_be_hidden()
+    expect(export_button(page, top)).to_have_attribute("aria-expanded", "false")
+    expect(export_panel(page, below)).to_be_visible()
+    expect(export_button(page, below)).to_have_attribute("aria-expanded", "true")
+    expect(page.locator("[data-ui-menu-panel]:visible")).to_have_count(1)
+
+    # The lower menu opens below its button, or above it when there is not
+    # room enough below: either way the top row's button stays free.
+    assert not boxes_overlap(export_button(page, top).bounding_box(), export_panel(page, below).bounding_box())
+    export_button(page, top).click()  # up: the row above the open menu
+    expect(export_panel(page, below)).to_be_hidden()
+    expect(export_button(page, below)).to_have_attribute("aria-expanded", "false")
+    expect(panel).to_be_visible()
+    expect(page.locator("[data-ui-menu-panel]:visible")).to_have_count(1)
+    page.keyboard.press("Escape")
+    expect(panel).to_be_hidden()
+    expect(export_button(page, top)).to_be_focused()
 
 
 @pytest.mark.acceptance("E-L07")

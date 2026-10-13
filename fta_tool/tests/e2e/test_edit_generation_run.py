@@ -946,11 +946,20 @@ def test_E_G04_exports_are_refused_with_modifier_keys_and_the_middle_button(page
             step_button(page, 5).click()
         return dict(EXPORTS)[where](page)
 
+    def chosen(where):
+        # A click on an item closes the header's menu, after the click
+        # (common/menu.js: a timeout): wait for it, so that the next step
+        # starts from a closed menu, never from one about to close (the
+        # middle button sends no click: the menu stays open).
+        if where == "header":
+            expect(page.locator(".edit-header [data-ui-menu-panel]")).to_be_hidden()
+
     for where, _ in EXPORTS:
         for modifiers in (["Control"], ["Shift"], ["Alt"], ["Meta"]):
             page.evaluate("() => document.querySelectorAll('#ui-toasts .ui-toast__close').forEach((b) => b.click())")
             link(where).click(modifiers=modifiers, force=True)
             expect(toast(page, "生成中のため出力できません", "warning")).to_be_visible()
+            chosen(where)
         page.evaluate("() => document.querySelectorAll('#ui-toasts .ui-toast__close').forEach((b) => b.click())")
         link(where).click(button="middle", force=True)
         expect(toast(page, "生成中のため出力できません", "warning")).to_be_visible()
@@ -964,6 +973,7 @@ def test_E_G04_exports_are_refused_with_modifier_keys_and_the_middle_button(page
         with page.expect_download() as download:
             link(where).click()
         assert download.value.suggested_filename.startswith(f"fta_{analysis_id}.")
+        chosen(where)
     assert len(downloads) == 2 and all("/export/" in url for url in downloads)  # the detector sees exports
 
 

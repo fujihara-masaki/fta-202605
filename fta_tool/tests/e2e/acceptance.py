@@ -310,6 +310,18 @@ def _failure_reason(report: pytest.TestReport) -> str:
     return lines[-1][:300] if lines else ""
 
 
+def _phase_window(report: pytest.TestReport) -> str:
+    """When the failed phase ran, on the local clock (to the second), so a
+    failure can be matched with other records of the same time (e.g. the
+    server's access log, the PC's connection counts; 2026-10-14: a
+    net::ERR_NO_BUFFER_SPACE of one stylesheet in Windows Chrome)."""
+    start, stop = getattr(report, "start", None), getattr(report, "stop", None)
+    if not isinstance(start, (int, float)) or not isinstance(stop, (int, float)):
+        return ""
+    clock = lambda moment: _dt.datetime.fromtimestamp(moment).astimezone().strftime("%H:%M:%S")  # noqa: E731
+    return f"（{clock(start)}〜{clock(stop)}）"
+
+
 def on_report(item: pytest.Item, report: pytest.TestReport) -> None:
     run = state(item.config)
     record = run.records.get(item.nodeid)
@@ -329,7 +341,7 @@ def on_report(item: pytest.Item, report: pytest.TestReport) -> None:
             record.reason = reason
     elif report.failed:
         record.outcome = "failed"
-        record.reason = f"{report.when}: {_failure_reason(report)}"
+        record.reason = f"{report.when}{_phase_window(report)}: {_failure_reason(report)}"
     elif report.when == "call" and record.outcome is None:
         record.outcome = "passed"
 
