@@ -110,6 +110,13 @@ let navigationHold = null;
 let generationPhase = 'idle';
 let leavingPage = false;
 
+// A page that comes back from the back/forward cache is no longer being
+// left (PR-6 review R7): the browser's confirmation, the reload of a failed
+// update and the messages work again as before the page was left.
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) leavingPage = false;
+});
+
 function attempt(fn, fallback) {
   try {
     return fn();

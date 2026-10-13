@@ -54,6 +54,29 @@
 // or of J-25) and the factor shown is read again.
 // This holds back operations of this page only: other tabs, other workers
 // and direct API calls are not (plan 2.4, 5.3).
+//
+// Leaving the page during a generation (PR-6 review R7). Once the browser's
+// confirmation was accepted, pagehide marks the generation under way as
+// left: from then on it sends nothing and records nothing — no further
+// request, no automatic save of its preparation, and an answer that still
+// arrives is not judged (a request cut off by the leaving is no network
+// failure: its result is unknown). Nothing is stopped on the server. A
+// reload or a closed tab ends there (the stored rows still under way are
+// 結果不明 in the restored log). When the page comes back from the
+// back/forward cache (pageshow, persisted), the left generation is ended,
+// once, never resumed and never sent again:
+//   preparing  it is dropped (nothing was requested), as with 取りやめる;
+//   running    its rows are settled — the results received before leaving
+//              stay, a parent whose request was sent but not answered is
+//              結果不明 (the server may have created factors), a parent not
+//              sent yet is 送信していません — and it is finished as usual
+//              (one partial update, the rows checked against it, the
+//              summary, idle);
+//   finishing  its own finishing goes on (its rows were settled before).
+// Its continuations that run later (an answer, a wait that ends) find it
+// left and do nothing; a generation started after the return is another
+// run and never touched by them. Leaving that was cancelled in the
+// browser's confirmation is no leaving: the generation simply goes on.
 
 import { el } from '../../common/dom.js';
 import { announce, notify } from '../../common/notify.js';
@@ -76,17 +99,6 @@ import { applyRestrictions } from './restrict.js';
 
 const BUSY = '別の生成の準備中または実行中です。完了までお待ちください。';
 
-// The page is being left (reload, closing, another address: after the
-// browser's confirmation). A request cut off by that is not a network
-// failure — its result is unknown: nothing more is recorded or sent, and
-// the stored row stays 生成中, which a restored log shows as 結果不明.
-let pageHiding = false;
-window.addEventListener('pagehide', () => {
-  pageHiding = true;
-});
-window.addEventListener('pageshow', () => {
-  pageHiding = false;
-});
 const SLOW = 'サーバーが別の処理（生成など）を実行中の可能性があります。保存が終わるまで待ち続けるか、「生成を取りやめる」を選べます（送信した保存は取り消しません）。';
 const RESTRICTED = '完了まで保存・評価・追加・削除・出力・画面の移動はできません。入力中の内容は保持されます。';
 
@@ -230,6 +242,12 @@ export function createGeneration(app, { step1, title, log }) {
     statusBox.replaceChildren(...parts);
   }
 
+  // A preparation that was cancelled (取りやめる) or whose page was left
+  // (R7): nothing more is requested or saved for it.
+  function stopped(run) {
+    return run.cancelled || run.left;
+  }
+
   function release(run) {
     if (run.slowTimer) window.clearTimeout(run.slowTimer);
     if (current === run) current = null;
@@ -282,7 +300,7 @@ export function createGeneration(app, { step1, title, log }) {
   async function waitForSaves(run) {
     const failures = new Map();
     for (;;) {
-      if (run.cancelled) return null;
+      if (stopped(run)) return null;
       const waits = [...inFlightSaves(), ...judgementWaits(app)];
       if (!waits.length) {
         if (app.writes.inFlight > 0) {
@@ -310,12 +328,12 @@ export function createGeneration(app, { step1, title, log }) {
   // The automatic save of ① (one source); null when it was saved or had
   // nothing to save, else the reason.
   async function autoSave(run, source, name) {
-    if (!source.isDirty()) return null;
+    if (stopped(run) || !source.isDirty()) return null;
     run.autoSaving = name;
     renderStatus(run);
     const outcome = await saveSource(source);
     run.autoSaving = null;
-    if (run.cancelled) return null;
+    if (stopped(run)) return null;
     if (!outcome.ok) return `${name}の保存に失敗したため、生成を開始しませんでした：${outcome.reason}。入力中の内容は残しています。`;
     notify(`編集中の${name}を保存してから生成します`, { type: 'success' });
     return null;
@@ -343,7 +361,7 @@ export function createGeneration(app, { step1, title, log }) {
 
   async function prepare(run) {
     const failures = await waitForSaves(run);
-    if (failures === null || run.cancelled) return { cancelled: true };
+    if (failures === null || stopped(run)) return { cancelled: true };
     if (failures.length) {
       return {
         reason: `先に送っていた保存に失敗したため、生成を開始しませんでした（生成の要求は送っていません）：${failures.join('／')}。入力中の内容は残しています。`,
@@ -360,16 +378,16 @@ export function createGeneration(app, { step1, title, log }) {
           return { reason: '頂上事象を入力してから生成してください', focus: step1.fields.top };
         }
         const failed = await autoSave(run, step1.topEvent, '頂上事象');
-        if (run.cancelled) return { cancelled: true };
+        if (stopped(run)) return { cancelled: true };
         if (failed) return { reason: failed };
       }
       const failed = await autoSave(run, step1.context, '参考情報');
-      if (run.cancelled) return { cancelled: true };
+      if (stopped(run)) return { cancelled: true };
       if (failed) return { reason: failed };
     }
     // Saves that started meanwhile (none can, but never generate over one).
     const later = await waitForSaves(run);
-    if (later === null || run.cancelled) return { cancelled: true };
+    if (later === null || stopped(run)) return { cancelled: true };
     if (later.length) return { reason: `保存に失敗したため、生成を開始しませんでした：${later.join('／')}` };
     if (app.gone) return { reason: GONE };
     const fixed = plan(run);
@@ -401,7 +419,7 @@ export function createGeneration(app, { step1, title, log }) {
     const url = `/analyses/${app.analysisId}/generate/level/${run.level}`;
     const rows = entry.rows;
     for (let index = 0; index < rows.length; index += 1) {
-      if (pageHiding) return;
+      if (run.left) return; // R7: nothing more is sent
       const row = rows[index];
       run.index = index + 1;
       if (run.analysisGone) {
@@ -423,7 +441,7 @@ export function createGeneration(app, { step1, title, log }) {
       const body = run.request.kind === 'additional' ? { additional: true } : {};
       if (row.parentId !== null) body.parent_id = row.parentId;
       const result = await sendRequest(url, body);
-      if (pageHiding) return; // see above: the row stays 生成中 (結果不明 after the reload)
+      if (run.left) return; // R7: not judged — the row stays 生成中 until it is settled as 結果不明
       classify(row, result, { parentNamed: row.parentId !== null });
       if (row.state === 'analysis-gone') run.analysisGone = true;
       log.changed();
@@ -436,19 +454,27 @@ export function createGeneration(app, { step1, title, log }) {
   // a row whose request was sent but whose answer was not judged (an
   // exception of the page's own code) is 結果不明 — the server may have
   // created factors — and a row never sent is 送信していません. Rows with a
-  // result keep it.
-  function settleRows(entry) {
+  // result keep it. R7: the same when the page was left and came back.
+  function settleRows(entry, { left = false } = {}) {
     for (const row of entry.rows) {
       if (row.state === 'running') {
         row.state = 'unknown';
-        row.message = entry.jsError
-          ? '画面の処理中にエラーが発生したため、この親の結果を確認できていません（要求は送信済みで、サーバーで作成された可能性があります。保存済みの内容を確かめてください）'
-          : 'この親の結果を確認できていません（要求は送信済みです）';
+        if (left) {
+          row.message = 'ページを離れたため、この親の結果を確認できていません（要求は送信済みで、サーバーで作成された可能性があります。保存済みの内容を確かめてください）';
+        } else {
+          row.message = entry.jsError
+            ? '画面の処理中にエラーが発生したため、この親の結果を確認できていません（要求は送信済みで、サーバーで作成された可能性があります。保存済みの内容を確かめてください）'
+            : 'この親の結果を確認できていません（要求は送信済みです）';
+        }
       } else if (row.state === 'waiting') {
         row.state = 'skipped';
-        row.message = entry.jsError
-          ? '画面の処理中にエラーが発生したため、送信していません'
-          : '送信していません';
+        if (left) {
+          row.message = 'ページを離れたため送信していません（戻った後も自動では送信しません）';
+        } else {
+          row.message = entry.jsError
+            ? '画面の処理中にエラーが発生したため、送信していません'
+            : '送信していません';
+        }
       }
     }
   }
@@ -510,9 +536,9 @@ export function createGeneration(app, { step1, title, log }) {
     }
   }
 
-  async function finish(run, entry) {
-    if (pageHiding) return; // the page is going away: nothing to show or store
-    settleRows(entry); // before anything is drawn (drawing may fail too)
+  // left: the page was left while the requests ran and has come back (R7).
+  async function finish(run, entry, { left = false } = {}) {
+    settleRows(entry, { left }); // before anything is drawn (drawing may fail too)
     try {
       phaseChanged('finishing');
       entry.status = 'finishing';
@@ -529,6 +555,10 @@ export function createGeneration(app, { step1, title, log }) {
       entry.endedAt = new Date().toISOString();
       log.changed();
       notifySummary(run, entry);
+      if (left) {
+        notify('ページを離れる前に実行中だった生成を終了しました。戻った後に生成の要求を送り直してはいません'
+          + '（サーバーでの処理は止めていません）。結果は生成ログで確かめてください。', { type: 'info' });
+      }
       if (entry.jsError) notify('生成の処理中に画面のエラーが発生しました。生成ログの内容が一部欠けている可能性があります。', { type: 'error' });
     } catch {
       entry.jsError = true;
@@ -557,6 +587,7 @@ export function createGeneration(app, { step1, title, log }) {
       entry = log.begin({
         level: run.level, kind: run.request.kind, parents: prepared.parents, excludedParents: prepared.excluded,
       });
+      run.entry = entry;
       renderStatus(run);
       const scope = run.request.kind === 'normal' && run.level > 1
         ? `対象の親 ${run.total}件（Yesの${levelName(run.level - 1)}要因すべて。絞り込みで表示していない要因も含みます）`
@@ -567,7 +598,11 @@ export function createGeneration(app, { step1, title, log }) {
     } catch {
       if (entry) entry.jsError = true;
     } finally {
-      if (entry) {
+      if (run.left) {
+        // R7: the page was left. Nothing more is done here: a page that
+        // comes back ends this generation itself (restored()), a page
+        // that does not come back is gone.
+      } else if (entry) {
         await finish(run, entry);
       } else {
         // An exception before the log began (or while it began): nothing
@@ -634,6 +669,9 @@ export function createGeneration(app, { step1, title, log }) {
       autoSaving: null,
       slow: false,
       slowTimer: null,
+      left: false, // the page was left meanwhile (R7)
+      entry: null, // its log entry, once the requests began
+      restoring: false, // ended after the return from the back/forward cache (R7)
     };
     current = run;
     phaseChanged('preparing');
@@ -652,7 +690,8 @@ export function createGeneration(app, { step1, title, log }) {
       prepared = { reason: '生成の準備中にエラーが発生したため、生成を開始しませんでした' };
     }
     // 取りやめた: idle already (and maybe another generation since) — nothing more.
-    if (run.cancelled || current !== run) return;
+    // The page was left (R7): it is dropped when the page comes back.
+    if (stopped(run) || current !== run) return;
     if (run.slowTimer) window.clearTimeout(run.slowTimer);
     if (!prepared.ok) {
       failPreparing(run, prepared.reason, prepared.focus || null);
@@ -660,6 +699,36 @@ export function createGeneration(app, { step1, title, log }) {
     }
     await execute(run, prepared);
   }
+
+  // R7: the page is left (after the browser's confirmation, if any).
+  function left() {
+    if (current) current.left = true;
+  }
+
+  // R7: the page came back from the back/forward cache. The generation that
+  // was under way when it was left is ended here, once (current is cleared
+  // by its idle; a repeated pageshow finds nothing).
+  function restored() {
+    const run = current;
+    if (!run || !run.left || run.restoring) return;
+    run.restoring = true;
+    const phase = getGenerationPhase();
+    if (phase === 'finishing') return; // its own finishing goes on (settled already)
+    if (phase === 'running' && run.entry) {
+      finish(run, run.entry, { left: true });
+      return;
+    }
+    // Still preparing: nothing was requested.
+    run.cancelled = true;
+    stopPreparing(run);
+    notify('ページを離れたため、生成の準備を取りやめました。生成の要求は送っていません'
+      + '（送信済みの保存は取り消されません）。', { type: 'info' });
+  }
+
+  window.addEventListener('pagehide', left);
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) restored();
+  });
 
   if (statusBox) {
     statusBox.addEventListener('click', (event) => {
