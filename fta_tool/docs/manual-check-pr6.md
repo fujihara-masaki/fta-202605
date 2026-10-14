@@ -263,7 +263,7 @@ Remove-Item Env:FTA_E2E_WORKDIR, Env:PYTHONPATH
 
 ### 8.1 時計の分解能の確認（E-L01・E-L07 の原因の裏付け。1分）
 
-E-L01・E-L07 は、続けて作った分析の更新日時が同じ値になり、同じ値の並び順が決まっていないことで失敗したと考えています（開発環境で、同じ値にすると同じ失敗になることを確かめました）。Windows の Python 3.12 で日時の刻みが粗いかを、自動確認専用の venv で確かめます（読むだけで、何も変えません）。
+E-L01・E-L07 について、開発環境では、分析の更新日時を同じ値にした限定再現で、Windows と同じ失敗になることを確かめました。一方、過去の Windows の実行で保存された更新日時の値は記録がなく、未確認です（同じ値だったことは、テストの操作の順からの推定です）。PR-6 では一覧の並び順の仕様（更新日時の降順）は変えず、テストで更新日時を明示しました（2026-10-14 の方針）。Windows の Python 3.12 で日時の刻みが粗いかを、自動確認専用の venv で確かめます（読むだけで、何も変えません）。
 
 ```powershell
 & "$venv\Scripts\python.exe" -c "import datetime as d; v=[d.datetime.utcnow() for _ in range(300000)]; s=sorted(set(v)); g=sorted((b-a).total_seconds()*1000 for a,b in zip(s,s[1:])); print('distinct', len(s), 'min step ms', round(g[0],3), 'median step ms', round(g[len(g)//2],3))"

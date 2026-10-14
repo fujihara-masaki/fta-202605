@@ -84,8 +84,9 @@ def set_update_order(e2e_server, *analysis_ids) -> None:
     through the app (a rename, a new factor) is newer than each of them.
     Analyses created one right after the other can be stored with the same
     updated_at (the clock's resolution: about 1-16 ms on Windows up to Python
-    3.12), and the order of equal values is not specified (Windows Chrome,
-    2026-10-13/14: E-L01 and E-L07 failed on such a tie)."""
+    3.12), and the order of equal values is not specified. Windows Chrome,
+    2026-10-13/14: E-L01 and E-L07 failed; equal values reproduce the same
+    failures here, the values stored in those runs were not recorded."""
     newest = max(dt.datetime.fromisoformat(row[3]) for row in list_state(e2e_server))
     for back, analysis_id in enumerate(reversed(analysis_ids), start=1):
         e2e_server.set_updated_at(analysis_id, (newest - dt.timedelta(seconds=back)).isoformat(sep=" ", timespec="microseconds"))
