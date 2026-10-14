@@ -12,7 +12,7 @@
 
 | ブラウザ | 方式 | 対象の SHA | 状態 |
 |---|---|---|---|
-| Google Chrome | 準備確認 → 全必須 E2E（第3節）＋実操作・目視（第5節） | 受入候補（報告に記載） | 未実施 |
+| Google Chrome | 準備確認 → 全必須 E2E（第3節）＋実操作・目視（第5節） | 受入候補（報告に記載） | `bb99f0c` の全必須 E2E は3回とも不合格（2026-10-13〜14。第8節）。修正後の SHA は未実施 |
 | Microsoft Edge | 準備確認 → 全必須 E2E（第4節）＋実操作・目視（第5節） | 同上 | 未実施 |
 
 ## 0. 守ること
@@ -256,3 +256,56 @@ Remove-Item Env:FTA_E2E_WORKDIR, Env:PYTHONPATH
 - 自動確認：Chrome・Edge それぞれの準備確認と全必須 E2E の `e2e-report.md`・`run-info.md`。
 - 実操作・目視：ブラウザごとの `results.md` と画面のコピー。
 - 未実施の確認は「未実施」と書いてください（実施していない確認を合格とは扱いません）。自動試験の成功、Windows 実機での確認、利用者による受入の判断は、それぞれ別に記録します。
+
+## 8. Windows Chrome の全必須 E2E の不合格（`bb99f0c`、2026-10-13〜14）の後の再確認と追加の採取
+
+`bb99f0c` の Chrome の全必須 E2E は3回とも**不合格**でした（記録は計画書 第14.6節。原本の判定は変えません）。E-L01（一覧の並び順）と E-L07（出力メニュー）は試験の前提の問題としてテストを直し、`net::ERR_NO_BUFFER_SPACE`（CSS の取得の失敗。2回）は原因が分かっていません。次の確認の対象は、修正後の受入候補の SHA（報告と PR 本文に書いたもの）です。アプリ（`app/`）は `bb99f0c` から変わっていません。
+
+### 8.1 時計の分解能の確認（E-L01・E-L07 の原因の裏付け。1分）
+
+E-L01・E-L07 は、続けて作った分析の更新日時が同じ値になり、同じ値の並び順が決まっていないことで失敗したと考えています（開発環境で、同じ値にすると同じ失敗になることを確かめました）。Windows の Python 3.12 で日時の刻みが粗いかを、自動確認専用の venv で確かめます（読むだけで、何も変えません）。
+
+```powershell
+& "$venv\Scripts\python.exe" -c "import datetime as d; v=[d.datetime.utcnow() for _ in range(300000)]; s=sorted(set(v)); g=sorted((b-a).total_seconds()*1000 for a,b in zip(s,s[1:])); print('distinct', len(s), 'min step ms', round(g[0],3), 'median step ms', round(g[len(g)//2],3))"
+```
+
+- 表示された1行をそのまま記録してください。`min step ms` が 1 前後〜16 前後なら、同じ刻みの中で作った分析が同じ更新日時になり得ます（開発環境の Linux では 0.001 前後）。Chrome などを開いているかで値が変わることがあるため、そのときの状態（ブラウザを開いていたか）も書いてください。
+
+### 8.2 修正後の SHA の Chrome の全必須 E2E と、同時に行う最小の採取
+
+再実行は1回です（合格・不合格にかかわらず、繰り返しません）。準備確認（第3.1節）が成功した後、第3.2節の Full を次の採取と一緒に行います。
+
+1. 実行の前に、同じ PowerShell で、動的ポートの範囲と除外範囲を保存します（読むだけ。設定は変えません）。
+
+   ```powershell
+   $tag = "{0}-chrome" -f $sha.Substring(0,7)
+   netsh int ipv4 show dynamicport tcp | Out-File "$out\netinfo-$tag.txt" -Encoding utf8
+   netsh int ipv4 show excludedportrange protocol=tcp | Out-File "$out\netinfo-$tag.txt" -Encoding utf8 -Append
+   $env:FTA_E2E_ACCESS_LOG = "$out\access-$tag.jsonl"   # テスト用サーバーが受けた要求の記録（時刻・パス・状態・接続元のポート。本文・ヘッダーは記録しない）
+   ```
+
+2. **別の PowerShell の窓**で、TCP の接続数を5秒ごとに記録します（`$out`・`$sha` を同じ値に設定してから）。Full が終わったら Ctrl+C で止めます。
+
+   ```powershell
+   $tag = "{0}-chrome" -f $sha.Substring(0,7); $csv = "$out\tcp-$tag.csv"
+   "time,total,Listen,Bound,Established,TimeWait,CloseWait,other" | Set-Content -Path $csv -Encoding ascii
+   while ($true) {
+     $c = @(Get-NetTCPConnection -ErrorAction SilentlyContinue)
+     $n = @{}; $c | Group-Object -Property State -NoElement | ForEach-Object { $n["$($_.Name)"] = $_.Count }
+     $known = 0; foreach ($k in "Listen","Bound","Established","TimeWait","CloseWait") { if (-not $n[$k]) { $n[$k] = 0 }; $known += $n[$k] }
+     "{0},{1},{2},{3},{4},{5},{6},{7}" -f (Get-Date -Format "yyyy-MM-ddTHH:mm:ss"), $c.Count, $n.Listen, $n.Bound, $n.Established, $n.TimeWait, $n.CloseWait, ($c.Count - $known) | Add-Content -Path $csv -Encoding ascii
+     Start-Sleep -Seconds 5
+   }
+   ```
+
+3. 最初の窓で、第3.2節の Full を実行します。終わったら `Remove-Item Env:FTA_E2E_ACCESS_LOG` で設定を外します。
+
+- 渡すもの：記録フォルダの `e2e-report.md`・`run-info.md`（失敗があれば記録フォルダ全体）、`netinfo-<SHA7桁>-chrome.txt`、`tcp-<SHA7桁>-chrome.csv`、`access-<SHA7桁>-chrome.jsonl`。いずれもローカルのパスや時刻を含むため、公開の場所に置かないでください。
+- この採取の手順（`netsh` の表示の保存、`Get-NetTCPConnection` の集計、環境変数の受け渡し）は、**Windows では実行していません**（開発環境で確かめたのは、サーバーの要求の記録が Full で書かれることだけです。スクリプトが環境変数を pytest に引き継ぐことは、スクリプトのコードを読んで確かめただけです）。動かなかった場合は、その表示を記録して Full だけを行ってください。
+
+**比べ方**（`ERR_NO_BUFFER_SPACE` が出た場合）：`e2e-report.md` の失敗の行には、失敗したテストの開始・終了の時刻（ローカル時刻、秒まで）が出ます（この修正で追加）。その時刻の前後の `tcp-….csv` の `total`・`TimeWait`・`Bound` と、`netinfo-….txt` の動的ポートの数（除外範囲を引いた数）を比べ、`access-….jsonl` で失敗した CSS の要求がサーバーに届いたか（同じ時刻の `"path": "/static/css/…"` の `received`）と、その前の240秒に使われた接続元のポートの数を数えます。開発環境（Linux）の同じ Full では、ブラウザの接続は約2,240、任意の240秒の新しい接続は最大約1,150でした（計画書 第14.6節）。出なかった場合も、それで解消したとは扱いません（出なかったことと、最大値を記録します）。
+
+### 8.3 Edge と実操作・目視
+
+- Edge の準備確認・全必須 E2E（第4節）は、修正後の SHA で行います（`bb99f0c` の Edge の結果がある場合も、それはその SHA の結果です）。採取は Chrome で出た場合だけ、同じ方法で `-edge` の名前にして行います。
+- 実操作・目視（第5節）は、アプリが `bb99f0c` から変わっていないため、`bb99f0c` で行った分はその SHA の結果として記録し、修正後の SHA で同じ確認を繰り返す必要はありません（アプリ・テンプレート・静的ファイルの差分がないことは、報告と計画書に記録します）。
