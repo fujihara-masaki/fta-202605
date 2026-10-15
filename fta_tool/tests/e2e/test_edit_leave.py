@@ -403,12 +403,14 @@ def test_E_E20_nothing_is_accepted_while_a_generation_runs(page, e2e_server):
     step_button(page, 2).click()
     step_panel(page, 2).get_by_role("button", name="一次要因を生成").click()
     wait_until(lambda: any(path.endswith("/generate/level/1") for path in sent))
-    # The legacy overlay of the 一次 generation (until PR-6) holds the mouse,
-    # not the keyboard (B-1): the controls are used by their click events.
+    # PR-6: no overlay any more (J-05); the controls are used as by the
+    # keyboard or a stale button (their click events). Leaving is refused by
+    # the in-page link guard of the generation (E-G04) before the
+    # coordinator is asked: nothing is saved, asked or left.
     step_button(page, 1).dispatch_event("click")
     page.fill("#topEventInput", "生成中に入力した頂上事象")
     leave_link(page).dispatch_event("click")
-    expect(toast(page, "生成の準備中・生成中・結果の反映中は保存できません。", "warning")).to_be_visible()
+    expect(toast(page, "生成中のため移動できません。完了までお待ちください", "warning")).to_be_visible()
     expect(leave_dialog(page)).to_have_count(0)
     expect_stays(page, e2e_server, analysis_id)
     # The title is not sent either while the generation runs.

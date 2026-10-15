@@ -72,7 +72,7 @@ def test_E_X01_no_request_leaves_the_app(page, page_watch, e2e_server):
                      "/static/css/tokens.css", "/static/js/common/boot.js", "/static/js/pages/list.js",
                      "/static/css/new.css", "/static/js/pages/new.js",
                      "/static/css/edit.css", "/static/js/pages/edit.js", "/static/js/pages/edit/model.js",
-                     "/static/style.css", "/static/app.js"):
+                     "/static/style.css", "/static/js/pages/edit/generation.js"):
         assert expected in paths, f"{expected} was not requested: {sorted(paths)}"
     assert page_watch.foreign_requests == []
     assert all(url.startswith(e2e_server.url) for url in page_watch.requests)

@@ -30,7 +30,7 @@ import { isImeComposing } from '../../common/ime.js';
 import { notify } from '../../common/notify.js';
 import { normalizeText } from '../../common/text.js';
 import { getNode, levelName } from './model.js';
-import { checkParent, GONE } from './permissions.js';
+import { checkParent, generationRefusal, GENERATING_ADD, GONE } from './permissions.js';
 
 let open = null; // { dialog, title, description } while the dialog is open
 
@@ -49,8 +49,12 @@ function invokerSelector(button) {
   return parts.join('');
 }
 
+// Asked when the dialog opens and right before the request (PR-6: never
+// while a generation is prepared, runs or is being finished).
 function check(app, place) {
   if (app.gone) return { allowed: false, reason: GONE };
+  const generating = generationRefusal(GENERATING_ADD);
+  if (generating) return generating;
   if (place.level === 1) return { allowed: true, reason: '' };
   return checkParent(app, place.parentId, place.level);
 }

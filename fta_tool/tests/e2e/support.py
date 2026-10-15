@@ -116,6 +116,10 @@ class E2EServer:
         response = self.http.post(f"/analyses/{analysis_id}/title", json={"title": title})
         assert response.status_code == 200, response.text
 
+    def delete_node(self, node_id: int) -> None:
+        response = self.http.post(f"/nodes/{node_id}/delete")
+        assert response.status_code == 200, response.text
+
     def delete_analysis(self, analysis_id: int) -> None:
         response = self.http.post(f"/analyses/{analysis_id}/delete")
         assert response.status_code == 200, response.text

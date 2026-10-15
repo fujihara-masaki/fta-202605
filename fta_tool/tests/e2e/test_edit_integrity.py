@@ -381,7 +381,8 @@ def test_normal_generation_uses_consistent_yes_parents_only(page, e2e_server):
     expect(page.locator('[data-target-excluded="2"]')).to_be_visible()
     expect(page.locator('[data-target-excluded="2"] [data-target-excluded-count]')).to_have_text("2")
     step_panel(page, 3).get_by_role("button", name="Yesの一次要因から二次要因を生成").click()
-    expect(toast(page, "2件の親要因から順に生成中...（親子関係に不整合があるYes評価の要因2件は対象外）", "success")).to_be_visible()
+    # PR-6: the start message names the targets and the excluded ones apart.
+    expect(toast(page, "二次要因の通常生成を開始しました：対象の親 2件（Yesの一次要因すべて。絞り込みで表示していない要因も含みます）。親子関係に不整合があるため対象外：2件", "info")).to_be_visible()
     for parent_id in (a, b):
         expect(page.locator(f'[data-group-parent="{parent_id}"] [data-role="work-item"]')).to_have_count(3)
     assert [(body["level"], body.get("parent_id")) for body in bodies] == [(2, a), (2, b)]
@@ -401,7 +402,7 @@ def test_no_request_when_every_yes_parent_is_inconsistent(page, e2e_server):
     expect(page.locator('[data-target-excluded="2"] [data-target-excluded-count]')).to_have_text("1")
     step_panel(page, 3).get_by_role("button", name="Yesの一次要因から二次要因を生成").click()
     expect(toast(
-        page, "生成できる親要因がありません（Yes評価の要因のうち1件は親子関係に不整合があるため対象外です）", "error",
+        page, "生成できる親要因がありません（Yes評価の一次要因のうち1件は親子関係に不整合があるため対象外です）", "error",
     )).to_be_visible()
     page.wait_for_timeout(300)
     assert bodies == [] and e2e_server.stub_calls() == []
@@ -425,15 +426,25 @@ def test_additional_generation_and_manual_add_below_inconsistent_parents_are_ref
             expect(inspector(page).get_by_role("button", name=name, exact=True)).to_be_disabled()
         expect(inspector(page).locator("#inspector-children-reason")).to_have_text(PARENT_REASON_INCONSISTENT)
 
-    # Direct calls and stale buttons are refused before anything is sent
-    # (or opened). The stale manual-add button of M (PR-5: the dialog checks
-    # when it opens).
-    page.evaluate("([aid, id]) => generateAdditional(aid, id, 3)", [analysis_id, u])
+    # Stale buttons are refused before anything is sent (or opened). PR-6:
+    # the generation checks the parent when it starts (the legacy
+    # generateAdditional() these lines called directly is gone): the stale
+    # AIで追加生成 of the selected Z, and a button naming no parent. The stale
+    # manual-add button of Z (PR-5: the dialog checks when it opens).
+    force_click(inspector(page).get_by_role("button", name="AIで追加生成", exact=True))  # Z is selected
     expect(toast(page, PARENT_REASON_INCONSISTENT, "error")).to_be_visible()
-    force_click(inspector(page).get_by_role("button", name="手動追加", exact=True))  # M is selected
+    force_click(inspector(page).get_by_role("button", name="手動追加", exact=True))
     expect(add_dialog(page)).to_have_count(0)
-    page.evaluate("([aid]) => generateAdditional(aid, null, 2)", [analysis_id])
-    expect(toast(page, "親要因が指定されていないため、追加・生成できません", "error")).to_be_visible()
+    page.evaluate("""() => {
+      const stale = document.createElement('button');
+      stale.type = 'button';
+      stale.dataset.action = 'generate-additional';
+      stale.dataset.level = '2';
+      document.querySelector('[data-inspector-body]').append(stale);
+      stale.click();
+      stale.remove();
+    }""")
+    expect(toast(page, "親要因が指定されていないため、追加生成できません", "error")).to_be_visible()
 
     # The manual-add dialog opened for A, whose link became inconsistent
     # before 追加する (another tab; the page was updated meanwhile): asked

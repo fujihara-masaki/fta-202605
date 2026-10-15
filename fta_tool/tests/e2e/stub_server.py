@@ -23,6 +23,16 @@ stub_control.json in the working directory ({"mode": ..., "delay_seconds": ...})
   delay          wait `delay_seconds`, then behave like create
   no_candidates  return no factor
   error          raise RuntimeError (the API answers success=false)
+  warning        (PR-6) like create, with titles longer than the quality
+                 check allows (MAX_TITLE_LENGTH): created with a quality
+                 warning (要確認)
+  all_excluded   (PR-6) every candidate is dropped by the server's checks:
+                 the parent's own title (a paraphrase of the parent) for
+                 二次・三次; for 一次 the titles that already exist below the
+                 top event (duplicates; needs at least one 一次要因)
+Per parent (PR-6), "by_parent": {"<parent title>": "<mode>"} overrides the
+mode for the requests naming that parent ("delay" waits delay_seconds and
+creates), so one generation can mix results (a partial failure).
 Every call is appended to stub_calls.jsonl.
 
 Faults of the edit screen's parent-link checks (PR-3, J-25), per test from
@@ -93,7 +103,7 @@ class StubProvider:
         self.workdir = workdir
         self._counter = itertools.count(1)
 
-    def _settings(self) -> tuple[str, float]:
+    def _settings(self, parent_factor=None) -> tuple[str, float]:
         mode = os.environ.get("FTA_E2E_STUB_MODE", "create")
         delay = float(os.environ.get("FTA_E2E_STUB_DELAY_SECONDS", "2"))
         control = self.workdir / "stub_control.json"
@@ -102,6 +112,9 @@ class StubProvider:
                 data = json.loads(control.read_text(encoding="utf-8"))
                 mode = data.get("mode") or mode
                 delay = float(data.get("delay_seconds", delay))
+                by_parent = data.get("by_parent") or {}
+                if parent_factor is not None and parent_factor in by_parent:
+                    mode = by_parent[parent_factor]
             except (ValueError, OSError):
                 pass
         return mode, delay
@@ -109,7 +122,7 @@ class StubProvider:
     def generate_factors(self, **kwargs):
         from app.services.ai_provider import GeneratedFactor
 
-        mode, delay = self._settings()
+        mode, delay = self._settings(kwargs.get("parent_factor"))
         context = kwargs.get("context") or {}
         _append_jsonl(self.workdir / "stub_calls.jsonl", {
             "mode": mode,
@@ -126,15 +139,23 @@ class StubProvider:
             raise RuntimeError("E2Eスタブ：生成に失敗しました（検証用）")
         if mode == "no_candidates":
             return []
-        if mode != "create":
-            raise RuntimeError(f"E2Eスタブ：未対応のモードです（{mode}）")
         count = int(context.get("factor_count") or 2)
+        if mode == "all_excluded":
+            parent = kwargs.get("parent_factor")
+            titles = [parent] * count if parent else list(context.get("existing_titles") or [])[:count]
+            if not titles:
+                raise RuntimeError("E2Eスタブ：全候補除外には既存の一次要因が必要です")
+            return [GeneratedFactor(title=title, description="E2E用スタブ：除外される候補", rationale="E2E stub",
+                                    check_points=[]) for title in titles]
+        if mode not in ("create", "warning"):
+            raise RuntimeError(f"E2Eスタブ：未対応のモードです（{mode}）")
         factors = []
         for _ in range(count):
             n = next(self._counter)
             base = TITLE_POOL[(n - 1) % len(TITLE_POOL)]
+            suffix = "について運用手順と設定の両面から詳しく確認する必要がある要因" if mode == "warning" else ""
             factors.append(GeneratedFactor(
-                title=f"{base}（{n}）",
+                title=f"{base}（{n}）{suffix}",
                 description=f"E2E用スタブが返した説明文です（{n}）。",
                 rationale="E2E stub",
                 check_points=[],

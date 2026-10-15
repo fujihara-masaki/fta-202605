@@ -50,6 +50,21 @@ function sameFields(a, b) {
   return FACTOR_FIELDS.every((key) => (a[key] ?? '') === (b[key] ?? ''));
 }
 
+// Are two sets of saved values the same after the normalisation of saving
+// (PR-6: the values read again after a generation against those the draft
+// started from)?
+export function sameSavedValues(a, b) {
+  return sameFields(normalizeFields(a || {}), normalizeFields(b || {}));
+}
+
+// The keys of the draft that differ from the saved values (normalised as
+// for saving): what the user changed.
+export function changedKeys(draftValues, savedValues) {
+  const draft = normalizeFields(draftValues || {}, savedValues || {});
+  const saved = normalizeFields(savedValues || {});
+  return FACTOR_FIELDS.filter((key) => (draft[key] ?? '') !== (saved[key] ?? ''));
+}
+
 export function createFactorSource({
   app, nodeId, label, read, saved = {}, onDiscard = null, onSaved = null, blockedReason = null,
 }) {
@@ -84,6 +99,12 @@ export function createFactorSource({
       if (onSaved) onSaved({ ...outcome.value });
     },
     savedValues: () => ({ ...baseline }),
+    // PR-6: the saved values read again after a generation become the saved
+    // values (what 入力中（未保存） compares with and what 取消 restores); the
+    // draft itself is never touched here.
+    rebase(values) {
+      baseline = normalizeFields(values, baseline);
+    },
     discard() {
       if (onDiscard) onDiscard();
     },

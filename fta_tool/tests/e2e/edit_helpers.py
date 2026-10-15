@@ -270,3 +270,93 @@ def force_click(locator) -> None:
     """Click a disabled button as a stale control would (the page's own check
     must refuse it)."""
     locator.evaluate("(el) => { el.disabled = false; el.click(); }")
+
+
+# ----- PR-6: generation ----------------------------------------------------------
+
+PHASE_JS = "async () => (await import('/static/js/common/unsaved.js')).getGenerationPhase()"
+
+
+def phase(page) -> str:
+    """The generation's phase (idle / preparing / running / finishing)."""
+    return page.evaluate(PHASE_JS)
+
+
+def pump(page, check, timeout: float = 10.0) -> None:
+    """Wait for a condition while the page runs (route callbacks need
+    Playwright's event loop, which time.sleep would not run)."""
+    waited = 0.0
+    while not check():
+        assert waited < timeout, "condition not met within the timeout"
+        page.wait_for_timeout(50)
+        waited += 0.05
+
+
+def wait_phase(page, value: str, timeout: float = 10.0) -> None:
+    pump(page, lambda: phase(page) == value, timeout)
+
+
+def gen_status(page):
+    return page.locator("[data-gen-status]")
+
+
+def gen_log(page):
+    return page.locator("[data-gen-log]")
+
+
+def log_row(page, parent):
+    """The log row of a parent (an id, or 'top' for a 一次 generation)."""
+    return page.locator(f'[data-gen-row][data-parent-id="{parent}"]')
+
+
+def gen_badge(page, parent_id):
+    return page.locator(f'[data-gen-host="{parent_id}"] [data-gen-badge]')
+
+
+def generate_button(page, level: int):
+    return page.locator(f'[data-action="generate"][data-level="{level}"]')
+
+
+def additional_button(page, parent_id=None, *, scope=None, level: int = 1):
+    """「AIで追加生成」 below a parent (the parent's group heading unless
+    `scope` is given), or 「一次要因を追加生成」 of ②."""
+    if parent_id is None:
+        return page.locator('[data-step-panel="2"] [data-action="generate-additional"][data-level="1"]')
+    base = scope if scope is not None else page.locator(f'[data-group-parent="{parent_id}"] .edit-group__header')
+    return base.locator(f'[data-action="generate-additional"][data-parent-id="{parent_id}"]')
+
+
+def generation_requests(page) -> list[dict]:
+    """The generation requests the page sends from now on: path and body."""
+    sent: list[dict] = []
+
+    def record(request):
+        if request.method == "POST" and "/generate/level/" in request.url:
+            try:
+                body = request.post_data_json
+            except Exception:  # noqa: BLE001 - recorded as sent without a body
+                body = None
+            sent.append({"path": "/" + request.url.split("/", 3)[3], "body": body})
+
+    page.on("request", record)
+    return sent
+
+
+def detail_gets(page) -> list[int]:
+    """The ids of the GET /nodes/{id} the page sends from now on."""
+    sent: list[int] = []
+
+    def record(request):
+        path = "/" + request.url.split("/", 3)[3]
+        if request.method == "GET" and path.startswith("/nodes/") and path[7:].isdigit():
+            sent.append(int(path[7:]))
+
+    page.on("request", record)
+    return sent
+
+
+def hold(page, pattern: str) -> list:
+    """Hold the requests matching `pattern` until the test lets them go."""
+    held: list = []
+    page.route(pattern, lambda route: held.append(route))
+    return held

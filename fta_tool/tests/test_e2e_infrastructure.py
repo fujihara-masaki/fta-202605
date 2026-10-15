@@ -32,6 +32,7 @@ the check in Google Chrome of 2026-10-03, see tests/e2e/README.md).
 
 from __future__ import annotations
 
+import datetime
 import pathlib
 import re
 import types
@@ -145,6 +146,22 @@ def test_a_skip_is_a_failure_in_the_preflight():
     assert report.outcome == "failed"
     assert report.longrepr.startswith("[準備確認] スキップは失敗として扱います")
     assert run.records[item.nodeid].outcome == "failed"
+
+
+def test_a_failure_records_when_its_phase_ran():
+    config = configured(e2e_required=True)
+    run = acceptance.state(config)
+    item = types.SimpleNamespace(nodeid="tests/e2e/x.py::test_x[1280x800]", config=config)
+    run.records[item.nodeid] = acceptance.TestRecord(item.nodeid, [])
+    start = datetime.datetime(2026, 10, 14, 8, 5, 11).timestamp()
+    report = types.SimpleNamespace(skipped=False, failed=True, when="call", outcome="failed", start=start,
+                                   stop=start + 10.4, longreprtext="E   AssertionError: コンソールのエラー")
+    acceptance.on_report(item, report)
+    assert run.records[item.nodeid].reason == "call（08:05:11〜08:05:21）: AssertionError: コンソールのエラー"
+    # Without the times (e.g. an older pytest) the record is as before.
+    del report.start
+    acceptance.on_report(item, report)
+    assert run.records[item.nodeid].reason == "call: AssertionError: コンソールのエラー"
 
 
 def test_preflight_and_required_run_cannot_be_combined(monkeypatch):

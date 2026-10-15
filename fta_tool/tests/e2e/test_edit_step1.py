@@ -226,8 +226,8 @@ def test_E_E10_a_failed_automatic_save_or_an_empty_top_event_starts_nothing(page
     page.fill("#systemContextInput", "保存できない構成")
     step_button(page, 2).click()
     step_panel(page, 2).get_by_role("button", name="一次要因を生成").click()
-    expect(toast(page, "参考情報の保存に失敗したため、生成を開始しませんでした：E2E: 自動保存に失敗させました",
-                 "error", exact=True)).to_be_visible()
+    expect(toast(page, "参考情報の保存に失敗したため、生成を開始しませんでした：E2E: 自動保存に失敗させました。"
+                 "入力中の内容は残しています。", "error", exact=True)).to_be_visible()  # PR-6: the input is said to stay
     expect(step_panel(page, 2).get_by_role("button", name="一次要因を生成")).to_be_enabled()
     assert e2e_server.stub_calls() == []
     step_button(page, 1).click()

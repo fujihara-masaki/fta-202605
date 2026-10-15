@@ -16,10 +16,16 @@
 // source leaves the save coordinator only then. When the edited factor is no
 // longer in the data (removed elsewhere) while it has a draft, the editor
 // stays with its input and the reason it cannot be saved (plan 5.2).
+// PR-6 (J-01): a factor chosen while a generation is under way is not read
+// (取得待ち, or the saved values read before the generation with their time:
+// edit/factor-editor.js); refetchAfterGeneration() reads the factor shown
+// once the generation has ended. Every drawing applies the generation's
+// restrictions to the buttons it made (edit/restrict.js).
 // Text is always inserted as text (common/dom.js).
 
 import { el } from '../../common/dom.js';
-import { createFactorEditor } from './factor-editor.js';
+import { cachedDetails, createFactorEditor } from './factor-editor.js';
+import { applyRestrictions, generationUnderWay } from './restrict.js';
 import {
   ancestry,
   childrenOf,
@@ -96,9 +102,9 @@ function tags(node) {
     node.memo ? el('span', { class: 'ui-tag ui-tag--memo' }, 'メモあり') : null);
 }
 
-// A button that runs a legacy action. `blocked` (the reason) keeps it
-// disabled even when generation ends: app.setGenerating only re-enables
-// generation buttons without data-blocked-reason.
+// An action button. `blocked` (the reason) keeps it disabled also when a
+// generation ends: edit/restrict.js gives back only what it disabled and
+// never a button with data-blocked-reason.
 function actionButton(app, label, attrs, { blocked = '', generate = false, variant = '', describedBy = null } = {}) {
   return el('button', {
     type: 'button',
@@ -106,7 +112,7 @@ function actionButton(app, label, attrs, { blocked = '', generate = false, varia
     ...attrs,
     'data-generate': generate || undefined,
     'data-blocked-reason': blocked || undefined,
-    disabled: Boolean(blocked) || (generate && app.generating),
+    disabled: Boolean(blocked),
     'aria-describedby': describedBy || undefined,
   }, label);
 }
@@ -136,7 +142,7 @@ function topContent(app) {
       childList(app, null, roots),
       el('div', { class: 'edit-inspector__actions' },
         roots.length
-          ? actionButton(app, '一次要因を追加生成', { 'data-action': 'legacy-generate-additional', 'data-level': '1' }, { generate: true })
+          ? actionButton(app, '一次要因を追加生成', { 'data-action': 'generate-additional', 'data-level': '1' }, { generate: true })
           : null,
         actionButton(app, '一次要因を手動追加', { 'data-action': 'add', 'data-level': '1' })),
     ]),
@@ -177,7 +183,7 @@ function childrenSection(app, node) {
     const level = String(node.level + 1);
     content.push(el('div', { class: 'edit-inspector__actions' },
       actionButton(app, 'AIで追加生成', {
-        'data-action': 'legacy-generate-additional', 'data-parent-id': node.id, 'data-level': level,
+        'data-action': 'generate-additional', 'data-parent-id': node.id, 'data-level': level,
       }, { blocked: reason, generate: true, describedBy }),
       actionButton(app, '手動追加', {
         'data-action': 'add', 'data-parent-id': node.id, 'data-level': level,
@@ -223,7 +229,8 @@ function breadcrumb(app, node) {
 
 function warningSection(current) {
   let text = '読み込んでいます…';
-  if (current.phase === 'ready') text = current.data.warning_flags ? current.data.warning_flags : '（品質警告はありません）';
+  if (current.phase === 'waiting') text = '品質警告は生成の完了後に取得します（取得待ち）。';
+  else if (current.phase === 'ready') text = current.data.warning_flags ? current.data.warning_flags : '（品質警告はありません）';
   else if (current.phase === 'failed') text = '品質警告を読み込めませんでした。';
   return section('品質警告', [
     el('p', { class: 'edit-inspector__warning', 'data-warning-text': true }, text),
@@ -317,6 +324,7 @@ function onLoaded(app, current, focusWarning) {
   const warning = document.querySelector('[data-inspector-body] [data-warning-text]');
   if (warning) {
     if (current.phase === 'ready') warning.textContent = current.data.warning_flags || '（品質警告はありません）';
+    else if (current.phase === 'waiting') warning.textContent = '品質警告は生成の完了後に取得します（取得待ち）。';
     else warning.textContent = '品質警告を読み込めませんでした。';
   }
   if (focusWarning || current.pendingFocusWarning) {
@@ -354,18 +362,31 @@ export function renderInspector(app, { focusWarning = false, focusTitle = false 
       closeEditor();
       const created = createFactorEditor(app, node, {
         onSaved: (nodeId, fields) => editorHooks.onSaved?.(nodeId, fields),
-        onLoaded: (current) => onLoaded(app, current, focusWarning),
+        // The warning is focused once (the first answer); a second read
+        // after a generation only updates its text.
+        onLoaded: (current) => {
+          onLoaded(app, current, focusWarning && !current.loadedOnce);
+          current.loadedOnce = true;
+        },
       });
       editor = created;
       root.replaceChildren(...nodeContent(app, node, created));
-      created.load();
+      if (generationUnderWay()) {
+        // No request during a generation: the values read before it, or 取得待ち.
+        const entry = cachedDetails(app.analysisId, id);
+        if (entry) created.showCached(entry);
+        else created.wait();
+      } else {
+        created.load();
+      }
       if (focusWarning) focusWarningSection();
     }
   }
   restoreCaptured(captured);
+  applyRestrictions(app);
   if (app.gone) {
     // The analysis is gone (edit/refresh.js): nothing can be saved any more.
-    root.querySelectorAll('[data-action="judgement"], [data-action^="legacy-"], [data-action="add"], [data-action="delete"]')
+    root.querySelectorAll('[data-action="judgement"], [data-action^="generate"], [data-action="add"], [data-action="delete"]')
       .forEach((button) => {
         button.disabled = true;
       });
@@ -375,6 +396,16 @@ export function renderInspector(app, { focusWarning = false, focusTitle = false 
     const title = root.querySelector('[data-inspector-title]');
     if (title) title.focus({ preventScroll: false });
   }
+}
+
+// After a generation (edit/generation.js): read the details of the factor
+// shown (the first read if it was waiting; else a second read that keeps a
+// draft). Nothing else is read.
+// pendingOnly: a preparation ended without generating (取りやめ, a failed
+// save, an exception): only what it held back is read (PR-6 review, R3).
+export function refetchAfterGeneration({ pendingOnly = false } = {}) {
+  const current = currentEditor();
+  if (current) current.refetch({ pendingOnly });
 }
 
 export function updateTopEventText(saved) {

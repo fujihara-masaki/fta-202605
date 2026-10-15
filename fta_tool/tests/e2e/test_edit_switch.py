@@ -50,6 +50,7 @@ from tests.e2e.edit_helpers import (
     factor_message,
     factor_save,
     factor_status,
+    force_click,
     inspector,
     inspector_title,
     item,
@@ -526,8 +527,8 @@ def test_E_E18_the_analysis_removed_keeps_the_input_and_stops(page, e2e_server, 
 @pytest.mark.acceptance("E-E18")
 def test_E_E18_generation_two_choices_no_factor_save_and_browsing_stays_free(page, e2e_server):
     analysis_id, a, b, c, d = build(e2e_server, "生成中の切替")
-    # C's details are read before the generation: while it runs the single
-    # worker answers nothing else (plan 2.4; the waiting display is PR-6).
+    # C's details are read before the generation (PR-6: nothing is read
+    # while it runs; a factor chosen then waits, 取得待ち — E-G10).
     open_edit(page, analysis_id, f"#sel={c}&step=4&view=work")
     expect_editor_ready(page, c)
     sent = posts(page)
@@ -545,7 +546,9 @@ def test_E_E18_generation_two_choices_no_factor_save_and_browsing_stays_free(pag
 
     # A draft: the save is not started …
     factor_field(page, "memo").fill("生成中の下書き")
-    factor_save(page).click()
+    # PR-6: 保存 is off during a generation (E-G11); a stale click is refused.
+    expect(factor_save(page)).to_be_disabled()
+    force_click(factor_save(page))
     expect(factor_message(page)).to_contain_text("生成の準備中・生成中・結果の反映中は保存できません")
     # … and a switch offers two choices with the reason, nothing to save.
     select_button(page, "nav", b).click()
@@ -563,12 +566,13 @@ def test_E_E18_generation_two_choices_no_factor_save_and_browsing_stays_free(pag
     # B's details wait for the generation: nothing of C is left in its
     # fields, and nothing can be typed over them meanwhile.
     expect(editor(page)).to_have_attribute("data-node-id", str(b))
+    expect(editor(page)).to_have_attribute("data-phase", "waiting")
     expect(factor_field(page, "memo")).to_have_value("")
     expect(factor_field(page, "memo")).to_be_disabled()
     # Only the inspector's change was dropped; ① stays.
     expect(page.locator("#topEventInput")).to_have_value("生成中の頂上事象の下書き")
 
-    # No draft (B still loading): browsing is never refused.
+    # No draft (B waits for its details): browsing is never refused.
     select_button(page, "nav", d).click()
     expect(inspector_title(page)).to_have_text("一次要因D")
     expect(switch_dialog(page)).to_have_count(0)

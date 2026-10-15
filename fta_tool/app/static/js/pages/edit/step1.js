@@ -12,6 +12,10 @@
 // unsaved when the page opens, and typing then restoring is saved again.
 // After a success the saved value becomes what was sent (as the server
 // answered), never what was typed meanwhile.
+// PR-6 (J-01): the save buttons refuse while a generation is prepared, runs
+// or is being finished (disabled, and checked again on click); the input
+// stays. saveSource itself is not refused then: the generation's own
+// automatic save of ① goes through it in the preparation.
 // The saved top event is shown at once (step status, outlines, inspector):
 // it is registered with app.writes, so a partial update fetched before it is
 // never applied (plan 3.4-5, P-3).
@@ -20,6 +24,8 @@ import { requestJson } from '../../common/http.js';
 import { notify } from '../../common/notify.js';
 import { isSameText, normalizeText } from '../../common/text.js';
 import {
+  GENERATING_REASON,
+  getGenerationPhase,
   isSourceSaving,
   lastFailure,
   refresh as refreshUnsaved,
@@ -155,7 +161,7 @@ export function createStep1(app) {
       }
       const button = buttons[kind];
       if (button) {
-        button.disabled = saving || app.gone;
+        button.disabled = saving || app.gone || getGenerationPhase() !== 'idle';
         button.setAttribute('aria-busy', saving ? 'true' : 'false');
       }
       const message = messages[kind];
@@ -173,6 +179,10 @@ export function createStep1(app) {
   async function saveFrom(kind) {
     const source = sources[kind];
     if (app.gone) return;
+    if (getGenerationPhase() !== 'idle') {
+      notify(GENERATING_REASON, { type: 'warning' });
+      return;
+    }
     if (!source.isDirty()) {
       notify(`${source === topEvent ? '頂上事象' : '参考情報'}に保存していない変更はありません`, { type: 'info' });
       return;

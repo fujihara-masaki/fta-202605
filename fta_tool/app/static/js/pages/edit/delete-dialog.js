@@ -26,7 +26,7 @@ import { notify } from '../../common/notify.js';
 import { truncateForDisplay } from '../../common/text.js';
 import { currentEditor, dropEditor } from './inspector.js';
 import { getNode, isAtOrBelow, levelName } from './model.js';
-import { checkDelete } from './permissions.js';
+import { checkDelete, generationRefusal, GENERATING_DELETE } from './permissions.js';
 
 // Is the inspector's draft (if any) on the factor `nodeId` or below it?
 function draftAffected(app, nodeId) {
@@ -47,7 +47,12 @@ function saveInFlightAffected(app, nodeId) {
   return Boolean(editor) && editor.isSaving() && draftAffected(app, nodeId);
 }
 
+// PR-6 (J-01): refused while a generation is prepared, runs or is being
+// finished — the button (disabled, edit/restrict.js), opening this dialog
+// and confirming it (the three points of plan 5.3).
 function check(app, id) {
+  const generating = generationRefusal(GENERATING_DELETE);
+  if (generating) return generating;
   const answer = checkDelete(app, id);
   if (!answer.allowed) return answer;
   if (saveInFlightAffected(app, id)) return { allowed: false, reason: SAVING_REASON };

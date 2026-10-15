@@ -32,11 +32,9 @@
   <div id="ui-toasts" class="ui-toast-stack"></div>
   <div id="ui-live-status" class="visually-hidden" role="status" aria-live="polite"></div>
   <div id="ui-live-alert" class="visually-hidden" role="alert" aria-live="assertive"></div>
-  {% block legacy_scripts %}
-  <!-- Legacy toast and script, used by the screens that are not migrated yet -->
-  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
-  <script src="/static/app.js"></script>
-  {% endblock %}
+  {#- Every screen is migrated; the legacy app.js was removed in PR-6. The
+      block stays empty for screens that still override it. #}
+  {% block legacy_scripts %}{% endblock %}
   <script type="module" src="/static/js/common/boot.js"></script>
   {% block extra_scripts %}{% endblock %}
 </body>
