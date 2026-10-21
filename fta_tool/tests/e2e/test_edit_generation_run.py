@@ -130,6 +130,14 @@ def test_E_G04_writes_and_moves_are_held_back_browsing_is_free(page, e2e_server)
         expect(locator).to_be_disabled()
     expect(leave_link(page)).to_have_attribute("aria-disabled", "true")
     expect(page.locator('.app-header a[href="/"]').first).to_have_attribute("aria-disabled", "true")
+    # The judgement buttons look disabled too (Windows check of 2026-10-21:
+    # they looked as usual): dimmed as the other disabled buttons, the
+    # not-allowed cursor, the chosen value (A: Yes) still told apart.
+    chosen, other = (judgement_button(item(page, "work", a), a, value) for value in ("yes", "no"))
+    for button in (chosen, other):
+        expect(button).to_have_css("opacity", "0.55")
+        expect(button).to_have_css("cursor", "not-allowed")
+    expect(chosen).not_to_have_css("background-color", other.evaluate("(b) => getComputedStyle(b).backgroundColor"))
 
     # Their own checks: a stale enabled button sends nothing.
     force_click(judgement_button(item(page, "work", a), a, "no"))
@@ -178,6 +186,9 @@ def test_E_G04_writes_and_moves_are_held_back_browsing_is_free(page, e2e_server)
     release(page, held)
     # Back: the buttons, the links, the save of ①.
     expect(judgement_button(item(page, "work", a), a, "no")).to_be_enabled()
+    for button in (chosen, other):
+        expect(button).to_have_css("opacity", "1")
+        expect(button).to_have_css("cursor", "pointer")
     expect(generate_button(page, 2)).to_be_enabled()
     expect(leave_link(page)).not_to_have_attribute("aria-disabled", "true")
     expect(status).to_be_hidden()
