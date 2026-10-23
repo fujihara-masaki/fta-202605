@@ -1,0 +1,362 @@
+"""Locators and checks shared by the edit-screen E2E tests (PR-3).
+
+Every representation of a factor carries data-node-id and a data-role
+(templates/edit/_parts.html): nav / work / group / tree / table buttons that
+select it, and nav-item / work-item / group-item / tree-item / table-item
+containers.
+"""
+
+from __future__ import annotations
+
+import time
+
+from tests.e2e.support import expect
+
+SELECT_ROLES = ("nav", "tree", "table")
+
+
+def open_edit(page, analysis_id: int, fragment: str = "") -> None:
+    if fragment:
+        page.goto("about:blank")  # a hash-only change would not load the page again
+    page.goto(f"/analyses/{analysis_id}{fragment}")
+    # The module is running once it marked the current work step.
+    expect(page.locator('.edit-steps [aria-current="step"]')).to_have_count(1)
+
+
+def step_button(page, number: int):
+    return page.locator(f'.edit-steps [data-action="step"][data-step="{number}"]')
+
+
+def step_panel(page, number: int):
+    return page.locator(f'[data-step-panel="{number}"]')
+
+
+def tab(page, view: str):
+    return page.locator(f'[data-view-tab="{view}"]')
+
+
+def panel(page, view: str):
+    return page.locator(f'[data-view-panel="{view}"]')
+
+
+def select_button(page, role: str, node_id):
+    return page.locator(f'[data-action="select"][data-role="{role}"][data-node-id="{node_id}"]')
+
+
+def item(page, role: str, node_id):
+    return page.locator(f'[data-role="{role}-item"][data-node-id="{node_id}"]')
+
+
+def top_button(page, role: str = "nav"):
+    return page.locator(f'[data-action="select"][data-select="top"][data-role="{role}"]')
+
+
+def inspector(page):
+    return page.locator("[data-inspector-body]")
+
+
+def inspector_title(page):
+    return page.locator("[data-inspector-title]")
+
+
+def judgement_button(scope, node_id, value: str):
+    return scope.locator(f'[data-judgement-toggle][data-node-id="{node_id}"] [data-value="{value}"]')
+
+
+def chip(scope, node_id):
+    return scope.locator(f'[data-judgement-chip][data-node-id="{node_id}"]')
+
+
+def selected_ids(page) -> set[str]:
+    """What every select button marked as current points at."""
+    return set(page.eval_on_selector_all(
+        '[data-action="select"][aria-current="true"]',
+        "els => els.map((e) => e.dataset.nodeId || e.dataset.select)",
+    ))
+
+
+def expect_selected(page, node_id, title: str) -> None:
+    """The factor is the selection on every representation and in the inspector."""
+    for role in SELECT_ROLES:
+        expect(select_button(page, role, node_id)).to_have_attribute("aria-current", "true")
+    work = select_button(page, "work", node_id)
+    if work.count():
+        expect(work).to_have_attribute("aria-current", "true")
+    expect(inspector_title(page)).to_have_text(title)
+    assert selected_ids(page) == {str(node_id)}
+
+
+def notifications(page):
+    return page.locator("#ui-toasts .ui-toast")
+
+
+def toast(page, text: str, kind: str, *, exact: bool = False):
+    """A notification of the shared stack (js/common/notify.js) of this kind
+    ('success' | 'info' | 'warning' | 'error') containing this text, or with
+    exactly this message; app.js's messages are shown here too (判断4)."""
+    base = f'#ui-toasts .ui-toast[data-toast-type="{kind}"]'
+    if exact:
+        value = text.replace("\\", "\\\\").replace('"', '\\"')
+        return page.locator(f'{base}[data-message="{value}"]')
+    return page.locator(base).filter(has_text=text)
+
+
+def wait_until(check, timeout: float = 10.0, interval: float = 0.1) -> None:
+    """Poll a server-side condition (e.g. the database) until it holds."""
+    deadline = time.monotonic() + timeout
+    while not check():
+        if time.monotonic() > deadline:
+            raise AssertionError("condition not met within the timeout")
+        time.sleep(interval)
+
+
+def update_requests(page, node_id=None):
+    sent = []
+
+    def record(request):
+        if request.method != "POST":
+            return
+        if node_id is None and "/nodes/" in request.url and request.url.endswith("/update"):
+            sent.append(request)
+        elif node_id is not None and request.url.endswith(f"/nodes/{node_id}/update"):
+            sent.append(request)
+
+    page.on("request", record)
+    return sent
+
+
+# ----- PR-4: the header title, ①, leaving the page ----------------------------
+
+LEAVE_DIALOG = "保存していない変更があります"
+
+
+def title_input(page):
+    return page.locator("#analysisTitleInput")
+
+
+def title_editor(page):
+    return page.locator("[data-title-editor]")
+
+
+def open_title_editor(page):
+    page.locator("[data-title-edit]").click()
+    expect(title_input(page)).to_be_focused()
+    return title_input(page)
+
+
+def edit_title(page, text: str, key: str = "Enter"):
+    """✎, replace the title, then `key` (None: leave the input as it is)."""
+    field = open_title_editor(page)
+    field.fill(text)
+    if key:
+        field.press(key)
+    return field
+
+
+def save_status(page, field_id: str):
+    return page.locator(f'[data-save-status="{field_id}"]')
+
+
+def save_button(page, kind: str):
+    """kind: 'top-event' (頂上事象を保存) | 'context' (参考情報を保存)."""
+    return page.locator(f'[data-save-button="{kind}"]')
+
+
+def leave_dialog(page):
+    return page.get_by_role("dialog", name=LEAVE_DIALOG)
+
+
+def leave_link(page):
+    return page.locator(".edit-header").get_by_role("link", name="一覧へ")
+
+
+def post_paths(page) -> list[str]:
+    """Paths of the POST requests the page sends from now on, in order."""
+    sent: list[str] = []
+
+    def record(request):
+        if request.method == "POST":
+            sent.append("/" + request.url.split("/", 3)[3])
+
+    page.on("request", record)
+    return sent
+
+
+# ----- PR-5: the inspector's editor, the manual-add and delete dialogs ---------
+
+FACTOR_FIELDS = ("title", "description", "memo", "direct_cause_status", "direct_cause_comment",
+                 "evidence", "prevention_idea")
+DELETE_DIALOG = "要因を削除しますか？"
+ADD_DIALOG = "要因を手動追加"
+GENERATING_SWITCH = "生成中は保存できません。生成が終わると保存できます。"
+
+
+def editor(page):
+    return inspector(page).locator("[data-factor-editor]")
+
+
+def factor_field(page, key: str):
+    return inspector(page).locator(f'[data-factor-field="{key}"]')
+
+
+def factor_save(page):
+    return inspector(page).locator("[data-factor-save]")
+
+
+def factor_cancel(page):
+    return inspector(page).locator("[data-factor-cancel]")
+
+
+def factor_status(page):
+    return inspector(page).locator("[data-factor-status]")
+
+
+def factor_message(page):
+    return inspector(page).locator("[data-factor-message]")
+
+
+def expect_editor_ready(page, node_id) -> None:
+    """The inspector's editor is the factor's and its saved values arrived."""
+    expect(editor(page)).to_have_attribute("data-node-id", str(node_id))
+    expect(editor(page)).to_have_attribute("data-phase", "ready")
+    expect(factor_field(page, "title")).to_be_enabled()
+
+
+def fill_factor(page, **fields) -> None:
+    for key, value in fields.items():
+        field = factor_field(page, key)
+        if key == "direct_cause_status":
+            field.select_option(value)
+        else:
+            field.fill(value)
+
+
+def choose(page, node_id, role: str = "nav") -> None:
+    """Choose a factor (an R-01 route) and wait until its editor is ready."""
+    select_button(page, role, node_id).click()
+    expect_editor_ready(page, node_id)
+
+
+def delete_dialog(page):
+    return page.get_by_role("dialog", name=DELETE_DIALOG)
+
+
+def add_dialog(page):
+    return page.get_by_role("dialog", name=ADD_DIALOG)
+
+
+def delete_factor(page) -> None:
+    """この要因を削除 → 削除する in the dialog."""
+    inspector(page).get_by_role("button", name="この要因を削除").click()
+    dialog = delete_dialog(page)
+    expect(dialog).to_be_visible()
+    dialog.get_by_role("button", name="削除する").click()
+    expect(dialog).to_have_count(0)
+
+
+def add_factor(page, button, title: str, description: str = "") -> None:
+    """Open the manual-add dialog with `button`, fill it and add."""
+    button.click()
+    dialog = add_dialog(page)
+    expect(page.locator("#add-factor-title")).to_be_focused()
+    page.fill("#add-factor-title", title)
+    if description:
+        page.fill("#add-factor-description", description)
+    dialog.get_by_role("button", name="追加する").click()
+    expect(dialog).to_have_count(0)
+
+
+def force_click(locator) -> None:
+    """Click a disabled button as a stale control would (the page's own check
+    must refuse it)."""
+    locator.evaluate("(el) => { el.disabled = false; el.click(); }")
+
+
+# ----- PR-6: generation ----------------------------------------------------------
+
+PHASE_JS = "async () => (await import('/static/js/common/unsaved.js')).getGenerationPhase()"
+
+
+def phase(page) -> str:
+    """The generation's phase (idle / preparing / running / finishing)."""
+    return page.evaluate(PHASE_JS)
+
+
+def pump(page, check, timeout: float = 10.0) -> None:
+    """Wait for a condition while the page runs (route callbacks need
+    Playwright's event loop, which time.sleep would not run)."""
+    waited = 0.0
+    while not check():
+        assert waited < timeout, "condition not met within the timeout"
+        page.wait_for_timeout(50)
+        waited += 0.05
+
+
+def wait_phase(page, value: str, timeout: float = 10.0) -> None:
+    pump(page, lambda: phase(page) == value, timeout)
+
+
+def gen_status(page):
+    return page.locator("[data-gen-status]")
+
+
+def gen_log(page):
+    return page.locator("[data-gen-log]")
+
+
+def log_row(page, parent):
+    """The log row of a parent (an id, or 'top' for a 一次 generation)."""
+    return page.locator(f'[data-gen-row][data-parent-id="{parent}"]')
+
+
+def gen_badge(page, parent_id):
+    return page.locator(f'[data-gen-host="{parent_id}"] [data-gen-badge]')
+
+
+def generate_button(page, level: int):
+    return page.locator(f'[data-action="generate"][data-level="{level}"]')
+
+
+def additional_button(page, parent_id=None, *, scope=None, level: int = 1):
+    """「AIで追加生成」 below a parent (the parent's group heading unless
+    `scope` is given), or 「一次要因を追加生成」 of ②."""
+    if parent_id is None:
+        return page.locator('[data-step-panel="2"] [data-action="generate-additional"][data-level="1"]')
+    base = scope if scope is not None else page.locator(f'[data-group-parent="{parent_id}"] .edit-group__header')
+    return base.locator(f'[data-action="generate-additional"][data-parent-id="{parent_id}"]')
+
+
+def generation_requests(page) -> list[dict]:
+    """The generation requests the page sends from now on: path and body."""
+    sent: list[dict] = []
+
+    def record(request):
+        if request.method == "POST" and "/generate/level/" in request.url:
+            try:
+                body = request.post_data_json
+            except Exception:  # noqa: BLE001 - recorded as sent without a body
+                body = None
+            sent.append({"path": "/" + request.url.split("/", 3)[3], "body": body})
+
+    page.on("request", record)
+    return sent
+
+
+def detail_gets(page) -> list[int]:
+    """The ids of the GET /nodes/{id} the page sends from now on."""
+    sent: list[int] = []
+
+    def record(request):
+        path = "/" + request.url.split("/", 3)[3]
+        if request.method == "GET" and path.startswith("/nodes/") and path[7:].isdigit():
+            sent.append(int(path[7:]))
+
+    page.on("request", record)
+    return sent
+
+
+def hold(page, pattern: str) -> list:
+    """Hold the requests matching `pattern` until the test lets them go."""
+    held: list = []
+    page.route(pattern, lambda route: held.append(route))
+    return held
