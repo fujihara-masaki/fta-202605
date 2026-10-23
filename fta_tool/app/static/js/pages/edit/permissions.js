@@ -6,12 +6,21 @@
 // This is the screen's own check on the data as fetched; it does not make
 // the existing APIs safe.
 
+import { getGenerationPhase } from '../../common/unsaved.js';
 import { getNode } from './model.js';
 
 export const GONE = '分析が見つかりません（削除された可能性があります）';
 const NOT_ON_PAGE = 'この要因は画面のデータにないため、操作できません。ページを再読み込みしてください。';
 const LEVEL_MISMATCH = '親要因の階層が合わないため、追加・生成できません。';
 const DELETE_UNKNOWN = '安全に削除できるか確認できていないため、この画面では削除できません。';
+
+// PR-6 (J-01): manual add and delete wait for the end of a generation.
+export const GENERATING_ADD = '生成中のため手動追加できません。生成が終わるまでお待ちください。';
+export const GENERATING_DELETE = '生成中のため削除できません。生成が終わるまでお待ちください。';
+
+export function generationRefusal(reason) {
+  return getGenerationPhase() !== 'idle' ? { allowed: false, reason } : null;
+}
 
 const allowed = () => ({ allowed: true, reason: '' });
 const refused = (reason) => ({ allowed: false, reason });

@@ -353,6 +353,8 @@ def test_E_E07_failed_fetch_keeps_typed_input_or_reloads(page, e2e_server, page_
 
 @pytest.mark.acceptance("E-E07")
 def test_E_E07_no_fetch_while_a_generation_runs_one_after(page, e2e_server):
+    """PR-6: the overlay of the 一次 generation is gone (J-05); the page says
+    that a generation runs (data-gen-status) and fetches nothing meanwhile."""
     analysis_id = e2e_server.create_analysis("部分更新（生成中）", top_event="頂上")
     e2e_server.add_level1(analysis_id, "一次要因A")
     e2e_server.set_stub_mode("delay", delay_seconds=3)
@@ -360,17 +362,18 @@ def test_E_E07_no_fetch_while_a_generation_runs_one_after(page, e2e_server):
     fetches = page_fetches(page, analysis_id)
     mark_page(page)
 
-    overlay = page.locator("#loadingOverlay")
+    status = page.locator("[data-gen-status]")
     step_panel(page, 2).get_by_role("button", name="一次要因を追加生成").click()
-    expect(overlay).to_be_visible()
+    expect(status).to_be_visible()
+    expect(page.locator("#loadingOverlay")).to_have_count(0)
     wait_until(lambda: len(e2e_server.stub_calls()) == 1)
     refresh(page)  # e.g. another change asked for an update meanwhile
     refresh(page)
     page.wait_for_timeout(300)
-    expect(overlay).to_be_visible()  # still generating …
-    assert fetches == []             # … and nothing fetched
+    expect(status).to_contain_text("生成中")  # still generating …
+    assert fetches == []                     # … and nothing fetched
 
-    expect(overlay).to_be_hidden(timeout=15000)
+    expect(status).to_be_hidden(timeout=15000)
     expect(step_panel(page, 2).locator('[data-role="work-item"]')).to_have_count(3)
     page.wait_for_timeout(500)
     assert len(fetches) == 1
@@ -416,8 +419,13 @@ def test_E_E07_dialog_gives_the_focus_back_after_an_update(page, e2e_server):
 
 
 @pytest.mark.acceptance("E-E07")
-def test_E_E07_a_factor_added_during_a_generation_leaves_a_newer_selection(page, e2e_server):
-    analysis_id = e2e_server.create_analysis("部分更新（生成中の手動追加）", top_event="頂上")
+def test_E_E07_a_factor_added_before_a_generation_leaves_a_newer_selection(page, e2e_server):
+    """Was: a factor added during a generation (PR-3〜PR-5). PR-6 refuses a
+    manual add during a generation (E-G04), so the guarantee is kept for the
+    add whose update a generation holds back: made just before it, its
+    update answered while the generation runs and applied after it; a factor
+    chosen meanwhile is not replaced."""
+    analysis_id = e2e_server.create_analysis("部分更新（生成の前の手動追加）", top_event="頂上")
     a = e2e_server.add_level1(analysis_id, "一次要因A")
     b = e2e_server.add_level1(analysis_id, "一次要因B")
     c = e2e_server.add_level1(analysis_id, "一次要因C")
@@ -435,32 +443,34 @@ def test_E_E07_a_factor_added_during_a_generation_leaves_a_newer_selection(page,
 
     generations: list[str] = []
     page.route(f"**/analyses/{analysis_id}/generate/level/2", hold_second_generation)
-    fetches = page_fetches(page, analysis_id)
+    first_fetch = []
+    page.route(re.compile(rf".*/analyses/{analysis_id}$"),
+               lambda r: first_fetch.append(r) if r.request.resource_type == "fetch" and not first_fetch else r.continue_())
     mark_page(page)
 
-    # 二次 is generated parent by parent (A, then C); nothing covers the page.
+    # A factor is added: its update is fetched (held here) …
+    add_factor(page, step_panel(page, 2).get_by_role("button", name="手動追加", exact=True), "生成の前に追加した一次要因")
+    wait_for(page, lambda: bool(first_fetch))
+    # … the generation starts (parent by parent: A, then C); nothing covers the page.
     step_button(page, 3).click()
     generate = step_panel(page, 3).get_by_role("button", name="Yesの一次要因から二次要因を生成")
     generate.click()
     wait_for(page, lambda: bool(held))  # A is done, C is being generated
     expect(generate).to_be_disabled()
-
-    # A factor is added meanwhile: its update waits for the generation …
-    step_button(page, 2).click()
-    add_factor(page, step_panel(page, 2).get_by_role("button", name="手動追加", exact=True), "生成中に追加した一次要因")
-    assert e2e_server.query("SELECT COUNT(*) FROM nodes WHERE analysis_id = ? AND title = ?",
-                            (analysis_id, "生成中に追加した一次要因"))[0][0] == 1
+    # Manual add is refused during the generation (E-G04).
+    expect(step_panel(page, 3).get_by_role("button", name="手動追加").first).to_be_disabled()
+    # The add's update is answered now: held back by the generation …
+    first_fetch[0].continue_()
+    page.wait_for_timeout(300)
     # … and another factor is chosen before it ends.
     select_button(page, "nav", b).click()
     expect_selected(page, b, "一次要因B")
-    page.wait_for_timeout(300)
-    assert fetches == []
 
     held[0].continue_()  # C is generated; the generation ends, one update
+    step_button(page, 2).click()
     expect(step_panel(page, 2).locator('[data-role="work-item"]')).to_have_count(4)
     page.wait_for_timeout(500)
     expect_selected(page, b, "一次要因B")  # the newer choice stays
-    assert len(fetches) == 1
     assert same_page(page)
 
 # ----- E-E19 --------------------------------------------------------------------

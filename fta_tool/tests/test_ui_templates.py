@@ -12,7 +12,7 @@ T-03  New analysis: the form posts the same field names (ids kept), the
 
 Also covered: the grouped factor count (crud.count_nodes_by_analysis), the
 shared frame (skip link, live regions, aria-current), which screens still
-load the legacy app.js / style.css, and the JavaScript MIME type that ES
+load the legacy style.css (app.js is gone since PR-6), and the JavaScript MIME type that ES
 modules need.
 """
 
@@ -492,10 +492,10 @@ def test_shared_frame_on_every_screen(client):
         styles = [s.attrs.get("href") for s in root.find_all("link", rel="stylesheet")]
         assert "/static/js/common/boot.js" in scripts
         assert "/static/css/tokens.css" in styles
-        # The edit screen still loads the legacy script and stylesheet (PR-3);
-        # its messages use the shared notifications, so no page renders the
-        # old toast any more (判断4).
-        assert ("/static/app.js" in scripts) is legacy, path
+        # The legacy app.js was removed in PR-6 (generation moved to
+        # js/pages/edit); the edit screen still loads the legacy stylesheet
+        # (its unused rules go in PR-7). No page renders the old toast (判断4).
+        assert "/static/app.js" not in scripts, path
         assert ("/static/style.css" in styles) is legacy, path
         assert not root.find_all(id="toast"), path
 
@@ -504,7 +504,7 @@ def test_javascript_is_served_with_a_javascript_mime_type(client):
     edit_modules = sorted((STATIC_DIR / "js" / "pages" / "edit").glob("*.js"))
     assert edit_modules
     paths = ["/static/js/common/boot.js", "/static/js/pages/list.js", "/static/js/pages/new.js",
-             "/static/js/pages/edit.js", "/static/app.js"]
+             "/static/js/pages/edit.js"]
     paths += [f"/static/js/pages/edit/{module.name}" for module in edit_modules]
     for path in paths:
         response = client.get(path)
@@ -516,7 +516,10 @@ def test_javascript_is_served_with_a_javascript_mime_type(client):
 # Analysis edit (B), PR-3 skeleton: regions, the embedded summary, data-node-id
 # on every representation, broken parent links (J-25), tags (J-14), counts.
 
-EDIT_REGIONS = {"steps", "nav", "work-2", "work-3", "work-4", "work-anomalies", "tree", "table", "summary"}
+# PR-6: the operation bars are regions of their own (work-N-bar), so the
+# generation log between a bar and its list is never replaced.
+EDIT_REGIONS = {"steps", "nav", "work-2-bar", "work-2", "work-3-bar", "work-3", "work-4-bar", "work-4",
+                "work-anomalies", "tree", "table", "summary"}
 SUMMARY_KEYS = {
     "id", "parentId", "level", "title", "description", "judgement", "directCause", "ai", "warning", "memo",
     "kind", "label", "notes", "anomalyRoot", "canParent", "parentReason", "delete",
@@ -617,8 +620,15 @@ def test_T04_edit_regions_steps_tabs_and_moved_inputs(client):
         (f"/analyses/{analysis_id}/export/{fmt}", True) for fmt in ("json", "csv", "markdown")]
 
     # PR-5 replaced the legacy detail and manual-add modals (the inspector's
-    # editor and the in-page dialogs); the generation overlay stays until PR-6.
-    root.find(id="loadingOverlay")
+    # editor and the in-page dialogs); PR-6 the legacy generation and its
+    # overlay (J-05): no overlay, the status line of a generation instead.
+    assert not root.find_all(id="loadingOverlay")
+    status = root.find(**{"data-gen-status": True})
+    assert "hidden" in status.attrs and status.attrs["data-phase"] == "idle"
+    assert not root.find_all(**{"data-action": "legacy-generate"})
+    assert not root.find_all(**{"data-action": "legacy-generate-additional"})
+    for level in ("1", "2", "3"):
+        assert root.find_all(**{"data-gen-log-slot": level}), level
     for element_id in ("nodeDetailModal", "addNodeModal"):
         assert not root.find_all(id=element_id), element_id
     assert not root.find_all(**{"data-action": "legacy-add"})
@@ -626,13 +636,13 @@ def test_T04_edit_regions_steps_tabs_and_moved_inputs(client):
     assert not root.find_all(**{"data-action": "legacy-delete"})
     assert root.find_all("button", **{"data-action": "add", "data-level": "1"})  # ② 手動追加: the dialog
 
-    # Scripts: the module and the legacy script by URL; the only inline
-    # script is the embedded data.
+    # Scripts: the module by URL (no legacy script since PR-6); the only
+    # inline script is the embedded data.
     scripts = root.find_all("script")
     inline = [s for s in scripts if "src" not in s.attrs]
     assert [(s.attrs.get("type"), s.attrs.get("id")) for s in inline] == [("application/json", "analysis-data")]
     sources = [s.attrs["src"] for s in scripts if "src" in s.attrs]
-    assert "/static/js/pages/edit.js" in sources and "/static/app.js" in sources
+    assert "/static/js/pages/edit.js" in sources and "/static/app.js" not in sources
     styles = [s.attrs["href"] for s in root.find_all("link", rel="stylesheet")]
     assert "/static/css/edit.css" in styles and "/static/style.css" in styles
     assert "ui-page" in root.find("body").attrs["class"].split()
@@ -653,6 +663,14 @@ def test_T04_embedded_summary_shape_and_content(client, monkeypatch):
     summary = _summary(root)
     assert summary["analysisId"] == analysis_id
     assert summary["factorCounts"] == {"1": 5, "2": 4, "3": 3, "additional": 1}
+    # PR-6 (J-06): the operation bars tell 通常生成・追加生成・手動追加 apart
+    # with the numbers of the settings.
+    kinds1 = root.find(**{"data-opbar-kinds": "1"}).text()
+    assert "一次要因を5件生成します（設定値）" in kinds1 and "一次要因を1件追加します（設定値）" in kinds1
+    assert "手動追加" in kinds1
+    kinds2 = root.find(**{"data-opbar-kinds": "2"}).text()
+    assert "親1件につき4件を生成します（設定値）" in kinds2 and "選んだ親1件の下に1件追加します（設定値）" in kinds2
+    assert root.find(**{"data-target-names": "2"}) is not None
     assert summary["lookupsOk"] is True
     nodes = {n["id"]: n for n in summary["nodes"]}
     assert [n["id"] for n in summary["nodes"]] == [root_id, child_id]  # server order

@@ -530,7 +530,7 @@ textarea.ui-input {
 .ui-judgement__option:last-child {
   border-right: none;
 }
-.ui-judgement__option:hover {
+.ui-judgement__option:hover:where(:not(:disabled)) {
   background: var(--color-surface-muted);
 }
 .ui-judgement__option:focus-visible {
@@ -548,6 +548,12 @@ textarea.ui-input {
 .ui-judgement__option--unknown[aria-pressed="true"] {
   background: var(--color-text-muted);
   color: var(--color-text-inverse);
+}
+/* Disabled (a generation under way, the analysis gone): dimmed as the other
+   disabled buttons (.ui-btn:disabled); the chosen value keeps its colour. */
+.ui-judgement__option:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .ui-judgement__option[data-pending="true"] {
   box-shadow: inset 0 -3px 0 var(--color-focus);

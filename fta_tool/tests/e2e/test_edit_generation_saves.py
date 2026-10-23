@@ -112,7 +112,7 @@ def test_E_E20_a_generation_started_while_leaving_waits_is_not_overridden(page, 
     # shows — the 一次 generation, whose preparation waits as well.
     page.evaluate("""() => {
       document.querySelector('.edit-header [data-leave-link]').click();
-      document.querySelector('[data-action="legacy-generate"][data-level="1"]').click();
+      document.querySelector('[data-action="generate"][data-level="1"]').click();
     }""")
     assert phase(page) == "preparing"
 
@@ -159,7 +159,9 @@ def test_E_E20_finishing_lasts_until_the_partial_update_has_ended(page, e2e_serv
     page.wait_for_timeout(16000)  # longer than the former 15 s limit
     assert phase(page) == "finishing"
     page.locator(".edit-header [data-leave-link]").dispatch_event("click")
-    expect(toast(page, GENERATING, "warning")).to_be_visible()
+    # PR-6: refused by the generation's in-page link guard (E-G04) before the
+    # save coordinator is asked; still no leaving and no three choices.
+    expect(toast(page, "生成中のため移動できません", "warning")).to_be_visible()
     expect(leave_dialog(page)).to_have_count(0)
 
     if outcome == "success":

@@ -6,8 +6,9 @@ dialog, manual add and delete (plan 7.2; acceptance 10 of plan 8.3: UI-09〜
 UI-14 stay usable, and the normal generation of 二次・三次 still includes Yes
 parents hidden by the filter). The title and step ① were rebuilt in PR-4;
 the detail dialog, manual add and delete in PR-5 (the inspector's editor,
-the manual-add and delete dialogs: E-E14〜E-E17 check them in full). Only
-generation still runs on app.js until PR-6. PR3-LEGACY-OPS keeps checking
+the manual-add and delete dialogs: E-E14〜E-E17 check them in full);
+generation in PR-6 (app.js is gone; E-G01〜E-G12 check it in full).
+PR3-LEGACY-OPS keeps checking
 that every one of these operations works from the new page, what each one
 guaranteed (the memo saved, the judgement untouched, the quality warning
 with its full text, the added factor selected, the No parent's additional
@@ -19,8 +20,9 @@ mark must still be there).
 PR3-LEGACY-NOTIFY: the messages (saving, generation, the dialogs, delete,
 communication errors) appear in the shared notifications with their kind,
 once each, errors staying until closed (the user's decision of 2026-09-29,
-判断4; J-24 moved forward); the old #toast element is gone. app.js's
-generation messages keep their text. PR-5's messages of the factor's save,
+判断4; J-24 moved forward); the old #toast element is gone. Since PR-6 the
+generation's messages are the summaries of plan 5.6 (J-04), each once with
+its kind (they replaced app.js's texts). PR-5's messages of the factor's save,
 manual add and delete are the new screen's own; a missing title is shown at
 the field (the editor) or in the dialog (manual add), never as a
 notification. The in-page dialogs (<dialog>, top layer) are never covered by
@@ -169,7 +171,7 @@ def test_details_manual_add_additional_generation_delete_and_export(page, e2e_se
     expect(item(page, "work", added)).to_contain_text("手動")
 
     # AI additional generation below the No parent B from its group heading
-    # (J-16; still the legacy generation of app.js until PR-6).
+    # (J-16; the generation of PR-6, E-G07 has the rest).
     step_button(page, 3).click()
     page.locator(f'[data-group-parent="{b}"]').get_by_role("button", name="AIで追加生成").click()
     expect(page.locator(f'[data-group-parent="{b}"] [data-role="work-item"]')).to_have_count(2)
@@ -332,25 +334,30 @@ def test_saving_dialogs_and_delete_messages_use_the_shared_notifications(page, e
 
 
 @pytest.mark.acceptance("PR3-LEGACY-NOTIFY")
-def test_generation_messages_keep_their_text_and_kind(page, e2e_server):
+def test_generation_messages_once_each_with_their_kind(page, e2e_server):
+    """Was: app.js's generation messages kept their text (PR-3〜PR-5). Since
+    PR-6 the messages are the summaries of plan 5.6 / J-04: each once, with
+    its kind, in the shared stack (E-G03 checks every category)."""
     analysis_id = e2e_server.create_analysis("通知の確認（生成）", top_event="頂上")
     open_edit(page, analysis_id)
     step_button(page, 2).click()
 
     step_panel(page, 2).get_by_role("button", name="一次要因を生成").click()
-    expect_once(page, "4件の要因を生成しました", "success", exact=False)
+    expect_once(page, "一次要因の通常生成：4件作成しました", "success")
+    expect_once(page, "一次要因の通常生成を開始しました：頂上事象の下", "info")
     expect(step_panel(page, 2).locator('[data-role="work-item"]')).to_have_count(4)
 
     e2e_server.set_stub_mode("no_candidates")
     step_panel(page, 2).get_by_role("button", name="一次要因を追加生成").click()
-    expect_once(page, "生成候補がありませんでした（LLMが要因を返しませんでした）。", "warning")
+    expect_once(page, "一次要因の追加生成：生成候補がありませんでした（LLMが要因を返しませんでした）", "warning")
 
     e2e_server.set_stub_mode("error")
     step_panel(page, 2).get_by_role("button", name="一次要因を追加生成").click()
-    expect_once(page, "一部でエラーが発生しました", "error", exact=False)
+    expect_once(page, "一次要因の追加生成：作成できませんでした（詳細は生成ログ）", "error")
+    expect(page.locator('[data-gen-row][data-parent-id="top"]')).to_contain_text("一部でエラーが発生しました")
 
     # 二次要因 without a Yes parent: refused before a request, as an error.
     step_button(page, 3).click()
     step_panel(page, 3).get_by_role("button", name="Yesの一次要因から二次要因を生成").click()
-    expect_once(page, "Yes評価の要因がありません", "error")
+    expect_once(page, "Yes評価の一次要因がないため、生成できません", "error")
     expect(page.locator("#toast")).to_have_count(0)
