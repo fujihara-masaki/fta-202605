@@ -2968,6 +2968,7 @@ PR-6 の受入（2026-10-23）で後続の改善候補とした静的ファイ�
 | 変更 | `app/static_files.py`（新規）、`app/main.py` の `/static` のマウント。試験：`tests/test_static_cache.py`（H-01〜H-09）、`tests/e2e/test_static_cache.py`（C-00〜C-07）、`tests/e2e/stub_server.py` の試験専用の設定、必須 ID に C-00〜C-07（60 → 68 項目）。W-02 の道具：`tests/e2e/cache_manual_check.py`、`scripts/run_cache_check.ps1`。テンプレート・CSS・JS・DB・業務 API・生成・LangGraph・Quality Gate・依存の固定版は変えていない |
 | 開発環境の自動試験（2026-10-26、Linux。固定版の Chromium 141 はネットワークの方針で導入できず、代替の Chromium 153 を `--e2e-browser-executable` で明示） | `03f91a9`（クリーンな worktree）：通常の pytest 900 passed / 19 skipped（すべて PowerShell がないため）、累積の全必須 E2E **合格**（成功 434・失敗 0・スキップ 0・未実施 0、必須 68 項目すべて成功）。C-03 は成立、H-09・C-05 で検出力を確認。初回の `56e6507` の結果は計画書 第14.3節 |
 | レビューへの対応（2026-10-26） | W-02 の道具：HTML の試験専用の観測で、目印のない旧方式の保存からも始められる（Codex の指摘）、同じプロファイルでの再実行、手順3 のファイルごとの照合。`If-None-Match` の引用符の中の `*`。ブラウザの実行ファイルの明示、PowerShell の確認の Windows の準備確認への組み込み。計画書 第14.6節 |
+| 受入候補（2026-10-26） | `2405992cdb5273571c3c23e7ffc96410433dff19`（アプリは `03f91a9` と同じ。記録の改善だけ）。開発環境：通常の pytest 901 passed / 19 skipped、累積の全必須 E2E **合格**（成功 434、必須 68 項目）。Chromium 141 は未実施（Chromium 153 の結果を読み替えない）。GitHub のチェックの実行の記録なし。計画書 第14.7節 |
 | Windows 実機 | **未実施**：Chrome・Edge の Preflight・Full（Preflight に Windows PowerShell 5.1 でのラッパーの確認を含む）、W-02（Chrome 必須、Edge は普段使う場合） |
 | 受入 | **未実施**（受入合格ではない） |
 | 残る制約 | 導入前に保存された応答は、3画面の Ctrl+F5 までは使われ得る（通常の操作による即時の移行は保証しない）。開いている画面・BFCache・履歴の移動・Service Worker 等は保証しない。再訪のたびの条件付き要求が増える（編集画面で34件、内容が同じなら 304）。`ERR_NO_BUFFER_SPACE` との関係は未確認 |

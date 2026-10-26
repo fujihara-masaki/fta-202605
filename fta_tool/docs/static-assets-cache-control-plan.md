@@ -446,6 +446,15 @@ M-3 は強制の再読み込みを**移行の操作**として定義するもの
 - 対象のブラウザ（開発環境の同梱 Chromium、Windows の Chrome・Edge）で **C-03 が成立すること**（一覧・新規作成・編集の3画面の、通常の画面遷移・新規の読み込み・F5 のそれぞれで HTML の要求がサーバーに届くこと）を前提に、HTML の応答は変えない。
 - **C-03 が成立しない場合は、合格扱いにせず**、対象の HTML の応答に明示的な `Cache-Control: no-cache` などを付けることを再検討する（その時点で利用者が判断する。この文書では HTML の応答の変更を確定しない）。`no-cache` の明示は、経験則の鮮度の割り当てを止め、毎回の再検証を求める点で、現在の応答と同じ効果とは限らない。
 - `no-store` は候補にしない（Chrome では BFCache の対象外になり得るため、既存の BFCache の試験（E-G12）と利用者の操作を変える）。
+
+**C-03 が成立しない場合の対応案（未採用。成立しなかった時点で、結果とともに利用者が判断する）**：
+
+| 項目 | 案 |
+|---|---|
+| 変更 | 一覧・新規作成・編集の HTML（`/`、`/analyses/new`、`/analyses/{id}`）の 200 の応答に `Cache-Control: no-cache` を付ける（`app/main.py` の3つの画面の関数、または HTML の応答だけに付ける小さなミドルウェア）。`no-store` は付けない。ETag・`Last-Modified` は付けない（毎回 200 で本文を返す。HTML は分析ごとに内容が変わり、304 の利点が小さい） |
+| 期待する効果 | 経験則の鮮度の割り当てを止め、通常の画面遷移・新規の読み込み・F5 で HTML を毎回サーバーに確かめさせる。履歴の移動（N-3）と BFCache（N-2）の扱いは変えない |
+| 影響する試験 | H-07（HTML に `Cache-Control` がないことを確かめている。HTML は `no-cache` に変える）、C-03（Windows の Chrome・Edge で再確認）、E-G08・E-G12（実 BFCache。`no-cache` は対象外の条件ではない見込みだが、再実行で確かめる）、E2E の全必須（回帰）、W-02（実際の F5 での HTML の要求） |
+| 判断の材料として報告すること | 成立しなかったブラウザの正式な版・チャンネル、画面と操作、その操作の要求・応答の記録（`static-requests.jsonl` 相当、`e2e-report.md` の失敗の理由） |
 - 履歴の移動（N-3）では、HTML も保存済みのものが使われ得る。この改善では扱わない。
 
 ### 5.6 業務 API・出力への影響
@@ -979,6 +988,31 @@ PR-C は PR-7・PR-8 のどちらにも依存しない。PR-7 が `favicon` を 
 - 前回（`56e6507`）からの増加：通常の pytest は 32件（ETag の試験が差し引き14件（15件を追加し、以前の1件を置き換え）、W-02 の道具の判定 13件、実行ファイルの指定 3件、道具の自己確認の場面 2件。ほかに PowerShell の試験 6件がスキップ）。E2E は2件（道具の自己確認の場面）。`tests/e2e/test_windows_tools.py` は PowerShell のない環境では定義されないため含まれない。
 - C-03 はこのブラウザでも成立した（HTML の応答は変えていない）。H-09・C-05 の検出力も前回と同じく確認できた。
 - 記録：[evidence/pr-c/](evidence/pr-c/README.md)（E2E の記録、pytest の要約、W-02 の道具の自己確認の `result.md`。後者のキー操作は模擬）。
+
+### 14.7 Windows の確認の準備と受入の判断の材料（2026-10-26、受入候補 `2405992`）
+
+開始時の確認：PR #24 の head `b4283a285d74e91968a4fb10ba35b3f353faffae`、base `feature/ui-redesign` `cba6ba5`（どちらも進んでいない）、作業ツリーはクリーン。開発環境（Linux）から Windows 実機を操作する手段（同じ PC の別のセッション、Remote Control の接続先）はなく、**Windows の Chrome・Edge の Preflight・Full と W-02 は実施していない**。利用者が [manual-check-pr-c.md](manual-check-pr-c.md) の既存の手順で実行できる状態にした。
+
+| 項目 | 内容 |
+|---|---|
+| 変更（`2405992`） | 試験の記録と W-02 の道具の記録だけ（アプリ・スクリプト・依存の指定は `03f91a9` と同じ）。(1) 合格した試験が `record_property("fta_note", …)` で残した注記を `e2e-report.md` の備考に書く。PowerShell の試験は「Windows PowerShell 5.1.…… Desktop（…powershell.exe）で実行」と書くので、Preflight の記録で 5.1 で実際に実行されたことと版が分かる（PowerShell 7 は導入済みなら別の行）。(2) W-02 の終了コード 3 で、準備できなかったファイルと、既存の自動試験（C-04・C-05）で確認できている範囲を `result.md` に書く |
+| 受入候補 | `2405992cdb5273571c3c23e7ffc96410433dff19`（アプリ・試験・スクリプト）。PR の先頭はその後に文書だけを加えたもの |
+| 開発環境の自動試験（クリーンな worktree、代替の Chromium 153.0.8010.12 を `--e2e-browser-executable` で明示、headless） | 通常の pytest：**901 passed / 19 skipped / 0 failed**、終了コード 0、11分35秒（14:27:29〜14:39:06 UTC）。skip 19件はすべて PowerShell がないため。累積の全必須 E2E：**合格**、成功 434・失敗 0・スキップ 0・未実施 0、必須 68 項目すべて成功、終了コード 0、11分30秒（14:39:07〜14:50:37 UTC）。C-00 1、C-01 3、C-02 1、C-03 5、C-04 1、C-05 2、C-06 2、C-07 1。記録は [evidence/pr-c/](evidence/pr-c/README.md) |
+| Chromium 141（固定版の Playwright のブラウザ） | **未実施**。開発環境で導入できない（第14.6節）。Chromium 153 の成功を 141 の成功とは扱わない。導入できる開発環境を使えるようになったら、所定のブラウザで自動試験を行う |
+| GitHub のチェック | この PR に設定されたチェックの実行はない（check run 0件、commit status 0件）。成功・失敗のどちらでもなく「実行の記録なし」 |
+| Codex の再レビュー | 最新の HEAD を対象に PR に依頼した。対象の SHA と結果は PR の本文に記録する（この節の後に HEAD が変わらないようにするため、リポジトリの文書には書かない） |
+
+**受入の判断に必要な情報（Windows の結果を受け取った後に整理する項目）**：
+
+| 項目 | 合格の条件 | 判断に使う記録 |
+|---|---|---|
+| 対象 | 確認した SHA の `fta_tool/app`・`tests`・`scripts`・依存の指定が `2405992` と同じ（手順書 第2節の差分が空） | 手順書 第2節の出力、`run-info.md` の対象 SHA |
+| 環境 | Windows の版、Chrome・Edge の正式な版・チャンネル、Windows PowerShell 5.1 の版 | `run-info.md`、`e2e-report.md`（起動したブラウザ、`[windows-powershell]` の行の備考）、`chrome://version`・`edge://version` |
+| Preflight | Chrome・Edge とも判定「成功」。`test_run_cache_check_ps1_with_the_installed_powershell[windows-powershell]` が成功し、備考が Windows PowerShell 5.1 | `e2e-report.md` |
+| Full | Chrome・Edge とも必須 68 項目すべて成功、テスト単位の失敗・スキップ・未実施 0（判定「合格」） | `e2e-report.md` |
+| C-03 | Chrome・Edge とも成功。成立しなければ不合格として報告し、第5.5節の対応案（HTML に `no-cache`）を判断する | `e2e-report.md` の C-03 の行と失敗の理由 |
+| W-02 | Chrome：終了コード 0 なら完全な OK。終了コード 3 は「改善後の動作は OK、旧方式の準備に不足あり」として 0 と区別し、`result.md` の不足した準備と自動試験の範囲を整理して報告する（キャッシュの消去や追加の手動の試験はその後に判断）。1・2 は NG・未完了。Edge は普段使う場合だけ | W-02 の `result.md`・`result.json` |
+| 未確認のまま残るもの | Chromium 141、PowerShell 7（導入されていなければ）、`ERR_NO_BUFFER_SPACE` との関係、2026-10-22 の原因 | — |
 
 ---
 
