@@ -10,7 +10,6 @@ from typing import Optional
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
@@ -27,6 +26,7 @@ from .services.factor_quality import (
 )
 from .services.prompt_loader import get_factor_generation_prompts
 from .services.sample_scenarios import get_sample_scenario, get_sample_scenarios
+from .static_files import RevalidatedStaticFiles
 
 # Load .env from fta_tool/.env, resolved relative to this file so that the
 # location is correct regardless of which directory uvicorn is started from.
@@ -170,7 +170,10 @@ app = FastAPI(title="FTA分析支援ツール", lifespan=lifespan)
 # read from the registry and may map ".js" to "text/plain"; pin the standard
 # type so static files are served the same way on every OS.
 mimetypes.add_type("text/javascript", ".js")
-app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+# Static files are revalidated before every use, so the CSS and every module
+# of a screen are the server's current ones after an update (PR-C,
+# app/static_files.py, docs/static-assets-cache-control-plan.md).
+app.mount("/static", RevalidatedStaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
 
