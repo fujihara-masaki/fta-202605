@@ -8,7 +8,7 @@
 | 状態 | **2026-10-26 に利用者がこの計画（`cba6ba5` の版）を実装の基準として採用し、第12節の判断4〜7を決めた。PR-C を実装し、開発環境の自動試験を行った（第14節）。Windows 実機の確認と利用者の受入は未実施（受入合格ではない）。** 2026-10-26 の方針で、Windows の確認は自動を中心にし、手動は W-02 の実際のキー操作だけに絞った（第6.5節） |
 | 作成 | 2026-10-23 |
 | 調査対象 | `feature/ui-redesign` の `3ce70990262c0b42f2f4dab2236facabcb327905`（PR #23 のマージコミット。PR #22 のマージコミット `8b862be` を含む）。作業ツリーはクリーン、`origin/feature/ui-redesign` と一致（2026-10-23 の作業開始時に GitHub とローカルで確認。依頼時の参考値から進んでいない） |
-| この文書の作成・改訂で変えたもの | 初版：この文書の新規作成と、[実装計画](ui-redesign-implementation-plan.md) 第14.6節「PR-7・PR-8・別提案に残す事項」の静的ファイルのキャッシュの項目への参照の追記だけ。改訂（レビューの反映）：この文書だけ。いずれもアプリケーションコード・テストコード・依存設定・DB は変えていない。2026-10-26：PR-C の実装（第14節）に合わせて、W 項目・受入条件・対応表・第9.2節・第12節を更新し、第14節を追加 |
+| この文書の作成・改訂で変えたもの | 初版：この文書の新規作成と、[実装計画](ui-redesign-implementation-plan.md) 第14.6節「PR-7・PR-8・別提案に残す事項」の静的ファイルのキャッシュの項目への参照の追記だけ。改訂（レビューの反映）：この文書だけ。いずれもアプリケーションコード・テストコード・依存設定・DB は変えていない。2026-10-26：PR-C の実装（第14節）に合わせて、W 項目・受入条件・対応表・第9.2節・第12節を更新し、第14節を追加。同日、PR #24 のレビュー（`748ad40`）への対応（W-02 の道具の観測・再実行・手順3 の照合、ETag の `*`、試験環境）と再試験を第6.5節・第9.2節・第14.6節に反映 |
 | 改訂 | 2026-10-23 初版（`730814d`）。同日、`730814d` に対する利用者のレビューを反映（各操作の直前に版を更新する試験、HTML の鮮度の断定の訂正、W-02 の下位 JS と実キー操作、H-04 の切り戻しの経路、H-06 の対象。第13節）。状態は変えていない |
 | 関連文書 | [ui-redesign-implementation-plan.md](ui-redesign-implementation-plan.md)（第14.6節「Windows 実機の確認（対象 `fc337f1`）」の 2026-10-22 の調査、2026-10-23 の追加の確認・受入の判断）、[manual-check-pr6.md](manual-check-pr6.md)（第10.4.3節・第10.5節・第10.6.6節）、[tests/e2e/README.md](../tests/e2e/README.md) |
 
@@ -633,11 +633,14 @@ M-3 は強制の再読み込みを**移行の操作**として定義するもの
 - 目的：導入前の応答が残った普段のプロファイルで、**利用者の実際の Ctrl+F5**（3画面で1回ずつ）で移行でき、その後に CSS と下位の JavaScript を次の版へ変えると、**利用者の実際の F5**（編集画面で1回）で新しい版が取得・適用・実行されることを、運用と同じ「停止 → 更新 → 同じポートで起動」の手順で確かめる。
 - 道具：`scripts/run_cache_check.ps1`（`tests/e2e/cache_manual_check.py` を自動確認専用の venv で実行）。利用者の操作は、画面のリンクのクリック、3画面での Ctrl+F5、編集画面での F5 だけ。
 - 自動で行うこと：記録フォルダの中の静的ファイルの一時コピー・試験 DB・分析データの準備、PR-C の前と同じ配信（`baseline`）での起動（手順1：旧方式のキャッシュを作る）、目印の版の変更（w0 → w1 → w2。`css/components.css`、`js/common/dom.js`、深さ3の `js/pages/edit/factor-source.js`）、サーバーの停止と同じポートでの起動、要求・応答の記録（`FTA_E2E_STATIC_LOG`）とページが使った値の収集、判定、`result.md`・`result.json` の作成、一時コピーと試験 DB の削除。
-- ページが使った値の取得：目印の付いた `common/dom.js` が、読み込みの完了時に、そのページの `getComputedStyle` の値とモジュールが設定した目印、ナビゲーションの種類、ブラウザの版を、テスト用サーバーの `POST /__fta_e2e/probe`（`FTA_E2E_PROBE_LOG`）へ送る。期待値を出力するのではなく、ページが実際に使った値を記録する。値を読むために静的ファイルを追加で取得・import せず、キャッシュを無効にせず、対象の URL を変えない。
-- 判定：手順2 は、3画面それぞれの HTML の要求がキャッシュを使わないもの（要求の `Cache-Control`・`Pragma` が `no-cache`）で、ページが w1 を使ったこと、38件が 200・`Cache-Control: no-cache`・期待どおりの `Content-Type` で返ったこと。手順3 は、HTML の要求が通常の再読み込み（`no-cache` なし。Ctrl+F5 や DevTools の「キャッシュを無効にする」なら NG）で、変更した3件が w1 の ETag で要求され 200・w2 の本文、ほかの31件が 304、ページが使った CSS の計算値と2つのモジュールの目印が w2 であること。
+- ページが使った値の取得（2026-10-26 のレビューで変更）：テスト用サーバーが確認のあいだだけ HTML に加える小さなスクリプト（`FTA_E2E_PROBE_RUN`）が、読み込みの完了時に、この回の識別子、パス、ナビゲーションの種類、そのページの `getComputedStyle` の値、モジュールが設定した目印、ブラウザの版を `POST /__fta_e2e/probe`（`FTA_E2E_PROBE_LOG`）へ送る。HTML は毎回取得されるため、確認の前から保存されている目印のない静的ファイル（例：以前に同じポートで使ったアプリの `dom.js`）が使われても画面を検出できる（当初は目印の `dom.js` が送っていたため、その場合に手順1 が時間切れになった。PR #24 のレビュー）。別の回の報告・目印は識別子で除く。期待値を出力するのではなく、ページが実際に使った値を記録する。値を読むために静的ファイルを追加で取得・import せず、キャッシュを無効にせず、対象の URL を変えない。
+- 手順1 の扱い（2026-10-26 のレビューで変更）：合否ではなく記録とする。ファイルごとの始めの状態（要求なし／200・`Cache-Control` なし／304）と、旧方式の保存を作れたか（すべて／一部／なし）を書く。以前の確認の `no-cache` の保存が 304 で確認されたファイルは「旧方式にできなかった」と記録し、304 だけで NG にも合格にもしない。手順2 以降のファイルの `Last-Modified` は 2001-01-01 にし、同じプロフィールでの再実行でも手順1 で旧方式に戻せるようにし、終了後にこのポートで別のサーバー（PR-C の前の版を含む）を動かしてもそのサーバーのファイルが使われるようにした。
+- 判定：手順2 は、3画面それぞれの HTML の要求がキャッシュを使わないもの（要求の `Cache-Control`・`Pragma` が `no-cache`）で、ページが w1 を使ったこと、38件が 200・`Cache-Control: no-cache`・期待どおりの `Content-Type` で返ったこと。手順3 は、HTML の要求が通常の再読み込み（`no-cache` なし。Ctrl+F5 や DevTools の「キャッシュを無効にする」なら NG）で、編集画面の期待の34件（`tests/e2e/static_assets.py`。C 群と共用）と要求されたファイルが名前で一致し、変更した3件が w1 の ETag で要求され 200・w2 の本文、ほかの31件がそれぞれ保存した ETag で 304、ページが使った CSS の計算値と2つのモジュールの目印が w2 であること。
 - 記録の区別：Ctrl+F5・F5 の行は「利用者の実操作」、それ以外は「自動」と `result.md` に書く。自動試験の CDP の強制の再読み込み（C-04）とは区別する。
 - 対象：Chrome は必須。Edge は普段 FTA ツールに使う場合。
-- 道具の自己確認：`tests/e2e/test_cache_manual_check.py` が、Playwright で利用者の操作を模して（Ctrl+F5 は CDP の強制の再読み込み、F5 は `page.reload`）、正しい操作で OK、手順3 を強制の再読み込みにすると NG になることを確かめる。これは道具の確認で、W-02 の代わりにしない。
+- 総合の判定と終了コード：0 OK、3 PR-C の動作は OK で旧方式の準備は一部、1 NG、2 未完了（時間切れ・中断・ポートの使用中・起動や入出力の失敗。理由を `result.md` に書き、`w02-output.log`・`server.log` を残す）。
+- 道具の自己確認：`tests/e2e/test_cache_manual_check.py` が、Playwright で利用者の操作を模して（Ctrl+F5 は CDP の強制の再読み込み、F5 は `page.reload`）、初めてのプロフィール、道具の目印のない旧方式の保存が残ったプロフィール（同じコンテキスト・同じオリジンで先に保存し、手順1 で静的ファイルを取り直さずに進むこと）、同じプロフィールでの2回続けての実行、手順3 を強制の再読み込みにした場合（NG）を確かめる。判定の部分（手順1 の記録、手順3 のファイルの照合、総合の判定）は `tests/test_cache_manual_check_judge.py` が確かめる（未変更の1件の欠落や、同じ件数で別のファイルの場合に NG）。これらは道具の確認で、W-02 の代わりにしない。
+- ラッパーの確認：`tests/e2e/test_windows_tools.py` が、その PC の PowerShell ごと（Windows では Windows PowerShell 5.1、pwsh があれば PowerShell 7 も別に）に、構文解析・誤った SHA での中止・道具の起動と「未完了」の記録・終了コードの受け渡しを確かめる。Windows の準備確認（Preflight）に含めた。pwsh があれば `tests/test_run_cache_check_script.py` が偽の python で終了コードの受け渡しと、道具が結果を書かなかった場合の「未完了」の記録を確かめる。
 
 元の W-02（2026-10-23 改訂版）の操作と、その確認先：
 
@@ -778,7 +781,11 @@ C-08・W-03 は受入の条件に含めない（記録のみ・次の更新の�
 | `tests/e2e/test_static_cache.py`（新規） | C-00〜C-07 と専用のサーバーの fixture（C-08 は記録のみの任意の項目で、今回は実装していない） |
 | `tests/e2e/acceptance.py` | 必須 ID に C-00〜C-07 を追加（60 → 68 項目） |
 | `tests/e2e/cache_manual_check.py`（新規）、`scripts/run_cache_check.ps1`（新規） | W-02 の道具（2026-10-26 の方針で追加。準備・版の変更・停止と同じポートでの起動・判定・記録・後片付け） |
-| `tests/e2e/test_cache_manual_check.py`（新規）、`tests/test_run_cache_check_script.py`（新規） | W-02 の道具の自己確認（模擬のキー操作）、PowerShell 5.1 の互換の静的検査 |
+| `tests/e2e/test_cache_manual_check.py`（新規）、`tests/test_run_cache_check_script.py`（新規） | W-02 の道具の自己確認（模擬のキー操作）、PowerShell 5.1 の互換の静的検査と、pwsh での起動・中止・終了コード |
+| `tests/e2e/static_assets.py`（新規。レビューの修正） | 画面ごとの期待の静的ファイル（C 群と W-02 の道具で共用） |
+| `tests/test_cache_manual_check_judge.py`（新規。レビューの修正） | W-02 の道具の判定（手順1 の記録、手順3 のファイルの照合、総合の判定、ポートの使用中） |
+| `tests/e2e/test_windows_tools.py`（新規。レビューの修正） | その PC の PowerShell でのラッパーの確認（Windows の Preflight に含める。`tests/e2e/acceptance.py` の `PREFLIGHT_TESTS`） |
+| `tests/conftest.py`・`tests/e2e/conftest.py`・`tests/e2e/acceptance.py`、`tests/test_e2e_browser_executable.py`（新規）（レビューの修正） | `--e2e-browser-executable=PATH`：固定版の Playwright のブラウザを導入できない環境で、別の Chromium を明示して使い、記録に「指定した実行ファイル」とその版・パスを書く |
 | `tests/e2e/README.md`、`docs/manual-check-pr-c.md`（新規）、実装計画、この文書 | 実行方法、Windows の手順、結果 |
 | `scripts/run_browser_e2e.ps1` | 変えていない（Full が新しい必須 ID と試験も実行する） |
 
@@ -893,13 +900,15 @@ PR-C は PR-7・PR-8 のどちらにも依存しない。PR-7 が `favicon` を 
 | 項目 | 内容 |
 |---|---|
 | 作業ブランチ・PR | `claude/pr-c-static-cache`（`feature/ui-redesign` の `cba6ba5` から分岐。開始時に GitHub とローカルで一致を確認）。PR #24（base `feature/ui-redesign`、open） |
-| 試験の対象のコミット | `56e6507ff1fb35c90e4105d4dcb57abfaba81b97`（アプリ・試験・スクリプト）。その後のコミットは文書だけ |
+| 試験の対象のコミット | 初回：`56e6507ff1fb35c90e4105d4dcb57abfaba81b97`。レビューの修正の後：`03f91a9df1c48ca336672dbbbabb1808a73ad9d0`（アプリ・試験・スクリプト。その後のコミットは文書だけ。第14.6節） |
 | 変更したファイル | 第9.2節 |
 | 仕様との対応 | SP-01〜SP-08：`app/static_files.py` の `RevalidatedStaticFiles`。SP-09〜SP-11：HTML・API・出力・テンプレート・CSS・JS は変えていない（H-07・H-08）。SP-12：[manual-check-pr-c.md](manual-check-pr-c.md) と第10.1節 |
 | ETag | ファイルの内容の SHA-256 の先頭32桁（強い ETag）。要求ごとに計算し、時刻・サイズをキーに再利用しない |
 | 試験専用の仕組み | `tests/e2e/stub_server.py` の `FTA_E2E_STATIC_DIR`・`FTA_E2E_STATIC_LOG`（HTML を含む全要求）・`FTA_E2E_PROBE_LOG`。未設定の時は動作を変えない |
 
 ### 14.3 開発環境の自動試験（対象 `56e6507`、2026-10-26）
+
+（2026-10-26 のレビューの注記：この回の結果は、レビューの修正の前の `56e6507` のもの。ブラウザの起動に使った「導入済みの Chromium を固定版のブラウザの場所から起動するラッパー」は、別の版を所定のブラウザに見せる方法のため、レビューの後はやめた。修正の後の試験は第14.6節。この回の記録は変えずに残す。）
 
 環境：Linux、Python 3.12.3、スクラッチ領域の仮想環境に `requirements-dev.txt` の固定版（fastapi 0.111.0、starlette 0.37.2、playwright 1.56.0、pytest-playwright 0.7.1）。ブラウザは環境に導入済みの **Chromium 153.0.8010.12（headless shell）**。Playwright 1.56.0 が期待する Chromium 141 はこの環境になく、`playwright install` はせずに、スクラッチ領域の `PLAYWRIGHT_BROWSERS_PATH` に導入済みの Chromium を起動する小さなラッパーを置いて使った（`e2e-report.md` の「起動したブラウザ」は「Playwright 同梱の Chromium（headless shell）153.0.8010.12」と表示されるが、実際は環境の Chromium 153）。実LLM は使っていない。
 
@@ -934,13 +943,42 @@ PR-C は PR-7・PR-8 のどちらにも依存しない。PR-7 が `favicon` を 
 
 | 項目 | 状態 |
 |---|---|
-| Windows の Chrome・Edge の Preflight・Full | **未実施**（[manual-check-pr-c.md](manual-check-pr-c.md) 第3・4節） |
+| Windows の Chrome・Edge の Preflight・Full | **未実施**（[manual-check-pr-c.md](manual-check-pr-c.md) 第3・4節。Preflight に Windows PowerShell 5.1 でのラッパーの確認を含む） |
 | W-02（Chrome の普段のプロファイルでの実際の Ctrl+F5・F5） | **未実施**（同 第5節）。Edge は普段使う場合 |
-| `scripts/run_cache_check.ps1` の Windows PowerShell 5.1 での構文解析・実行 | 未確認（この環境に pwsh・PowerShell がない。BOM・CRLF・5.1 にない演算子の静的検査は成功） |
+| `scripts/run_cache_check.ps1` の Windows PowerShell 5.1・PowerShell 7 での構文解析・実行 | 未確認（この環境に PowerShell がない。BOM・CRLF・5.1 にない演算子の静的検査は成功。Windows の準備確認で 5.1 の確認を自動で行う） |
+| 固定版の Playwright のブラウザ（Chromium 141）での結果 | 未確認（導入がネットワークの方針で拒否された。代替の Chromium 153 で確認。第14.6節） |
 | 実際の Ctrl+F5 が要求に `Cache-Control: no-cache`／`Pragma: no-cache` を付けること | 開発環境では CDP の強制の再読み込みで確かめた。実際のキー操作では W-02 で確かめる |
 | C-08（履歴の移動・BFCache の観察） | 実装していない（記録のみの任意の項目。既存の実 BFCache の試験 E-G08・E-G12 は R-02 で成功） |
 | 利用者の受入の判断 | **未実施**（受入合格ではない） |
 | 2026-10-22 の原因 | 未特定のまま（この実装はその原因の確定を前提にしない） |
+
+### 14.6 レビュー（`748ad40`）への対応と再試験（2026-10-26）
+
+開始時の確認：PR #24 の head `748ad40885df4afaed2a858fada8df6b5c621bc5`、base `feature/ui-redesign` `cba6ba5`（どちらも参考の値から進んでいない）、作業ツリーはクリーン。未解決のレビューは Codex の1件（[discussion_r4377212727](https://github.com/fujihara-masaki/fta-202605/pull/24#discussion_r4377212727)）、CI のチェックはない。
+
+| 指摘 | 修正 | 自動の回帰 |
+|---|---|---|
+| 1. 普段のプロファイルに目印のない旧 `dom.js` が残っていると、手順1 の報告が届かず時間切れになる | 画面の到達・読み込みの完了は、テスト用サーバーが HTML に加える試験専用のスクリプトで観測する（`FTA_E2E_PROBE_RUN`）。`dom.js` の報告は削除。回の識別子で報告と目印の版を区別 | `test_the_w02_tool_starts_from_files_cached_without_its_markers`：目印のない旧方式の資産を同じコンテキスト・同じオリジンで先に保存してから道具を始め、手順1 で静的ファイルの要求が0件（旧 `dom.js` を取り直さない）のまま手順2・3 へ進み OK。成功 |
+| 2. 同じプロファイルでの再実行で手順1 が 304 になり NG | 手順1 は記録（始めの状態、旧方式の準備：すべて／一部／なし）とし、PR-C の動作の合否と分けた（終了コード 0／3／1／2）。手順2 以降の `Last-Modified` を 2001-01-01 にし、再実行でも旧方式に戻せ、終了後に別のサーバーのファイルが使われるようにした。手順2 の前に終わった場合は後片付けの注意を記録 | `test_the_w02_tool_twice_in_the_same_profile`：同じコンテキスト・同じポートで2回続けて実行し、両方 OK、2回目の手順1 は38件とも「200・Cache-Control なし」、報告と目印は2回目の識別子だけ。`test_phase_a_records_the_start_without_failing_on_304`、総合の判定の5通り。成功 |
+| 3. 手順3 が、記録に現れた未変更のファイルだけで判定していた | 編集画面の期待の34件（`tests/e2e/static_assets.py`。C 群と共用）と名前で照合し、変更した3件と未変更の31件をそれぞれ確かめる | `tests/test_cache_manual_check_judge.py`：未変更の1件の欠落、同じ件数で別のファイル、未変更のファイルの 200、変更したファイルの 304、強制の再読み込み、古い値で NG。成功 |
+| 4. `If-None-Match: "prefix,*,suffix"` の途中の `*` をワイルドカードとみなした | フィールド全体が `*` のときだけワイルドカード。ほかは引用符で囲まれた ETag として順に解析して比較 | `test_etag_matches`（14通り）、`test_H_03_a_star_inside_a_quoted_etag_is_not_a_wildcard`（`"prefix,*,suffix"`・`W/"prefix,*,suffix"` は 200、単独の `*` と、リストの中の一致は 304）。成功 |
+| 5. 試験環境・スクリプトの検査・記録 | 固定版のブラウザを導入できない環境では `--e2e-browser-executable=PATH` で別の Chromium を明示し、記録に指定した実行ファイルと版・パスを書く（ラッパーで所定のブラウザに見せる方法はやめた）。ラッパーの確認を、その PC の PowerShell ごとの試験（`tests/e2e/test_windows_tools.py`）にし、Windows の準備確認に含めた。pwsh での偽の python による終了コードの確認を追加。道具が結果を書かなかった場合・起動や入出力の失敗・時間切れ・ポートの使用中を「未完了」と理由で記録し、`w02-output.log`・`server.log`（・`error.txt`）を残す | `tests/test_e2e_browser_executable.py`、`test_a_busy_port_ends_as_incomplete_with_a_reason`。PowerShell の実行の試験はこの環境にないため未実施（下記） |
+
+**試験の対象**：`03f91a9df1c48ca336672dbbbabb1808a73ad9d0`。クリーンな git worktree で実行した（実行の前後とも `git status --porcelain` が空）。
+
+**ブラウザ**：Playwright 1.56.0 の固定版が使う Chromium 141 を標準の手順（`python -m playwright install chromium`）で導入しようとしたが、ダウンロード先の `cdn.playwright.dev` と `playwright.download.prss.microsoft.com` がこの環境のネットワークの方針で拒否された（403。許可の一覧にないホスト）。方針による拒否のため再試行はしていない。代わりに環境に導入済みの **Chromium 153.0.8010.12**（`/opt/pw-browsers/chromium` → `/opt/pw-browsers/chromium-1243/chrome-linux64/chrome`、headless）を `--e2e-browser-executable=/opt/pw-browsers/chromium` で明示して使った。記録の「起動したブラウザ」は「指定した実行ファイルの Chromium（--e2e-browser-executable）：Google LLC 153.0.8010.12 (Official Build) (x86_64)」。**Chromium 141 での結果と、Windows の Chrome・Edge での結果は未確認。**
+
+**PowerShell**：この環境に PowerShell はない。PowerShell 7 の Linux 版を公式の GitHub のリリースから取得できたが、取得したものの実行は権限で止められたため使わず、削除した。PowerShell 7 と Windows PowerShell 5.1 のどちらでも、構文解析と実行の確認は**未実施**（Windows の準備確認で Windows PowerShell 5.1 による確認が行われる）。
+
+| 実行 | 結果 |
+|---|---|
+| 通常の pytest（`--e2e-browser-executable=/opt/pw-browsers/chromium`） | **900 passed / 19 skipped / 0 failed**、終了コード 0、11分36秒（13:42:29〜13:54:07 UTC）。skip 19件はすべて PowerShell がないため：`test_run_browser_e2e_script.py` 11件、`test_run_langgraph_comparison_script.py` 1件、`test_run_cache_check_script.py` 7件（構文解析 1、ラッパーの実行 6） |
+| 累積の全必須 E2E（`-m e2e --e2e-required`） | **合格**：成功 434・失敗 0・スキップ 0・未実施 0、必須 ID 68 項目すべて成功、終了コード 0、11分31秒（13:54:07〜14:05:38 UTC）。C-00 1、C-01 3、C-02 1、C-03 5、C-04 1、C-05 2、C-06 2、C-07 1 |
+| 修正の対象の回帰（上の表） | すべて成功（通常の pytest と E2E に含む） |
+
+- 前回（`56e6507`）からの増加：通常の pytest は 32件（ETag の試験が差し引き14件（15件を追加し、以前の1件を置き換え）、W-02 の道具の判定 13件、実行ファイルの指定 3件、道具の自己確認の場面 2件。ほかに PowerShell の試験 6件がスキップ）。E2E は2件（道具の自己確認の場面）。`tests/e2e/test_windows_tools.py` は PowerShell のない環境では定義されないため含まれない。
+- C-03 はこのブラウザでも成立した（HTML の応答は変えていない）。H-09・C-05 の検出力も前回と同じく確認できた。
+- 記録：[evidence/pr-c/](evidence/pr-c/README.md)（E2E の記録、pytest の要約、W-02 の道具の自己確認の `result.md`。後者のキー操作は模擬）。
 
 ---
 
