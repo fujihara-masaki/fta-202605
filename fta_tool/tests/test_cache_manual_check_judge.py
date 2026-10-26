@@ -127,6 +127,11 @@ def test_the_verdict_keeps_pr_c_apart_from_the_preparation(tmp_path, reached, re
     assert f"判定：**{verdict}**" in text
     if reason:
         assert f"未完了の理由：{reason}" in text and "後片付けの注意" in text
+    # Exit code 3 is kept apart from a full OK, with what was missing and
+    # what the automated tests (C-04, C-05) already cover.
+    assert ("終了コード 3 の扱い" in text) is (code == 3)
+    if code == 3:
+        assert "終了コード 0（完全な OK）とは区別する" in text and "C-04" in text and "C-05" in text
 
 
 def test_a_busy_port_ends_as_incomplete_with_a_reason(tmp_path):

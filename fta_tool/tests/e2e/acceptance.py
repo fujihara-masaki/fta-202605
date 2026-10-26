@@ -338,6 +338,9 @@ def _phase_window(report: pytest.TestReport) -> str:
     return f"（{clock(start)}〜{clock(stop)}）"
 
 
+NOTE_PROPERTY = "fta_note"
+
+
 def on_report(item: pytest.Item, report: pytest.TestReport) -> None:
     run = state(item.config)
     record = run.records.get(item.nodeid)
@@ -360,6 +363,11 @@ def on_report(item: pytest.Item, report: pytest.TestReport) -> None:
         record.reason = f"{report.when}{_phase_window(report)}: {_failure_reason(report)}"
     elif report.when == "call" and record.outcome is None:
         record.outcome = "passed"
+        # A passed test may name what it actually ran with (record_property
+        # "fta_note"), e.g. which PowerShell: it goes to the report's 備考.
+        notes = [str(value) for name, value in getattr(report, "user_properties", []) if name == NOTE_PROPERTY]
+        if notes:
+            record.reason = "／".join(notes)
 
 
 def add_known_console(item: pytest.Item, watchers: list) -> None:

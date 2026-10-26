@@ -38,3 +38,32 @@ def test_the_option_names_the_executable():
 def test_not_with_a_channel():
     with pytest.raises(pytest.UsageError):
         acceptance.browser_executable(Config(e2e_browser_executable="/opt/x/chrome", browser_channel="chrome"))
+
+
+def test_a_passed_tests_note_goes_to_the_report():
+    """record_property("fta_note", ...) of a passed test (e.g. which
+    PowerShell ran the wrapper's checks) is written as its 備考."""
+
+    class Item:
+        nodeid = "tests/e2e/test_x.py::test_x[windows-powershell]"
+
+        def __init__(self, config):
+            self.config = config
+
+    class Report:
+        skipped = failed = False
+        when = "call"
+        user_properties = [("fta_note", "Windows PowerShell 5.1.26100.1 Desktop（powershell.exe）で実行"), ("other", "x")]
+
+    run = acceptance.RunState()
+    run.records[Item.nodeid] = acceptance.TestRecord(Item.nodeid, [])
+    item = Item(None)
+    original = acceptance.state
+    acceptance.state = lambda _config: run
+    try:
+        acceptance.on_report(item, Report())
+    finally:
+        acceptance.state = original
+    record = run.records[Item.nodeid]
+    assert record.outcome == "passed"
+    assert record.reason == "Windows PowerShell 5.1.26100.1 Desktop（powershell.exe）で実行"

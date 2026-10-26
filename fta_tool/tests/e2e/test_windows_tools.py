@@ -60,9 +60,12 @@ def git(*args: str) -> str:
 
 if HOSTS:
     @pytest.mark.parametrize("host, exe", HOSTS, ids=[name for name, _ in HOSTS])
-    def test_run_cache_check_ps1_with_the_installed_powershell(host, exe, tmp_path):
+    def test_run_cache_check_ps1_with_the_installed_powershell(host, exe, tmp_path, record_property):
         info = run_host(exe, "-Command", "$PSVersionTable.PSVersion.ToString() + ' ' + $PSVersionTable.PSEdition")
         version = info.stdout.strip()
+        name = "Windows PowerShell" if host == "windows-powershell" else "PowerShell"
+        # The report's 備考 names the PowerShell that actually ran the checks.
+        record_property("fta_note", f"{name} {version}（{exe}）で実行")
         (tmp_path / "powershell-check.json").write_text(json.dumps({"host": host, "exe": exe, "version": version},
                                                                    ensure_ascii=False), encoding="utf-8")
         print(f"PowerShell: {host} {version} ({exe})")
