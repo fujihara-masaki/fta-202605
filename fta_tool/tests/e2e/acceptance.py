@@ -42,6 +42,7 @@ import pathlib
 import platform
 import shlex
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -59,7 +60,11 @@ PREFLIGHT_TESTS = (
     "tests/e2e/test_edit_page.py::test_E_E01_without_factors_step_1_and_the_top_event",
     "tests/e2e/test_edit_page.py::test_E_E01_with_factors_step_2_and_the_first_primary_factor",
     "tests/e2e/test_edit_page.py::test_three_panes_fit_at_the_base_and_the_measured_sizes",
-)
+) + ((
+    # PR-C: W-02's PowerShell wrapper in Windows PowerShell 5.1 (and pwsh
+    # when installed), so the user runs nothing more for it on Windows.
+    "tests/e2e/test_windows_tools.py::test_run_cache_check_ps1_with_the_installed_powershell",
+) if sys.platform == "win32" else ())
 
 # Acceptance IDs that the required run must cover. Later PRs append theirs.
 # E-xx / T-xx follow plan section 8.9; PR1-xx / PR2-xx / PR3-xx are checks
@@ -555,6 +560,16 @@ def _verdict_text(run: RunState) -> str:
     return text
 
 
+def browser_executable(config: pytest.Config) -> Optional[str]:
+    """The Chromium given by --e2e-browser-executable: used instead of the
+    browser of the pinned Playwright, and named so in the record (never as
+    Playwright's own). Refused together with --browser-channel."""
+    value = config.getoption("e2e_browser_executable", default=None) or None
+    if value and config.getoption("browser_channel", default=None):
+        raise pytest.UsageError("--e2e-browser-executable と --browser-channel は同時に使えません")
+    return value
+
+
 def _browser_rows(config: pytest.Config, run: RunState) -> list[str]:
     """What was asked for (channel, headed/headless) and what was started."""
     launch = run.launch or {}
@@ -563,8 +578,9 @@ def _browser_rows(config: pytest.Config, run: RunState) -> list[str]:
         f"未起動（起動できませんでした：{_cell(launch['error'])}）" if launch.get("error") else "未起動")
     headed = launch.get("headless") is False or bool(config.getoption("headed", default=False))
     slowmo = config.getoption("slowmo", default=0) or 0
+    executable = browser_executable(config)
     return [
-        f"| ブラウザの channel（指定） | {channel or 'なし（Playwright 同梱の Chromium）'} |",
+        f"| ブラウザの channel（指定） | {channel or (_cell('なし。--e2e-browser-executable で指定した実行ファイル（Playwright の固定版が使うブラウザではない）：' + executable) if executable else 'なし（Playwright 同梱の Chromium）')} |",
         f"| 起動したブラウザ | {_cell(started)} |",
         f"| ブラウザの実行ファイル | {_cell(launch.get('executable') or '-')} |",
         f"| ブラウザのプロフィール | {_cell(launch.get('profile') or '-')} |",

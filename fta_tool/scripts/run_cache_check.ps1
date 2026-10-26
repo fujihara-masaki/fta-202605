@@ -136,11 +136,25 @@ try {
     Write-Host "記録フォルダ：$runDir"
     $previous = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $failure = ""
     try {
         & $python -m tests.e2e.cache_manual_check --out $runDir --port $Port --browser $BrowserNames[$Browser]
         $code = $LASTEXITCODE
+    } catch {
+        $failure = "$_"
+        $code = 2
     } finally {
         $ErrorActionPreference = $previous
+    }
+    if ($null -eq $code) { $code = 2 }
+    # The tool writes result.md itself, also when it cannot go on. If it did
+    # not (it could not start, or stopped early), say so in the record folder.
+    $result = Join-Path $runDir "result.md"
+    if (-not (Test-Path -LiteralPath $result)) {
+        if (-not (Test-Path -LiteralPath $runDir)) { New-Item -ItemType Directory -Path $runDir | Out-Null }
+        $text = "# W-02 実キー操作による移行の確認（PR-C）`n`n- 判定：**未完了**（終了コード $code）`n- 未完了の理由：W-02 の道具が結果を書きませんでした。$failure`n- 対象 SHA：``$head```n"
+        [System.IO.File]::WriteAllText($result, $text, (New-Object System.Text.UTF8Encoding($false)))
+        if ($code -eq 0) { $code = 2 }
     }
 } finally {
     Pop-Location

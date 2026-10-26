@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 
 from starlette.datastructures import Headers
 from starlette.responses import FileResponse, Response
@@ -44,19 +45,29 @@ def content_etag(path: str | os.PathLike) -> str:
     return f'"{digest.hexdigest()[:32]}"'
 
 
-def _opaque(tag: str) -> str:
-    tag = tag.strip()
-    return tag[2:] if tag.startswith("W/") else tag
+# One entity-tag of If-None-Match (RFC 9110 8.8.3): an optional W/ and a
+# quoted opaque tag, whose characters may include "," and "*".
+_ENTITY_TAG = re.compile(r'\s*(?:W/)?("[^"]*")\s*(?:,|$)')
 
 
 def etag_matches(if_none_match: str, etag: str) -> bool:
-    """Weak comparison of If-None-Match with the current ETag: a list of
-    tags separated by commas, with or without W/, or "*"."""
-    tags = [tag.strip() for tag in if_none_match.split(",") if tag.strip()]
-    if "*" in tags:
+    """Weak comparison of If-None-Match with the current ETag. The field is
+    either "*" alone (any current representation) or a list of entity-tags
+    separated by commas, with or without W/; a "*" or a comma inside a quoted
+    tag is part of that tag. A malformed field matches nothing."""
+    value = if_none_match.strip()
+    if value == "*":
         return True
-    current = _opaque(etag)
-    return any(_opaque(tag) == current for tag in tags)
+    current = etag[2:] if etag.startswith("W/") else etag
+    position = 0
+    while position < len(value):
+        match = _ENTITY_TAG.match(value, position)
+        if match is None:
+            return False
+        if match.group(1) == current:
+            return True
+        position = match.end()
+    return False
 
 
 class RevalidatedStaticFiles(StaticFiles):

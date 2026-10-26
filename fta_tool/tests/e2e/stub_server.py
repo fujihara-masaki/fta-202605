@@ -64,8 +64,16 @@ tests/e2e/cache_manual_check.py only; unset, the app is served as it is):
                        Content-Type, Last-Modified), the SHA-256 of the body
                        sent, the policy. No other header, no cookie.
   FTA_E2E_PROBE_LOG    POST /__fta_e2e/probe stores its JSON body (what a
-                       page reports it actually used, sent by the markers
-                       of cache_manual_check.py) as a JSON line.
+                       page reports it actually used) as a JSON line. With
+  FTA_E2E_PROBE_RUN    set as well, every HTML page gets a small inline
+                       script before </body> that, at the page's load
+                       event, reports this run's id, the path, the
+                       navigation type, the CSS marker's computed value, the
+                       module markers (globalThis.__ftaCacheProbe) and the
+                       browser's version. It is part of the HTML, which is
+                       fetched on every navigation, and never touches a
+                       static file: a module cached before this run still
+                       lets the page be seen (cache_manual_check.py).
 
 Diagnosis only (tests/e2e/diagnose_navigation.py), when FTA_E2E_ACCESS_LOG
 names a file: every request is written to it as JSON lines when it arrives,
@@ -415,18 +423,81 @@ class RequestLog:
         await self.app(scope, receive, logged_send)
 
 
-class ProbeEndpoint:
-    """POST /__fta_e2e/probe (FTA_E2E_PROBE_LOG): the page's own report of the
-    CSS value and the module markers it used (cache_manual_check.py)."""
+PROBE_SCRIPT = """<script>(function () {
+  var run = %s;
+  addEventListener('load', function () {
+    setTimeout(function () {
+      var entry = performance.getEntriesByType('navigation')[0];
+      var css = getComputedStyle(document.documentElement).getPropertyValue('--fta-cache-probe-components')
+        .trim().replace(/^["']|["']$/g, '');
+      var send = function (browser) {
+        var report = { run: run, path: location.pathname, navigation: entry ? entry.type : null, css: css,
+                       js: Object.assign({}, globalThis.__ftaCacheProbe || {}), browser: browser,
+                       userAgent: navigator.userAgent, at: Date.now() };
+        navigator.sendBeacon('%s', new Blob([JSON.stringify(report)], { type: 'application/json' }));
+      };
+      var data = navigator.userAgentData;
+      if (data && data.getHighEntropyValues) {
+        data.getHighEntropyValues(['fullVersionList']).then(function (v) { send(v.fullVersionList); },
+                                                              function () { send(null); });
+      } else {
+        send(null);
+      }
+    }, 0);
+  });
+})();</script>"""
 
-    def __init__(self, app, path: pathlib.Path):
+
+class ProbeEndpoint:
+    """POST /__fta_e2e/probe (FTA_E2E_PROBE_LOG): a page's own report of the
+    values it used. With a run id (FTA_E2E_PROBE_RUN), the HTML pages carry
+    the inline script that sends it (cache_manual_check.py)."""
+
+    def __init__(self, app, path: pathlib.Path, run: str = ""):
         self.app = app
         self.path = path
+        self.script = (PROBE_SCRIPT % (json.dumps(run), PROBE_PATH)).encode("utf-8") if run else b""
 
     async def __call__(self, scope, receive, send):
-        if scope.get("type") != "http" or scope.get("path") != PROBE_PATH or scope.get("method") != "POST":
+        if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
+        if scope.get("path") == PROBE_PATH and scope.get("method") == "POST":
+            await self._store(receive, send)
+            return
+        if not self.script or scope.get("method") != "GET":
+            await self.app(scope, receive, send)
+            return
+        start = {}
+        body = []
+
+        async def html_send(message):
+            if message["type"] == "http.response.start":
+                headers = dict((k.lower(), v) for k, v in message.get("headers") or [])
+                if b"text/html" not in headers.get(b"content-type", b""):
+                    start["pass"] = True
+                    await send(message)
+                    return
+                start["message"] = message
+                return
+            if start.get("pass"):
+                await send(message)
+                return
+            body.append(message.get("body") or b"")
+            if message.get("more_body", False):
+                return
+            html = b"".join(body)
+            at = html.rfind(b"</body>")
+            html = html[:at] + self.script + html[at:] if at >= 0 else html + self.script
+            first = start["message"]
+            headers = [(k, v) for k, v in first.get("headers") or [] if k.lower() != b"content-length"]
+            headers.append((b"content-length", str(len(html)).encode("latin-1")))
+            await send({**first, "headers": headers})
+            await send({"type": "http.response.body", "body": html, "more_body": False})
+
+        await self.app(scope, receive, html_send)
+
+    async def _store(self, receive, send):
         body = b""
         while True:
             message = await receive()
@@ -476,7 +547,7 @@ def main() -> None:
     app = main_module.app
     probe_log = os.environ.get("FTA_E2E_PROBE_LOG")
     if probe_log:  # PR-C's check with the user's browser only
-        app = ProbeEndpoint(app, pathlib.Path(probe_log))
+        app = ProbeEndpoint(app, pathlib.Path(probe_log), os.environ.get("FTA_E2E_PROBE_RUN", ""))
     static_log = os.environ.get("FTA_E2E_STATIC_LOG")
     if static_log:  # PR-C's tests only
         app = RequestLog(app, pathlib.Path(static_log))

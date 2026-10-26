@@ -77,6 +77,14 @@ def pytest_addoption(parser):
         help="E2E の実行記録（Markdown）を書き出すパス。",
     )
     group.addoption(
+        "--e2e-browser-executable",
+        default=None,
+        metavar="PATH",
+        help="Playwright の固定版が使うブラウザを導入できない環境で、別の Chromium の実行ファイルを明示して使う"
+        "（--e2e-browser-executable=PATH の形で指定）。記録には指定した実行ファイルとその版を書き、"
+        "所定のブラウザでの結果とは区別する。--browser-channel とは同時に使えない。",
+    )
+    group.addoption(
         "--e2e-env",
         default=None,
         metavar="LABEL",

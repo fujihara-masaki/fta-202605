@@ -52,6 +52,7 @@ from tests.e2e.edit_helpers import (
     step_button,
     toast,
 )
+from tests.e2e.static_assets import ALL_ASSETS, screen_assets
 from tests.e2e.support import expect, free_port, start_server
 
 pytestmark = [pytest.mark.e2e]
@@ -61,37 +62,6 @@ SINGLE = pytest.mark.parametrize("viewport", [(1280, 800)], indirect=True, ids=[
 FTA_TOOL_DIR = pathlib.Path(__file__).resolve().parents[2]
 APP_STATIC = FTA_TOOL_DIR / "app" / "static"
 TEN_DAYS = 10 * 24 * 3600
-# What a screen loads (plan 2.3, 2.4): its stylesheets, and the modules
-# reached from boot.js and its entry, read from the files' import lines.
-SCREEN_CSS_FILES = {
-    "list": ("css/tokens.css", "css/base.css", "css/components.css", "css/list.css"),
-    "new": ("css/tokens.css", "css/base.css", "css/components.css", "css/new.css"),
-    "edit": ("css/tokens.css", "css/base.css", "css/components.css", "css/edit.css", "style.css"),
-}
-SCREEN_ENTRY = {"list": "js/pages/list.js", "new": "js/pages/new.js", "edit": "js/pages/edit.js"}
-SCREEN_ASSET_COUNTS = {"list": 14, "new": 13, "edit": 34}
-ALL_ASSETS = 38
-IMPORT = re.compile(r"""(?:from|import)\s*['"]([^'"]+)['"]""")
-
-
-def module_closure(entry: str) -> set[str]:
-    seen, todo = set(), [entry]
-    while todo:
-        rel = todo.pop()
-        if rel in seen:
-            continue
-        seen.add(rel)
-        base = pathlib.PurePosixPath(rel).parent
-        for spec in IMPORT.findall((APP_STATIC / rel).read_text(encoding="utf-8")):
-            todo.append(os.path.normpath((base / spec).as_posix()).replace(os.sep, "/"))
-    return seen
-
-
-def screen_assets(screen: str) -> list[str]:
-    assets = set(SCREEN_CSS_FILES[screen]) | module_closure("js/common/boot.js") | module_closure(SCREEN_ENTRY[screen])
-    assert len(assets) == SCREEN_ASSET_COUNTS[screen], (screen, sorted(assets))
-    return sorted(assets)
-
 CSS_COMPONENTS = "css/components.css"
 JS_DEEP = ("js/pages/edit/factor-source.js", "js/common/dom.js", "js/pages/edit/judgement.js")
 SCREEN_CSS = {"list": "css/list.css", "new": "css/new.css", "edit": "css/edit.css"}
@@ -451,7 +421,8 @@ FORBIDDEN_CALLS = {"route", "unroute", "route_from_har", "clear_cookies", "new_c
 FORBIDDEN_TEXT = ("setCacheDisabled", "ignoreCache", "import(", "fetch(", "Network.", "bypassCache")
 TEXT_ALLOWED_IN = {"ignoreCache": "forced_reload"}
 ALLOWED_HELPERS = {"expect_editor_ready", "factor_field", "generate_button", "item", "judgement_button",
-                   "select_button", "step_button", "toast", "expect", "free_port", "start_server"}
+                   "select_button", "step_button", "toast", "expect", "free_port", "start_server",
+                   "ALL_ASSETS", "screen_assets"}
 
 
 def _docstrings(tree: ast.Module) -> set[int]:

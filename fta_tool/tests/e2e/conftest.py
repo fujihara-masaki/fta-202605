@@ -59,10 +59,11 @@ def launch_failure_message(channel, detail: str) -> str:
             "Playwright 同梱の Chromium には切り替えません（ブラウザの導入・更新もしません）")
 
 
-def describe_browser(browser, channel, headless: bool) -> dict:
+def describe_browser(browser, channel, headless: bool, executable=None) -> dict:
     """What was started: from chrome://version, which Chromium's headless
-    shell (no channel, headless) does not have."""
-    if not channel and headless:
+    shell (no channel, headless) does not have. A browser given by
+    --e2e-browser-executable is named as such, never as Playwright's own."""
+    if not channel and headless and not executable:
         return {"product": f"Playwright 同梱の Chromium（headless shell）{browser.version}"}
     context = None
     try:
@@ -77,8 +78,11 @@ def describe_browser(browser, channel, headless: bool) -> dict:
         if context is not None:
             context.close()
     version = " ".join(info["version"].split())
+    product = f"{info['company']} {version}".strip() or browser.version
+    if executable:
+        product = f"指定した実行ファイルの Chromium（--e2e-browser-executable）：{product}"
     return {
-        "product": f"{info['company']} {version}".strip() or browser.version,
+        "product": product,
         "executable": info["executable"],
         "profile": info["profile"],
     }
@@ -105,6 +109,14 @@ def _fresh_server_state(e2e_server):
 
 
 @pytest.fixture(scope="session")
+def browser_type_launch_args(browser_type_launch_args, pytestconfig):
+    executable = acceptance.browser_executable(pytestconfig)
+    if executable:
+        return {**browser_type_launch_args, "executable_path": executable}
+    return browser_type_launch_args
+
+
+@pytest.fixture(scope="session")
 def browser(launch_browser, browser_type_launch_args, pytestconfig):
     run = acceptance.state(pytestconfig)
     channel = pytestconfig.getoption("--browser-channel")
@@ -121,7 +133,7 @@ def browser(launch_browser, browser_type_launch_args, pytestconfig):
         "version": launched.version,
         "mode": "headless" if headless else "headed",
     }
-    run.launch.update(describe_browser(launched, channel, headless))
+    run.launch.update(describe_browser(launched, channel, headless, acceptance.browser_executable(pytestconfig)))
     yield launched
     launched.close()
 

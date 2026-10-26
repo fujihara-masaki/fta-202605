@@ -129,10 +129,36 @@ def test_H_03_the_same_version_again_is_304(client):
     assert again.status_code == 304 and again.headers["cache-control"] == "no-cache"
 
 
-def test_etag_matches_weak_comparison():
-    assert etag_matches('"a"', '"a"') and etag_matches('W/"a"', '"a"') and etag_matches(' "b" , W/"a" ', '"a"')
-    assert etag_matches("*", '"a"')
-    assert not etag_matches('"b"', '"a"') and not etag_matches("", '"a"') and not etag_matches('"a" "b"', '"a"')
+@pytest.mark.parametrize("field, etag, expected", [
+    ('"a"', '"a"', True),
+    ('W/"a"', '"a"', True),  # weak comparison
+    (' "b" , W/"a" ', '"a"', True),  # a list
+    ('"b","a"', '"a"', True),
+    ("*", '"a"', True),  # the whole field "*"
+    (" * ", '"a"', True),
+    ('"b"', '"a"', False),
+    ("", '"a"', False),
+    ('"a" "b"', '"a"', False),  # malformed: matches nothing
+    ("a", '"a"', False),
+    ('"prefix,*,suffix"', '"a"', False),  # "," and "*" inside a quoted tag are the tag's
+    ('W/"prefix,*,suffix"', '"a"', False),
+    ('"prefix,*,suffix"', '"prefix,*,suffix"', True),
+    ('"x", *', '"a"', False),  # "*" is only a wildcard alone
+])
+def test_etag_matches(field, etag, expected):
+    assert etag_matches(field, etag) is expected
+
+
+def test_H_03_a_star_inside_a_quoted_etag_is_not_a_wildcard(client):
+    rel = "css/components.css"
+    first = client.get(f"/static/{rel}")
+    for field in ('"prefix,*,suffix"', 'W/"prefix,*,suffix"'):
+        response = client.get(f"/static/{rel}", headers={"If-None-Match": field})
+        assert response.status_code == 200, field
+        assert response.content == first.content and response.headers["etag"] == first.headers["etag"]
+    assert client.get(f"/static/{rel}", headers={"If-None-Match": "*"}).status_code == 304
+    listed = client.get(f"/static/{rel}", headers={"If-None-Match": f'"prefix,*,suffix", {first.headers["etag"]}'})
+    assert listed.status_code == 304
 
 
 # ----- H-04 ---------------------------------------------------------------------
