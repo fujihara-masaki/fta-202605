@@ -2956,14 +2956,14 @@ PR-6 の受入（2026-10-23）とマージの後も、この節の事項は未�
 この反映は計画書・手順書だけの変更で、アプリ・テスト・`scripts/` は変えていない。PR-7 以降は未着手。
 
 
-### 14.7 PR-C 静的ファイルのキャッシュ制御（実装・開発環境の自動試験。Windows 実機の確認と受入は未実施）
+### 14.7 PR-C 静的ファイルのキャッシュ制御 — PR #24（実装・開発環境の自動試験。Windows 実機の確認と受入は未実施）
 
 PR-6 の受入（2026-10-23）で後続の改善候補とした静的ファイルのキャッシュ制御を、PR-7 の前の独立の PR として実装した（2026-10-26）。仕様・試験・受入条件・記録は [static-assets-cache-control-plan.md](static-assets-cache-control-plan.md)（第14節に実装と確認の記録）、Windows の手順は [manual-check-pr-c.md](manual-check-pr-c.md)。PR-6 の受入の判断と記録、2026-10-22 の件の原因が未特定であることは変えていない。
 
 | 項目 | 内容 |
 |---|---|
 | 利用者の判断（2026-10-26） | 計画（`cba6ba5`）を実装の基準として採用。案A+（`/static` の 200・304 に `Cache-Control: no-cache`、内容から作る ETag、`If-None-Match` を優先）、導入時の3画面の Ctrl+F5、PR-7 の前の独立の PR。保証しない範囲（N-1〜N-6）を受け入れ、HTML は C-03 の成立を前提に変えない。試験は自動を中心にし、手動は普段のプロファイルでの実際の Ctrl+F5・F5（W-02）に絞る |
-| 作業ブランチ・base | `claude/pr-c-static-cache` → `feature/ui-redesign`（`cba6ba5` から分岐） |
+| 作業ブランチ・base・PR | `claude/pr-c-static-cache` → `feature/ui-redesign`（`cba6ba5` から分岐）。PR #24（open） |
 | 試験の対象 | `56e6507ff1fb35c90e4105d4dcb57abfaba81b97`（アプリ・試験・スクリプト。その後は文書だけ） |
 | 変更 | `app/static_files.py`（新規）、`app/main.py` の `/static` のマウント。試験：`tests/test_static_cache.py`（H-01〜H-09）、`tests/e2e/test_static_cache.py`（C-00〜C-07）、`tests/e2e/stub_server.py` の試験専用の設定、必須 ID に C-00〜C-07（60 → 68 項目）。W-02 の道具：`tests/e2e/cache_manual_check.py`、`scripts/run_cache_check.ps1`。テンプレート・CSS・JS・DB・業務 API・生成・LangGraph・Quality Gate・依存の固定版は変えていない |
 | 開発環境の自動試験（2026-10-26、Linux、Chromium 153 headless。固定版の Chromium 141 は未導入） | 通常の pytest：868 passed / 13 skipped（すべて pwsh がないためのスクリプトの検査）。累積の全必須 E2E：**合格**（成功 432・失敗 0・スキップ 0・未実施 0、必須 68 項目すべて成功）。C-03 は開発環境の Chromium で成立。H-09・C-05 で対策を外した構成の古い内容を検出できた |

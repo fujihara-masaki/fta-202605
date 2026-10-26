@@ -892,7 +892,7 @@ PR-C は PR-7・PR-8 のどちらにも依存しない。PR-7 が `favicon` を 
 
 | 項目 | 内容 |
 |---|---|
-| 作業ブランチ | `claude/pr-c-static-cache`（`feature/ui-redesign` の `cba6ba5` から分岐。開始時に GitHub とローカルで一致を確認） |
+| 作業ブランチ・PR | `claude/pr-c-static-cache`（`feature/ui-redesign` の `cba6ba5` から分岐。開始時に GitHub とローカルで一致を確認）。PR #24（base `feature/ui-redesign`、open） |
 | 試験の対象のコミット | `56e6507ff1fb35c90e4105d4dcb57abfaba81b97`（アプリ・試験・スクリプト）。その後のコミットは文書だけ |
 | 変更したファイル | 第9.2節 |
 | 仕様との対応 | SP-01〜SP-08：`app/static_files.py` の `RevalidatedStaticFiles`。SP-09〜SP-11：HTML・API・出力・テンプレート・CSS・JS は変えていない（H-07・H-08）。SP-12：[manual-check-pr-c.md](manual-check-pr-c.md) と第10.1節 |

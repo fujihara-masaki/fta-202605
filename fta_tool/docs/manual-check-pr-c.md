@@ -1,6 +1,6 @@
 # PR-C Windows 実機確認の手順（静的ファイルのキャッシュ制御。Chrome・Edge）
 
-計画書 [static-assets-cache-control-plan.md](static-assets-cache-control-plan.md)（以下「計画書」）の Windows の確認を行うための手順です。対象は PR-C の作業ブランチ `claude/pr-c-static-cache` です。
+計画書 [static-assets-cache-control-plan.md](static-assets-cache-control-plan.md)（以下「計画書」）の Windows の確認を行うための手順です。対象は PR-C（PR #24）の作業ブランチ `claude/pr-c-static-cache` です。
 
 この手順書は確認の進め方をまとめたもので、受入の合否を決めるものではありません。合否とマージは利用者が判断します。**開発環境での自動試験の成功は、Windows 実機での確認や PR-C の受入の判断の代わりではありません。**
 
