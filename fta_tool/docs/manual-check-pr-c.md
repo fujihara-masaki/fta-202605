@@ -37,8 +37,8 @@ $wt  = "C:\fta-check\src-$($sha.Substring(0,7))"
 git worktree add --detach $wt $sha
 git -C $wt rev-parse HEAD                                   # $sha と一致すること
 git -C $wt status --short                                   # 何も出ないこと
-git -C $wt diff --stat 56e6507ff1fb35c90e4105d4dcb57abfaba81b97 HEAD -- fta_tool/app fta_tool/tests fta_tool/scripts fta_tool/requirements.txt fta_tool/requirements-dev.txt
-                                                            # 何も出ないこと（出たら止めて報告）
+git -C $wt diff --stat 56e6507ff1fb35c90e4105d4dcb57abfaba81b97 HEAD -- fta_tool/app fta_tool/tests fta_tool/scripts fta_tool/requirements.txt fta_tool/requirements-dev.txt ':(exclude)*.md'
+                                                            # 何も出ないこと（出たら止めて報告。文書 *.md の差は除く）
 Test-Path "$wt\fta_tool\.env"                               # False であること
 ```
 
