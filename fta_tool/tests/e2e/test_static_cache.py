@@ -52,7 +52,7 @@ from tests.e2e.edit_helpers import (
     step_button,
     toast,
 )
-from tests.e2e.static_assets import ALL_ASSETS, screen_assets
+from tests.e2e.static_assets import ALL_ASSETS, screen_assets, without_disabled_rule
 from tests.e2e.support import expect, free_port, start_server
 
 pytestmark = [pytest.mark.e2e]
@@ -65,11 +65,6 @@ TEN_DAYS = 10 * 24 * 3600
 CSS_COMPONENTS = "css/components.css"
 JS_DEEP = ("js/pages/edit/factor-source.js", "js/common/dom.js", "js/pages/edit/judgement.js")
 SCREEN_CSS = {"list": "css/list.css", "new": "css/new.css", "edit": "css/edit.css"}
-DISABLED_RULE = """.ui-judgement__option:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-"""
 
 READ_CSS = """(names) => Object.fromEntries(names.map((name) => [name,
   getComputedStyle(document.documentElement).getPropertyValue('--fta-cache-probe-' + name)
@@ -422,7 +417,7 @@ FORBIDDEN_TEXT = ("setCacheDisabled", "ignoreCache", "import(", "fetch(", "Netwo
 TEXT_ALLOWED_IN = {"ignoreCache": "forced_reload"}
 ALLOWED_HELPERS = {"expect_editor_ready", "factor_field", "generate_button", "item", "judgement_button",
                    "select_button", "step_button", "toast", "expect", "free_port", "start_server",
-                   "ALL_ASSETS", "screen_assets"}
+                   "ALL_ASSETS", "screen_assets", "without_disabled_rule"}
 
 
 def _docstrings(tree: ast.Module) -> set[int]:
@@ -649,9 +644,9 @@ def test_C_07_the_judgement_buttons_look_disabled_after_a_css_update(page, e2e_s
     analysis_id, a, b = make_analysis(cache)
     rel = CSS_COMPONENTS
     original = cache.originals[rel]
-    assert original.count(DISABLED_RULE.encode()) == 1
+    old = without_disabled_rule(original)  # the rule is there exactly once, LF or CRLF
     cache.set_policy("app")
-    cache.write(rel, "old", mtime=time.time() - TEN_DAYS, body=original.replace(DISABLED_RULE.encode(), b""))
+    cache.write(rel, "old", mtime=time.time() - TEN_DAYS, body=old)
     assets, etags = first_load(page, cache, "edit", analysis_id)
     revisit(page, cache, "edit", analysis_id, assets, etags)
     obs, written = update_step(page, cache, screen="edit", analysis_id=analysis_id, operation="link",

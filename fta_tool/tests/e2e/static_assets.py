@@ -22,6 +22,12 @@ SCREEN_ASSET_COUNTS = {"list": 14, "new": 13, "edit": 34}
 ALL_ASSETS = 38
 SCREENS = ("list", "new", "edit")
 IMPORT = re.compile(r"""(?:from|import)\s*['"]([^'"]+)['"]""")
+# The rule of components.css that dims the judgement buttons during a
+# generation; C-07's old components.css is the current one without it. The
+# lines may end in LF (a Linux checkout) or CRLF (a Windows checkout with
+# core.autocrlf): the file is the same rule either way.
+DISABLED_RULE = re.compile(
+    rb"\.ui-judgement__option:disabled \{\r?\n  opacity: 0\.55;\r?\n  cursor: not-allowed;\r?\n\}\r?\n")
 
 
 def module_closure(entry: str) -> set[str]:
@@ -48,3 +54,12 @@ def all_assets() -> list[str]:
     files = sorted(p.relative_to(APP_STATIC).as_posix() for p in APP_STATIC.rglob("*") if p.is_file())
     assert assets == files and len(assets) == ALL_ASSETS, sorted(set(assets) ^ set(files))
     return assets
+
+
+def without_disabled_rule(css: bytes) -> bytes:
+    """components.css without the rule that dims the judgement buttons. The
+    rule must be in it exactly once, with LF or CRLF line ends; the rest of
+    the file, line ends included, is kept as it is."""
+    found = DISABLED_RULE.findall(css)
+    assert len(found) == 1, f"the disabled rule is in components.css {len(found)} times, not once"
+    return DISABLED_RULE.sub(b"", css)
