@@ -2969,9 +2969,11 @@ PR-6 の受入（2026-10-23）で後続の改善候補とした静的ファイ�
 | 開発環境の自動試験（2026-10-26、Linux。固定版の Chromium 141 はネットワークの方針で導入できず、代替の Chromium 153 を `--e2e-browser-executable` で明示） | `03f91a9`（クリーンな worktree）：通常の pytest 900 passed / 19 skipped（すべて PowerShell がないため）、累積の全必須 E2E **合格**（成功 434・失敗 0・スキップ 0・未実施 0、必須 68 項目すべて成功）。C-03 は成立、H-09・C-05 で検出力を確認。初回の `56e6507` の結果は計画書 第14.3節 |
 | レビューへの対応（2026-10-26） | W-02 の道具：HTML の試験専用の観測で、目印のない旧方式の保存からも始められる（Codex の指摘）、同じプロファイルでの再実行、手順3 のファイルごとの照合。`If-None-Match` の引用符の中の `*`。ブラウザの実行ファイルの明示、PowerShell の確認の Windows の準備確認への組み込み。計画書 第14.6節 |
 | 受入候補（2026-10-26） | `2405992cdb5273571c3c23e7ffc96410433dff19`（アプリは `03f91a9` と同じ。記録の改善だけ）。開発環境：通常の pytest 901 passed / 19 skipped、累積の全必須 E2E **合格**（成功 434、必須 68 項目）。Chromium 141 は未実施（Chromium 153 の結果を読み替えない）。GitHub のチェックの実行の記録なし。計画書 第14.7節 |
-| Windows 実機 | **未実施**：Chrome・Edge の Preflight・Full（Preflight に Windows PowerShell 5.1 でのラッパーの確認を含む）、W-02（Chrome 必須、Edge は普段使う場合） |
+| Windows Chrome の Full（対象 `a42966b`、2026-10-27、利用者の報告） | **不合格**：成功 433・失敗 2・スキップ 0・未実施 0（Windows 11 Home、Chrome 156.0.8078.48、Python 3.12.10）。C-07：Windows の取り出しの `components.css` が CRLF で、試験が規則を LF だけで探していた（試験の不備。ブラウザの確認の前に停止）。E-E20 の 1280×800：本文の検査は通り、共通のコンソールの検査で `net::ERR_NO_BUFFER_SPACE`（`components.css`）。原因は未特定、既知の例外にしない。記録は残し、合格に読み替えない。計画書 第14.8節 |
+| 修正後の受入候補（2026-10-27） | `0dadaa2584cfcd0a1ee16886fe99c9fd2b6b39e6`（試験だけ：C-07 が LF・CRLF のどちらでも規則をちょうど1件見つける。回帰の試験 `tests/test_c07_disabled_rule.py`。アプリ・CSS・JS・Git の改行の設定は変えていない）。開発環境の結果は計画書 第14.8節 |
+| Windows 実機 | 修正後の SHA で**未実施**：Chrome・Edge の Preflight・Full（Preflight に Windows PowerShell 5.1 でのラッパーの確認を含む）、W-02（Chrome 必須、Edge は普段使う場合）。`a42966b` の Chrome の Full は上記のとおり不合格 |
 | 受入 | **未実施**（受入合格ではない） |
-| 残る制約 | 導入前に保存された応答は、3画面の Ctrl+F5 までは使われ得る（通常の操作による即時の移行は保証しない）。開いている画面・BFCache・履歴の移動・Service Worker 等は保証しない。再訪のたびの条件付き要求が増える（編集画面で34件、内容が同じなら 304）。`ERR_NO_BUFFER_SPACE` との関係は未確認 |
+| 残る制約 | 導入前に保存された応答は、3画面の Ctrl+F5 までは使われ得る（通常の操作による即時の移行は保証しない）。開いている画面・BFCache・履歴の移動・Service Worker 等は保証しない。再訪のたびの条件付き要求が増える（編集画面で34件、内容が同じなら 304）。`ERR_NO_BUFFER_SPACE` との関係は未確認（`a42966b` の Chrome の Full で再発、原因は未特定） |
 
 PR-7・PR-8 は未着手のまま。PR #19（Draft）は変えていない。
 

@@ -26,7 +26,7 @@
 
 ## 2. コードを取り出す
 
-受入候補のアプリ・試験・スクリプトは `2405992cdb5273571c3c23e7ffc96410433dff19` です（2026-10-26 のレビューの修正と、記録の改善を含む。以前の `56e6507`・`03f91a9` は使いません。アプリ本体は `03f91a9` と同じで、`2405992` で変えたのは試験の記録と W-02 の道具の記録だけ）。PR のブランチの先頭は、その後に文書だけを加えたものです。**確認はブランチの先頭の SHA で行い、アプリ・試験・スクリプト・依存の指定が `2405992` と同じことを確かめます。**
+受入候補のアプリ・試験・スクリプトは `0dadaa2584cfcd0a1ee16886fe99c9fd2b6b39e6` です（2026-10-27 の Windows Chrome の Full（対象 `a42966b`）で失敗した C-07 の試験の修正を含む。以前の `56e6507`・`03f91a9`・`2405992`（`a42966b` のアプリ・試験・スクリプト）は使いません。アプリ本体（`fta_tool/app`）は `03f91a9` と同じで、`0dadaa2` で変えたのは試験だけ：C-07 が `components.css` の改行が LF でも CRLF でも規則を見つけるようにし、その回帰の試験 `tests/test_c07_disabled_rule.py` を加えた）。PR のブランチの先頭は、その後に文書だけを加えたものです。**確認はブランチの先頭の SHA で行い、アプリ・試験・スクリプト・依存の指定が `0dadaa2` と同じことを確かめます。**
 
 ```powershell
 cd C:\work\fta-202605                                       # 普段のリポジトリ（例）
@@ -37,7 +37,7 @@ $wt  = "C:\fta-check\src-$($sha.Substring(0,7))"
 git worktree add --detach $wt $sha
 git -C $wt rev-parse HEAD                                   # $sha と一致すること
 git -C $wt status --short                                   # 何も出ないこと
-git -C $wt diff --stat 2405992cdb5273571c3c23e7ffc96410433dff19 HEAD -- fta_tool/app fta_tool/tests fta_tool/scripts fta_tool/requirements.txt fta_tool/requirements-dev.txt ':(exclude)*.md'
+git -C $wt diff --stat 0dadaa2584cfcd0a1ee16886fe99c9fd2b6b39e6 HEAD -- fta_tool/app fta_tool/tests fta_tool/scripts fta_tool/requirements.txt fta_tool/requirements-dev.txt ':(exclude)*.md'
                                                             # 何も出ないこと（出たら止めて報告。文書 *.md の差は除く）
 Test-Path "$wt\fta_tool\.env"                               # False であること
 ```
@@ -75,7 +75,54 @@ venv がない、または版が違う場合だけ、[manual-check-pr3.md](manua
 - **C-03**（3画面の各操作で HTML の要求がサーバーに届くこと）が Chrome・Edge のどちらかで成功しなかった場合は、不合格として記録フォルダを渡してください。HTML の扱いの対応案は計画書 第5.5節（「C-03 が成立しない場合の対応案」）にあり、結果を見て利用者が判断します。
 - PR-C の試験（`tests/e2e/test_static_cache.py`）は、試験ごとに専用のテスト用サーバー（一時の作業フォルダ、静的ファイルの一時コピー、要求の記録）を起動し、1つのブラウザコンテキスト・1つのオリジンの中で版を変えながら確かめます。通信の差し替え・キャッシュの無効化は使いません。`e2e-report.md` の C-00〜C-07 の行が、この PR の自動の判定です。
 - `tests/e2e/test_cache_manual_check.py`（W-02 の道具の自己確認。キー操作は模擬）も実行されます：初めてのプロフィール、道具の目印のない旧方式の保存が残ったプロフィール、同じプロフィールでの2回続けての実行、F5 の代わりの強制の再読み込み（NG になること）。これは W-02 そのものではありません。
-- `ERR_NO_BUFFER_SPACE` などで不合格になった回も、記録として残して渡してください（判定の条件は変えません）。
+- `ERR_NO_BUFFER_SPACE` などで不合格になった回も、記録として残して渡してください（判定の条件は変えません）。`ERR_NO_BUFFER_SPACE` が出た場合は、その後に第3.1節の採取（読むだけ。コマンド1回）を行ってください。
+- 前回（対象 `a42966b`、2026-10-27）の Chrome の Full は**不合格**でした（成功 433・失敗 2・スキップ 0・未実施 0。C-07 は Windows の改行 CRLF による試験の不備で `0dadaa2` で修正、E-E20 の 1280×800 は `ERR_NO_BUFFER_SPACE` で原因は未特定。計画書 第14.8節）。その記録はそのまま残し、新しい SHA の Preflight・Full は新しい回として記録します。
+
+### 3.1 `ERR_NO_BUFFER_SPACE` が出たときの採取（読むだけ。設定は変えません）
+
+Full が終わった後に、同じ PowerShell（第2節の `$venv`・`$out` を設定したもの）で、次をそのまま貼り付けて実行します。Full をやり直す必要はありません。失敗した Full の記録フォルダの中に `diag-err-no-buffer-space.txt` を作り、内容を表示します。前回の `a42966b` の記録フォルダにも、`$sha7 = "a42966b"` として同じように使えます。
+
+```powershell
+$sha7 = "<失敗した Full の SHA 7桁>"      # 例：a42966b
+$run  = Get-ChildItem $out -Directory -Filter "$sha7-*-chrome-full" | Sort-Object Name | Select-Object -Last 1
+$diag = Join-Path $run.FullName "diag-err-no-buffer-space.txt"
+$last = Get-ChildItem $run.FullName -Recurse -File | Sort-Object LastWriteTime | Select-Object -Last 1
+$from = $run.CreationTime.AddMinutes(-5); $to = $last.LastWriteTime.AddMinutes(5)
+"== 記録フォルダ $($run.Name)（$from 〜 $to）" | Out-File $diag -Encoding utf8
+"== System ログの Tcpip 4227・4231" | Out-File $diag -Encoding utf8 -Append
+$ev = @(Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Tcpip'; Id=4227,4231; StartTime=$from; EndTime=$to} -ErrorAction SilentlyContinue)
+"件数: $($ev.Count)" | Out-File $diag -Encoding utf8 -Append
+$ev | Format-List TimeCreated, Id, Message | Out-File $diag -Encoding utf8 -Append
+"== 動的ポートの範囲と除外範囲（今の値）" | Out-File $diag -Encoding utf8 -Append
+netsh int ipv4 show dynamicport tcp | Out-File $diag -Encoding utf8 -Append
+netsh int ipv4 show excludedportrange protocol=tcp | Out-File $diag -Encoding utf8 -Append
+"== pytest-output.log の失敗の箇所" | Out-File $diag -Encoding utf8 -Append
+Select-String -Path (Join-Path $run.FullName "pytest-output.log") -Pattern "ERR_NO_BUFFER_SPACE|conftest\.py:\d+|test_edit_leave\.py:\d+" |
+  Select-Object -First 40 | ForEach-Object { $_.Line } | Out-File $diag -Encoding utf8 -Append
+"== trace の中の失敗した要求（failures の trace.zip ごと）" | Out-File $diag -Encoding utf8 -Append
+$py = Join-Path $run.FullName "diag-trace.py"
+@'
+import datetime, json, pathlib, sys, zipfile
+root, out = pathlib.Path(sys.argv[1]), sys.argv[2]
+with open(out, "a", encoding="utf-8") as w:
+    for z in sorted(root.rglob("trace.zip")):
+        with zipfile.ZipFile(z) as f:
+            rows = [json.loads(line).get("snapshot", {}) for n in f.namelist() if n.endswith(".network")
+                    for line in f.read(n).decode("utf-8").splitlines() if line.strip()]
+        bad = [s for s in rows if s.get("response", {}).get("status", 0) < 0 or s.get("response", {}).get("_failureText")]
+        print(z.parent.name, "requests", len(rows), "failed", len(bad), file=w)
+        for s in bad:
+            at = datetime.datetime.fromisoformat(s["startedDateTime"].replace("Z", "+00:00")).astimezone()
+            print(" ", at.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3], s["request"]["method"], s["request"]["url"],
+                  s["response"].get("_failureText"), file=w)
+'@ | Set-Content -Path $py -Encoding utf8
+& "$venv\Scripts\python.exe" -I $py (Join-Path $run.FullName "failures") $diag
+Get-Content $diag -Encoding utf8
+```
+
+- 分かること：① 失敗の時刻に Windows が動的ポートの割り当ての失敗（イベント 4231）などを記録していたか（件数 0 なら「この範囲に記録なし」）。② 動的ポートの数と除外範囲（今の値。実行したときの値とは限らない）。③ 失敗がテストの本文の検査ではなく、本文が終わった後の共通のコンソールの検査（`tests/e2e/conftest.py` の `pytest_runtest_call`）で出たこと。④ trace の中で、失敗した要求が `components.css` の1件だけか、ほかの要求は成功したか、その時刻。
+- 分からないこと：要求がテスト用サーバーに届いたか（サーバーの要求の記録は Full では既定で取らない）、そのときの PC 全体の接続数（記録していない）。必要になった場合の採取の方法（Full と同時に行う）は [manual-check-pr6.md](manual-check-pr6.md) 第8.2節にありますが、今回は求めません。
+- この採取のコマンドは **Windows では実行していません**（開発環境で確かめたのは、trace の読み取りの Python の部分を Playwright 1.56.0 の trace で動かしたことだけ）。動かなかった場合は、その表示をそのまま渡してください。
 
 ## 4. Microsoft Edge の自動確認（Chrome の後に）
 
@@ -161,9 +208,11 @@ git worktree remove $wt
 |---|---|
 | 開発環境の自動試験（`56e6507`。レビューの修正の前） | 実施（計画書 第14.3節） |
 | 開発環境の自動試験（`03f91a9`。レビューの修正の後） | 実施（計画書 第14.6節） |
-| 開発環境の自動試験（`2405992`。記録の改善の後。受入候補） | 実施（計画書 第14.7節と PR の本文） |
+| 開発環境の自動試験（`2405992`。記録の改善の後） | 実施（計画書 第14.7節と PR の本文） |
+| 開発環境の自動試験（`0dadaa2`。C-07 の修正の後。受入候補） | 実施（計画書 第14.8節と PR の本文） |
 | 固定版の Playwright のブラウザ（Chromium 141）での自動試験 | **未実施**（開発環境で導入できなかった。Chromium 153 の結果は 141 の結果ではない） |
-| Windows の Chrome・Edge の Preflight・Full | **未実施** |
+| Windows の Chrome の Full（`a42966b`、2026-10-27、利用者の報告） | 実施、**不合格**（成功 433・失敗 2・スキップ 0・未実施 0。C-07：試験の不備（CRLF）で `0dadaa2` で修正。E-E20 1280×800：`ERR_NO_BUFFER_SPACE`、原因は未特定）。記録は残し、合格に読み替えない（計画書 第14.8節） |
+| Windows の Chrome・Edge の Preflight・Full（修正後の SHA） | **未実施** |
 | W-02（Chrome） | **未実施** |
 | W-02（Edge、普段使う場合） | **未実施** |
 | 利用者の受入の判断 | **未実施** |
