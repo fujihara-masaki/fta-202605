@@ -1050,7 +1050,14 @@ Preflight・Edge・W-02 の結果は、この報告には含まれていない�
 
 **修正後の開発環境の自動試験（対象 `0dadaa2`、クリーンな worktree、代替の Chromium 153.0.8010.12 を `--e2e-browser-executable` で明示、headless）**
 
-（実行中。結果は次の記録のコミットで書く）
+| 試験 | 結果 |
+|---|---|
+| 通常の pytest | **907 passed / 19 skipped / 0 failed**、終了コード 0、12分30秒（13:47:00〜13:59:31 UTC）。skip 19件はすべて PowerShell がないため。`2405992` の 901 件に回帰の試験 6件が加わった。同じ worktree での1回目は `--e2e-browser-executable` の付け忘れで E2E がブラウザを起動できず（448 skipped・2 errors）、実行の指定の誤りとして結果に数えない |
+| 累積の全必須 E2E | **合格**：成功 434・失敗 0・スキップ 0・未実施 0、必須 68 項目すべて成功、終了コード 0、12分32秒（13:34:10〜13:46:43 UTC）。C-00 1、C-01 3、C-02 1、C-03 5、C-04 1、C-05 2、C-06 2、C-07 1 |
+| CRLF の取り出し（上記） | `a42966b` の C-07 は `assert 0 == 1` で失敗（再現）、`0dadaa2` の C-07 は成功、回帰の試験・H・C の 64件すべて成功 |
+| 作業ツリー | 実行の前後ともクリーン |
+
+記録は [evidence/pr-c/](evidence/pr-c/README.md)（`e2e-report-0dadaa2.md`・`pytest-0dadaa2.md`・`crlf-0dadaa2.md`）。
 
 - Chromium 141（固定版の Playwright のブラウザ）：**未実施**（第14.6節。Chromium 153 の成功を 141 の成功とは扱わない）。
 - Windows の Chrome・Edge の Preflight・Full（修正後の SHA）と W-02：**未実施**。`a42966b` の Chrome の Full の不合格は、そのまま残す。
