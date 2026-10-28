@@ -2,6 +2,14 @@
 
 対象：`03f91a9df1c48ca336672dbbbabb1808a73ad9d0`（2026-10-26 のレビュー（`748ad40`）の修正の後）と、受入候補の `2405992cdb5273571c3c23e7ffc96410433dff19`（記録の改善の後。アプリ本体は `03f91a9` と同じ）。いずれもクリーンな git worktree で実行した。Windows 実機の確認、Chromium 141 での確認、利用者の受入は**未実施**。
 
+Windows の受入試験（対象 `e12999efa4ccfe7ab0a2894baca94c997c46e54c`、2026-10-28、利用者が実施。計画書 第14.9節）：
+
+| ファイル | 内容 |
+|---|---|
+| `w02-chrome-e12999e/` | W-02（Chrome）の道具の記録。利用者から受け取った `w02-chrome-e12999e.zip`（SHA-256 `5564918b1b52e8ecc58ac24507ea3918c79781bfe927c4e2fb2891c4427887e7`）の4ファイル（`result.md`・`result.json`・`static-requests.jsonl`・`probe.jsonl`）を、内容を変えずに置いた。`result.md` が参照する `w02-output.log`・`server.log` は受け取っていない。終了コード 3：改善後の動作 OK、旧方式からの実キー移行は一部未確認（終了コード 0 の完全な合格ではない） |
+
+Chrome・Edge の Preflight・Full の結果（各 Preflight 成功 8、Full 成功 435・失敗 0・スキップ 0・未実施 0）は利用者の報告で、`e2e-report.md` の原本は受け取っていない。
+
 修正後の受入候補 `0dadaa2584cfcd0a1ee16886fe99c9fd2b6b39e6`（2026-10-27。Windows Chrome の Full（対象 `a42966b`、不合格）で失敗した C-07 の試験の修正。アプリは `03f91a9` と同じ。計画書 第14.8節）：
 
 | ファイル | 内容 |
