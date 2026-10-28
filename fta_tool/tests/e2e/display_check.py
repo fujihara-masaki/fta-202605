@@ -471,7 +471,6 @@ class DisplayCheck:
 
     # ----- Microsoft IME (C-08) ---------------------------------------------------
     def ime(self) -> None:
-        page = self.page
         level = "日本語入力"
         self.say("")
         self.say("■ 日本語入力の確認（5 か所）：ツールが入力欄を開いてフォーカスを置きます。")

@@ -53,7 +53,6 @@ from tests.e2e.edit_helpers import (
     leave_dialog,
     leave_link,
     open_edit,
-    pump,
     select_button,
     step_button,
     step_panel,

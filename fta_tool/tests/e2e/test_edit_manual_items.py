@@ -31,18 +31,22 @@ import time
 import pytest
 
 from tests.e2e.edit_helpers import (
-    choose,
     chip,
+    choose,
+    close_nav,
     delete_dialog,
+    expect_selected,
     factor_field,
     factor_save,
     factor_status,
-    expect_selected,
     inspector,
     inspector_title,
     item,
     judgement_button,
+    nav_button,
+    nav_folded,
     open_edit,
+    open_nav,
     select_button,
     step_button,
     step_panel,
@@ -143,7 +147,7 @@ def test_E_E19_two_tabs_a_judgement_changed_in_the_other_tab(page, e2e_server):
 def test_E_E03_back_to_unknown_from_the_inspector(page, e2e_server):
     analysis_id, a, b, c, d = build_tree(e2e_server)  # A Yes, D 未評価
     open_edit(page, analysis_id)
-    select_button(page, "nav", d).click()
+    nav_button(page, d).click()
     judgement_button(inspector(page), d, "yes").click()
     expect(step_button(page, 2)).to_contain_text("2件・未評価0")
     expect(page.locator('[data-target-count="2"]')).to_have_text("2")
@@ -183,7 +187,8 @@ def test_E_E04_no_and_unknown_filters(page, e2e_server):
         expect(item(page, "table", node_id)).to_be_visible()
     for node_id in (a, d):
         expect(item(page, "table", node_id)).to_be_hidden()
-        expect(select_button(page, "nav", node_id)).to_be_visible()  # the navigation hides nothing
+        expect(nav_button(page, node_id)).to_be_visible()  # the navigation hides nothing
+        close_nav(page)  # below 1280px: fold it again (PR-7)
     tab(page, "work").click()
     step_button(page, 3).click()
     expect(page.locator('[data-target-count="2"]')).to_have_text("1")  # the hidden Yes parent A still counts
@@ -203,7 +208,7 @@ def test_E_E07_deleting_a_primary_factor_selects_the_top_event(page, e2e_server)
     open_edit(page, analysis_id)
     step_button(page, 1).click()
     page.fill("#topEventInput", "頂上（未保存の入力）")
-    select_button(page, "nav", d).click()
+    nav_button(page, d).click()
     mark_page(page)
     messages: list[str] = []
     page.on("dialog", lambda dialog: (messages.append(dialog.message), dialog.accept()))
@@ -233,7 +238,7 @@ def test_E_E08_child_actions_are_refused_for_every_inconsistent_category(page, e
     # 二次要因 of every category (三次要因 have no level below them).
     for key, title in (("M", "親不在の要因M"), ("F", "別分析を親にする要因F"), ("S", "自己参照の要因S"),
                        ("C1", "循環の要因C1"), ("C2", "循環の要因C2")):
-        select_button(page, "nav", ids[key]).click()
+        nav_button(page, ids[key]).click()
         expect(inspector_title(page)).to_have_text(title)
         for name in ("AIで追加生成", "手動追加"):
             button = inspector(page).get_by_role("button", name=name, exact=True)
@@ -243,12 +248,12 @@ def test_E_E08_child_actions_are_refused_for_every_inconsistent_category(page, e
         expect(reason).to_be_visible()
         expect(reason).to_have_text(PARENT_REASON_INCONSISTENT)
     for key, title in (("M2", "Mの下の要因M2"), ("L", "階層不一致の要因L"), ("K", "循環の下の要因K")):
-        select_button(page, "nav", ids[key]).click()
+        nav_button(page, ids[key]).click()
         expect(inspector_title(page)).to_have_text(title)
         for name in ("AIで追加生成", "手動追加"):
             expect(inspector(page).get_by_role("button", name=name, exact=True)).to_have_count(0)
 
-    select_button(page, "nav", ids["A"]).click()  # a consistent factor: both offered
+    nav_button(page, ids["A"]).click()  # a consistent factor: both offered
     expect(inspector_title(page)).to_have_text("一次要因A")
     for name in ("AIで追加生成", "手動追加"):
         expect(inspector(page).get_by_role("button", name=name, exact=True)).to_be_enabled()
@@ -271,9 +276,15 @@ def test_each_pane_scrolls_on_its_own(page, e2e_server, viewport):
     width = page.evaluate("() => document.documentElement.clientWidth")
     assert width == viewport["width"]
     assert page.evaluate("() => document.documentElement.scrollWidth") <= width
+    folded = nav_folded(page)
+    open_nav(page)  # below 1280px the navigation is shown over the work area (PR-7)
     nav, center, side = (page.locator(selector).bounding_box()
                          for selector in ("#edit-nav", "#edit-work-area", "#edit-inspector"))
-    assert nav["x"] + nav["width"] <= center["x"] + 1 and center["x"] + center["width"] <= side["x"] + 1
+    if folded:
+        assert center["x"] <= nav["x"] and nav["x"] + nav["width"] <= side["x"] + 1
+    else:
+        assert nav["x"] + nav["width"] <= center["x"] + 1
+    assert center["x"] + center["width"] <= side["x"] + 1
     assert side["x"] + side["width"] <= width + 1
 
     panes = ("nav", "center", "inspector")

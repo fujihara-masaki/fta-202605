@@ -23,6 +23,7 @@ import sys
 
 import pytest
 
+from tests.e2e.edit_helpers import open_nav
 from tests.e2e.support import FTA_TOOL_DIR, expect
 
 pytestmark = pytest.mark.e2e
@@ -62,6 +63,7 @@ def test_E_X01_no_request_leaves_the_app(page, page_watch, e2e_server):
 
     page.goto(f"/analyses/{analysis_id}")
     expect(page.locator("#analysisTitle")).to_have_text("外部通信の確認")
+    open_nav(page)  # below 1280px the navigation is folded (PR-7)
     page.locator('[data-action="select"][data-role="nav"]').last.click()  # inspector reads the details
     page.locator('[data-view-tab="tree"]').click()
     page.locator('[data-view-tab="table"]').click()

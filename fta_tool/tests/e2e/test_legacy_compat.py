@@ -42,19 +42,20 @@ import pytest
 from tests.e2e.edit_helpers import (
     add_dialog,
     add_factor,
-    choose,
     chip,
+    choose,
     delete_dialog,
     delete_factor,
+    edit_title,
+    expect_selected,
     factor_field,
     factor_message,
     factor_save,
-    edit_title,
-    expect_selected,
     inspector,
     inspector_title,
     item,
     judgement_button,
+    nav_button,
     open_edit,
     save_button,
     select_button,
@@ -179,7 +180,7 @@ def test_details_manual_add_additional_generation_delete_and_export(page, e2e_se
     assert (call["target_level"], call["parent_factor"], call["additional"]) == (2, "一次要因B", True)
 
     # Delete C from the inspector (the in-page dialog, no confirm()): its parent is selected.
-    select_button(page, "nav", c).click()
+    nav_button(page, c).click()
     dialogs = record_dialogs(page, action="accept")
     delete_factor(page)
     expect(inspector_title(page)).to_have_text("一次要因A")
@@ -239,10 +240,15 @@ def expect_dialog_uncovered(page, dialog) -> None:
 
 
 def expect_normal_place(page) -> None:
-    """Bottom centre, where the notifications are when no dialog is open."""
+    """Bottom centre, where the notifications are when no dialog is open;
+    below 1280px bottom left, over the work area only, never over the
+    inspector (PR-7, css/edit.css)."""
     box = page.locator("#ui-toasts").bounding_box()
     size = page.viewport_size
-    assert abs(box["x"] + box["width"] / 2 - size["width"] / 2) <= 2, box
+    if size["width"] >= 1280:
+        assert abs(box["x"] + box["width"] / 2 - size["width"] / 2) <= 2, box
+    else:
+        assert abs(box["x"] - 16) <= 1 and box["x"] + box["width"] <= size["width"] - 340 + 1, box
     assert 0 <= size["height"] - (box["y"] + box["height"]) <= 48, box
 
 

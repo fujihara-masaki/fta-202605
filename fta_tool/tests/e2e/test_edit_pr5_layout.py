@@ -36,8 +36,8 @@ from tests.e2e.edit_helpers import (
     factor_status,
     inspector,
     leave_dialog,
+    nav_button,
     open_edit,
-    select_button,
     step_panel,
     toast,
 )
@@ -85,7 +85,7 @@ def test_PR5_inspector_editor_and_dialogs_are_visible_and_not_covered(page, e2e_
     page.unroute(f"**/nodes/{a}/update")
 
     # The switch dialog (three choices).
-    select_button(page, "nav", d).click()
+    nav_button(page, d).click()
     dialog = leave_dialog(page)
     for name in ("編集を続ける", "破棄して移動", "保存して移動"):
         inside(page, dialog.get_by_role("button", name=name), width, height)

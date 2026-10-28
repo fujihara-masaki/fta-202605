@@ -47,14 +47,17 @@ import pytest
 from tests.e2e import acceptance
 from tests.e2e.edit_helpers import (
     chip,
+    close_nav,
     editor,
+    expect_selected,
     factor_field,
     factor_save,
-    expect_selected,
     inspector,
     inspector_title,
     item,
     judgement_button,
+    nav_button,
+    nav_folded,
     notifications,
     open_edit,
     panel,
@@ -139,7 +142,7 @@ def test_E_E02_every_route_selects_and_all_views_agree(page, e2e_server):
     open_edit(page, analysis_id)
 
     # Structure navigation → the step follows the factor (④ for 三次).
-    select_button(page, "nav", c).click()
+    nav_button(page, c).click()
     expect_selected(page, c, "三次要因C")
     expect(step_button(page, 4)).to_have_attribute("aria-current", "step")
     expect(item(page, "work", c)).to_be_visible()
@@ -207,13 +210,13 @@ def test_E_E02_the_inspector_shows_the_saved_details_of_the_latest_choice(page, 
     # A slow answer for an earlier choice never fills the later one.
     held = []
     page.route(f"**/nodes/{c}", lambda route: held.append(route))
-    select_button(page, "nav", c).click()
+    nav_button(page, c).click()
     expect(inspector_title(page)).to_have_text("三次要因C")
     expect(page.locator("[data-detail-status]")).to_contain_text("読み込んでいます")
     expect(factor_field(page, "memo")).to_have_value("")  # nothing of A left behind
     expect(factor_field(page, "memo")).to_be_disabled()   # nor anything to type over (PR-5)
     expect(factor_save(page)).to_be_disabled()
-    select_button(page, "nav", d).click()
+    nav_button(page, d).click()
     expect(inspector_title(page)).to_have_text("一次要因D")
     expect(editor(page)).to_have_attribute("data-phase", "ready")
     held[0].fulfill(json={
@@ -250,7 +253,7 @@ def test_E_E03_judgement_is_saved_and_shown_everywhere(page, e2e_server):
 
     # From the inspector: the parent group heading, the work list and the
     # targets of the next level follow.
-    select_button(page, "nav", b).click()
+    nav_button(page, b).click()
     expect(page.locator('[data-target-count="3"]')).to_have_text("0")
     judgement_button(inspector(page), b, "yes").click()
     expect(item(page, "group", b)).to_have_attribute("data-judgement", "yes")
@@ -323,7 +326,8 @@ def test_E_E04_filter_hides_rows_highlights_the_tree_and_keeps_the_targets(page,
         for node_id in (a, c, d):
             expect(item(page, role, node_id)).to_have_class(re.compile(r"\bis-filter-dim\b"))
     for node_id in (a, b, c, d):
-        expect(select_button(page, "nav", node_id)).to_be_visible()
+        expect(nav_button(page, node_id)).to_be_visible()
+    close_nav(page)  # below 1280px: fold the navigation again (PR-7)
     # The Yes parent is hidden by the filter but still a target (J-07).
     tab(page, "work").click()
     step_button(page, 3).click()
@@ -352,7 +356,7 @@ def test_E_E04_filter_hides_rows_highlights_the_tree_and_keeps_the_targets(page,
 def test_E_E05_tabs_by_keyboard_keep_the_selection(page, e2e_server):
     analysis_id, a, b, c, d = build_tree(e2e_server)
     open_edit(page, analysis_id)
-    select_button(page, "nav", b).click()
+    nav_button(page, b).click()
     expect(page.get_by_role("tablist", name="表示の切り替え").get_by_role("tab")).to_have_text(["作業", "ツリー", "一覧表"])
 
     tab(page, "work").focus()
@@ -388,12 +392,16 @@ def test_E_E06_reload_restores_selection_step_tab_scroll_and_filter(page, e2e_se
     ids = [e2e_server.add_level1(analysis_id, f"一次要因{n:02d}") for n in range(40)]
     target = ids[30]
     open_edit(page, analysis_id)
-    select_button(page, "nav", target).click()
+    nav_button(page, target).click()
     page.fill("#edit-filter-text", "一次要因3")
     tab(page, "tree").click()  # the tree only highlights, so it keeps its height
     nav_scroll = page.locator('[data-scroll="nav"]')
     center = page.locator('[data-scroll="center"]')
-    nav_scroll.evaluate("el => { el.scrollTop = 300; }")
+    # Below 1280px the navigation is folded (PR-7): hidden, it has no scroll
+    # position to restore (shown again, it scrolls to the selected factor).
+    folded = nav_folded(page)
+    if not folded:
+        nav_scroll.evaluate("el => { el.scrollTop = 300; }")
     center.evaluate("el => { el.scrollTop = 250; }")
 
     page.reload()
@@ -403,7 +411,8 @@ def test_E_E06_reload_restores_selection_step_tab_scroll_and_filter(page, e2e_se
     expect(step_button(page, 2)).to_have_attribute("aria-current", "step")
     expect(page.locator("#edit-filter-text")).to_have_value("一次要因3")
     expect(page.locator("#edit-filter-count")).to_have_text("一致 10件（全40件）")
-    assert abs(nav_scroll.evaluate("el => el.scrollTop") - 300) <= 2
+    if not folded:
+        assert abs(nav_scroll.evaluate("el => el.scrollTop") - 300) <= 2
     assert abs(center.evaluate("el => el.scrollTop") - 250) <= 2
 
 
@@ -432,7 +441,7 @@ def test_E_E06_without_web_storage_the_screen_still_works(page, e2e_server):
     assert page.evaluate("() => { try { window.sessionStorage; return 'available'; } catch { return 'blocked'; } }") == "blocked"
     judgement_button(item(page, "work", a), a, "no").click()
     expect(chip(page.locator("#edit-nav"), a)).to_have_text("No")
-    select_button(page, "nav", c).click()
+    nav_button(page, c).click()
     tab(page, "tree").click()
     page.fill("#edit-filter-text", "二次")
     expect(page.locator("#edit-filter-count")).to_have_text("一致 1件（全4件）")
