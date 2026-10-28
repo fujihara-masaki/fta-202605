@@ -41,7 +41,12 @@ class E2EServer:
         self.db_path = workdir / "fta_tool.db"
         # The test server is on this PC: never through a proxy of the
         # environment or (on Windows) the system settings (trust_env=False).
-        self.http = httpx.Client(base_url=url, timeout=30, follow_redirects=False, trust_env=False)
+        # A new connection for every request (no keep-alive): uvicorn closes
+        # an idle connection after 5 s, and a request sent on it just then is
+        # lost ("Server disconnected without sending a response"; seen once
+        # in 2,629 tests of PR-7's run at every size, test data being made).
+        self.http = httpx.Client(base_url=url, timeout=30, follow_redirects=False, trust_env=False,
+                                 limits=httpx.Limits(max_keepalive_connections=0))
 
     # ----- lifecycle -----------------------------------------------------
     def reset(self) -> None:

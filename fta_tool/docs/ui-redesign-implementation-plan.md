@@ -3063,6 +3063,8 @@ DB スキーマ、業務 API の契約、AI 生成、プロンプト、LangGraph
 
 寸法を自分で 1280×800 に限っているテスト（`SINGLE`）は、全寸法の実行でも 1280×800 のまま。
 
+調整の後の全寸法の必須受入検証（`d60b66c`、開発環境、2026-10-28、83分04秒）は、成功 2628・失敗 1・スキップ 0・未実施 0 で**不合格**だった。失敗の1件（E-E03 の 900×600）は画面ではなく、テストがデータを作るときの HTTP の失敗（`httpx.RemoteProtocolError: Server disconnected without sending a response`）だった。テストの HTTP クライアントが接続を使い回し、uvicorn が使われていない接続を 5 秒で閉じるのと同時に要求を送ると失われる（uvicorn の待ち時間を 0.2 秒にした別の小さな確認で、使い回しありは 400 回中 39 回同じ失敗、使い回しなしは 0 回）。テストの HTTP クライアントを要求ごとに新しい接続にした（`tests/e2e/support.py`。試験 `test_the_test_server_is_asked_on_a_new_connection_each_time`）。アプリ・テストの検査の内容は変えていない。修正後の結果は下の「確認結果（開発環境）」。
+
 #### 必須受入検証の項目
 
 `REQUIRED_IDS` は PR-C の 68 項目に E-K01〜E-K03・E-V01〜E-V03・E-F01 を加えた **75 項目**（重複・欠落と、各 ID を付けたテストがあることを `tests/test_e2e_infrastructure.py` が検査）。E-X01 の内容に favicon を加えた。

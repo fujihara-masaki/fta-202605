@@ -284,6 +284,18 @@ def test_the_test_server_is_reached_without_a_proxy(tmp_path, monkeypatch):
         server.http.close()
 
 
+def test_the_test_server_is_asked_on_a_new_connection_each_time(tmp_path):
+    """PR-7: no connection is kept for the next request, so none is reused
+    just when uvicorn closes it as idle (5 s), which lost a request once in
+    the run of every test at every size ("Server disconnected without
+    sending a response")."""
+    server = support.E2EServer("http://127.0.0.1:1", tmp_path, process=None, log_path=tmp_path / "server.log")
+    try:
+        assert server.http._transport._pool._max_keepalive_connections == 0
+    finally:
+        server.http.close()
+
+
 # ----- no console error is let through (PR-7 removed the favicon exception) ------
 
 ORIGIN = "http://127.0.0.1:43210"
