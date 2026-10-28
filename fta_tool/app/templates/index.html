@@ -1,49 +1,70 @@
 {% extends "base.html" %}
+{% import "_macros.html" as ui %}
 {% block title %}FTA分析一覧{% endblock %}
+{% block screen_styles %}<link rel="stylesheet" href="/static/css/list.css">{% endblock %}
+{% block body_class %}ui-page{% endblock %}
+{% block legacy_scripts %}{% endblock %}
+
 {% block content %}
-<div class="page-container">
-  <div class="page-header">
-    <h1>FTA分析一覧</h1>
-    <a href="/analyses/new" class="btn btn-primary">＋ 新規分析を作成</a>
+<div class="list-page">
+  <div class="list-page__header">
+    <div>
+      <h1 class="list-page__title" id="list-heading" tabindex="-1">FTA分析一覧</h1>
+      <p class="list-page__meta"><span data-analysis-count>{{ analyses | length }}</span>件・更新日時の新しい順</p>
+    </div>
+    <a href="/analyses/new" class="ui-btn ui-btn--primary">＋ 新規分析を作成</a>
   </div>
 
-  {% if analyses %}
-  <table class="analysis-table">
-    <thead>
-      <tr>
-        <th>タイトル</th>
-        <th>頂上事象</th>
-        <th>作成日時</th>
-        <th>更新日時</th>
-        <th>操作</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for a in analyses %}
-      <tr>
-        <td class="title-cell">
-          <a href="/analyses/{{ a.id }}" class="analysis-title-link" id="title-link-{{ a.id }}">{{ a.title }}</a>
-          <button class="btn-icon" onclick="startTitleRename({{ a.id }})" title="タイトルを変更">✎</button>
-        </td>
-        <td class="top-event-cell">{{ a.top_event or '（未設定）' }}</td>
-        <td>{{ a.created_at.strftime('%Y-%m-%d %H:%M') if a.created_at else '-' }}</td>
-        <td>{{ a.updated_at.strftime('%Y-%m-%d %H:%M') if a.updated_at else '-' }}</td>
-        <td>
-          <a href="/analyses/{{ a.id }}" class="btn btn-sm btn-outline">編集</a>
-          <a href="/analyses/{{ a.id }}/export/json" class="btn btn-sm btn-outline">JSON</a>
-          <a href="/analyses/{{ a.id }}/export/csv" class="btn btn-sm btn-outline">CSV</a>
-          <a href="/analyses/{{ a.id }}/export/markdown" class="btn btn-sm btn-outline">MD</a>
-          <button type="button" class="btn btn-sm btn-danger" onclick="deleteAnalysis({{ a.id }}, {{ a.title | tojson }})">削除</button>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <div class="empty-state">
-    <p>分析がまだありません。最初のFTA分析を作成しましょう。</p>
-    <a href="/analyses/new" class="btn btn-primary">＋ 新規分析を作成</a>
+  <div class="ui-table-wrap" data-list-table{% if not analyses %} hidden{% endif %}>
+    <table class="ui-table list-table" aria-labelledby="list-heading">
+      <thead>
+        <tr>
+          <th scope="col" class="list-table__title-col">タイトル</th>
+          <th scope="col" class="list-table__top-event-col">頂上事象</th>
+          <th scope="col" class="list-table__date-col">作成日時</th>
+          <th scope="col" class="list-table__date-col">更新日時</th>
+          <th scope="col" class="list-table__actions-col">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in analyses %}
+        <tr data-analysis-id="{{ a.id }}" data-title="{{ a.title }}" data-factor-count="{{ factor_counts.get(a.id, 0) }}">
+          <td class="list-table__title">
+            <div class="title-view" data-title-view>
+              <a href="/analyses/{{ a.id }}" class="title-view__link" data-title-link>{{ a.title }}</a>
+              <button type="button" class="ui-btn ui-btn--icon" data-action="rename" title="タイトルを変更" aria-label="タイトルを変更：{{ a.title }}">✎</button>
+            </div>
+          </td>
+          <td class="list-table__top-event">
+            {%- if a.top_event %}
+            <span class="list-table__clamp" title="{{ a.top_event }}">{{ a.top_event }}</span>
+            {%- else %}
+            <span class="list-table__empty-value">（未設定）</span>
+            {%- endif %}
+          </td>
+          <td class="list-table__date">{{ a.created_at.strftime('%Y-%m-%d %H:%M') if a.created_at else '-' }}</td>
+          <td class="list-table__date">{{ a.updated_at.strftime('%Y-%m-%d %H:%M') if a.updated_at else '-' }}</td>
+          <td>
+            <div class="list-table__actions">
+              <a href="/analyses/{{ a.id }}" class="ui-btn ui-btn--sm" data-edit-link>編集<span class="visually-hidden" data-bind-title>：{{ a.title }}</span></a>
+              {{ ui.export_menu(a.id, a.title) }}
+              <button type="button" class="ui-btn ui-btn--sm ui-btn--danger-outline" data-action="delete">削除<span class="visually-hidden" data-bind-title>：{{ a.title }}</span></button>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
-  {% endif %}
+
+  <section class="list-empty" data-empty-state aria-labelledby="list-empty-title"{% if analyses %} hidden{% endif %}>
+    <h2 class="list-empty__title" id="list-empty-title" tabindex="-1">分析がまだありません</h2>
+    <p class="list-empty__text">「新規分析を作成」から、分析の名前と頂上事象（発生した事象）を登録します。作成後の画面で、AIによる要因の生成や評価、出力ができます。</p>
+    <a href="/analyses/new" class="ui-btn ui-btn--primary">＋ 新規分析を作成</a>
+  </section>
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script type="module" src="/static/js/pages/list.js"></script>
 {% endblock %}

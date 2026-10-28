@@ -1,112 +1,119 @@
 {% extends "base.html" %}
 {% block title %}新規FTA分析作成{% endblock %}
+{% block screen_styles %}<link rel="stylesheet" href="/static/css/new.css">{% endblock %}
+{% block body_class %}ui-page{% endblock %}
+{% block legacy_scripts %}{% endblock %}
+
+{#- New analysis (B): two columns (plan 3.2). The form is the same POST
+    /analyses as before (title, top_event, system_context, incident_context,
+    demo_points); static/js/pages/new.js adds the title check, the sample
+    preview / transfer and the unsaved-input protection. The sample data is
+    embedded as JSON (tojson), not as script. -#}
 {% block content %}
-<div class="page-container narrow">
-  <div class="page-header">
-    <h1>新規FTA分析を作成</h1>
+<div class="new-page">
+  <div class="new-page__header">
+    <h1 class="new-page__title">新規FTA分析を作成</h1>
+    <p class="new-page__lead">分析の名前と頂上事象、AIへの参考情報を入力します。入力した内容は「作成して編集へ」を押すまで保存されません。</p>
+    <p class="ui-status ui-status--unsaved" data-sample-status hidden>サンプルを転記済み・未保存<span data-sample-status-name></span></p>
   </div>
-  <form method="post" action="/analyses" class="form-card">
-    <div class="form-group">
-      <label for="title">分析タイトル <span class="required">*</span></label>
-      <input type="text" id="title" name="title" required placeholder="例：〇〇システム ログイン障害（2024年4月）">
-    </div>
-    <div class="form-group">
-      <label for="top_event">頂上事象（後から編集可）</label>
-      <textarea id="top_event" name="top_event" rows="3" placeholder="例：〇〇システムでログイン障害が発生した"></textarea>
-    </div>
-    <div class="form-group">
-      <label for="systemContextInput">システム構成・対象範囲（任意）</label>
-      <p class="field-hint" id="systemContextHint">頂上事象（発生した事象そのもの）とは別に、分析対象システムの構成や範囲を書きます。AIの要因生成時に参考情報として使われます。</p>
-      <textarea id="systemContextInput" name="system_context" rows="3" aria-describedby="systemContextHint" placeholder="例：Webサーバ2台＋DBサーバ1台の冗長構成。対象は社内認証システムのみ。"></textarea>
-    </div>
-    <div class="form-group">
-      <label for="incidentContextInput">障害発生時の状況・観測事実（任意）</label>
-      <p class="field-hint" id="incidentContextHint">障害が起きたときの状況や観測された事実（発生時刻、エラー内容、影響範囲など）を書きます。こちらもAIの要因生成時に参考情報として使われます。</p>
-      <textarea id="incidentContextInput" name="incident_context" rows="3" aria-describedby="incidentContextHint" placeholder="例：4/1 9:00頃から全ユーザーがログイン不可。画面には500エラーが表示。前日夜に設定変更作業あり。"></textarea>
+
+  <form method="post" action="/analyses" id="new-analysis-form" class="new-page__layout">
+    <div class="new-page__main">
+      <section class="ui-panel" aria-labelledby="new-section-1">
+        <h2 class="ui-panel__title" id="new-section-1"><span class="new-page__step">1</span> 分析の名前と頂上事象</h2>
+        <div class="ui-field">
+          <label class="ui-field__label" for="title">分析タイトル <span class="ui-field__tag ui-field__tag--required">必須</span></label>
+          <input type="text" id="title" name="title" class="ui-input" required aria-describedby="title-help title-error" placeholder="例：〇〇システム ログイン障害（2024年4月）">
+          <p class="ui-field-help" id="title-help"><span data-title-count>0</span>／<span data-title-max>255</span>文字（前後の空白は数えません）</p>
+          <p class="ui-field-error" id="title-error" hidden></p>
+        </div>
+        <div class="ui-field">
+          <label class="ui-field__label" for="top_event">頂上事象 <span class="ui-field__tag ui-field__tag--optional">任意・後から編集できます</span></label>
+          <textarea id="top_event" name="top_event" rows="3" class="ui-input" aria-describedby="top-event-help" placeholder="例：〇〇システムでログイン障害が発生した"></textarea>
+          <p class="ui-field-help" id="top-event-help">分析の起点となる「発生した事象そのもの」です。一次要因をAIで生成するときに必要です（作成後の分析・編集画面でも入力できます）。</p>
+        </div>
+      </section>
+
+      <section class="ui-panel" aria-labelledby="new-section-2">
+        <h2 class="ui-panel__title" id="new-section-2"><span class="new-page__step">2</span> AIへの参考情報 <span class="ui-field__tag ui-field__tag--optional">任意</span></h2>
+        <p class="new-page__intro">頂上事象とは別に、AIが要因を生成するときの参考として使われます。作成後の分析・編集画面でも編集できます。</p>
+        <div class="new-page__context">
+          <div class="ui-field">
+            <label class="ui-field__label" for="systemContextInput">システム構成・対象範囲</label>
+            <textarea id="systemContextInput" name="system_context" rows="4" class="ui-input" aria-describedby="systemContextHint" placeholder="例：Webサーバ2台＋DBサーバ1台の冗長構成。対象は社内認証システムのみ。"></textarea>
+            <p class="ui-field-help" id="systemContextHint">分析対象システムの構成や、分析の対象範囲を書きます。</p>
+          </div>
+          <div class="ui-field">
+            <label class="ui-field__label" for="incidentContextInput">障害発生時の状況・観測事実</label>
+            <textarea id="incidentContextInput" name="incident_context" rows="4" class="ui-input" aria-describedby="incidentContextHint" placeholder="例：4/1 9:00頃から全ユーザーがログイン不可。画面には500エラーが表示。前日夜に設定変更作業あり。"></textarea>
+            <p class="ui-field-help" id="incidentContextHint">発生時刻、エラー内容、影響範囲など、障害が起きたときの状況や観測された事実を書きます。</p>
+          </div>
+        </div>
+      </section>
+
+      {#- Demo points: not shown; filled only by the sample transfer. -#}
+      <input type="hidden" id="demoPointsInput" name="demo_points" value="">
     </div>
 
-    {% if sample_scenarios %}
-    <!-- Sample scenario section: optional aid, collapsed by default -->
-    <div class="sample-scenario-section">
-      <button type="button" id="showSampleBtn" class="btn btn-outline btn-sm" onclick="showSampleSection()">
-        デモ用サンプルを利用する
-      </button>
+    <aside class="new-page__aside" aria-label="入力の説明とサンプル">
+      <section class="ui-panel" aria-labelledby="new-usage-title">
+        <h2 class="ui-panel__title" id="new-usage-title">入力の使われ方</h2>
+        <dl class="new-usage">
+          <div>
+            <dt>頂上事象</dt>
+            <dd>分析の起点で、FTAの最上位に置かれます。一次要因をAIで生成するには頂上事象が必要です（作成時は空でもかまいません）。</dd>
+          </div>
+          <div>
+            <dt>AIへの参考情報</dt>
+            <dd>システム構成・対象範囲と、障害発生時の状況・観測事実は、一次〜三次のすべての要因の生成で、AIに参考として渡されます。要因のツリーには表示されません。</dd>
+          </div>
+          <div>
+            <dt>作成後</dt>
+            <dd>「作成して編集へ」で分析が保存され、分析・編集画面が開きます。頂上事象と参考情報は、そこでいつでも編集・保存できます。要因の生成と評価も分析・編集画面で行います。</dd>
+          </div>
+        </dl>
+      </section>
 
-      <div id="sampleSection" class="sample-scenario-box hidden">
-        <div class="form-group">
-          <label for="sampleSelect">サンプルシナリオから入力</label>
-          <select id="sampleSelect" class="form-input" onchange="onSampleSelect()">
-            <option value="">-- 動作確認用サンプルを選択 --</option>
-            {% for s in sample_scenarios %}
+      {% if sample_scenarios %}
+      <section class="ui-panel" aria-labelledby="new-sample-title" data-sample-panel>
+        <h2 class="ui-panel__title" id="new-sample-title">サンプルから入力 <span class="ui-field__tag ui-field__tag--optional">デモ用</span></h2>
+        <div class="ui-field">
+          <label class="ui-field__label" for="sampleSelect">サンプルシナリオ</label>
+          <select id="sampleSelect" class="ui-input" aria-describedby="sample-help">
+            <option value="">選択してください</option>
+            {%- for s in sample_scenarios %}
             <option value="{{ s.id }}">[{{ s.category }}] {{ s.title }}</option>
-            {% endfor %}
+            {%- endfor %}
           </select>
+          <p class="ui-field-help" id="sample-help">動作確認・デモ用のサンプルです。選ぶと内容を確認できます。</p>
         </div>
-
-        <div id="samplePreview" class="sample-preview hidden">
-          <p class="sample-preview-label">頂上事象</p>
-          <p id="samplePreviewTopEvent" class="sample-preview-text"></p>
-
-          <p class="sample-preview-label">システム構成</p>
-          <p id="samplePreviewSystem" class="sample-preview-text sample-preview-pre"></p>
-
-          <p class="sample-preview-label">障害発生時の状況</p>
-          <p id="samplePreviewIncident" class="sample-preview-text sample-preview-pre"></p>
-
-          <button type="button" class="btn btn-primary btn-sm" onclick="applySample()">このサンプルを入力</button>
+        <div class="new-sample__preview" id="samplePreview" hidden>
+          <h3 class="new-sample__preview-title">選んだサンプルの内容</h3>
+          <dl class="new-sample__items">
+            <div><dt>頂上事象</dt><dd id="samplePreviewTopEvent"></dd></div>
+            <div><dt>システム構成・対象範囲</dt><dd id="samplePreviewSystem"></dd></div>
+            <div><dt>障害発生時の状況・観測事実</dt><dd id="samplePreviewIncident"></dd></div>
+          </dl>
+          <div class="new-sample__apply">
+            <button type="button" class="ui-btn" data-apply-sample aria-describedby="sample-apply-help">この内容を入力欄へ転記</button>
+            <p class="ui-field-help" id="sample-apply-help">頂上事象と参考情報2種を、この内容に置き換えます。分析タイトルは転記しません。</p>
+          </div>
         </div>
-        <p class="sample-hint">※ 動作確認用サンプルです。入力後に頂上事象は自由に編集できます。</p>
-      </div>
-    </div>
+        <p class="ui-field-help">転記した時点では保存されません。「作成して編集へ」を押すと保存されます。サンプルに含まれるデモ観点（画面には表示しません）も、参考情報と一緒に保存されます。</p>
+        <script type="application/json" id="sample-scenarios-data">{{ sample_scenarios | tojson }}</script>
+      </section>
+      {% endif %}
+    </aside>
 
-    <!-- Hidden field: demo points are demo-only info, populated when a sample
-         is applied (system/incident context use the visible textareas above) -->
-    <input type="hidden" id="demoPointsInput" name="demo_points" value="">
-    {% endif %}
-
-    <div class="form-actions">
-      <a href="/" class="btn btn-outline">キャンセル</a>
-      <button type="submit" class="btn btn-primary">作成して編集へ</button>
+    <div class="new-page__actions">
+      <p class="new-page__submit-status" data-submit-status></p>
+      <a href="/" class="ui-btn" data-cancel-link>キャンセル</a>
+      <button type="submit" class="ui-btn ui-btn--primary" data-submit>作成して編集へ</button>
     </div>
   </form>
 </div>
+{% endblock %}
 
-{% if sample_scenarios %}
-<script>
-const SAMPLE_SCENARIOS = {{ sample_scenarios | tojson }};
-
-function showSampleSection() {
-  document.getElementById('sampleSection').classList.remove('hidden');
-  document.getElementById('showSampleBtn').classList.add('hidden');
-}
-
-function onSampleSelect() {
-  const id = document.getElementById('sampleSelect').value;
-  const preview = document.getElementById('samplePreview');
-  if (!id) {
-    preview.classList.add('hidden');
-    return;
-  }
-  const sample = SAMPLE_SCENARIOS.find(s => s.id === id);
-  if (!sample) {
-    preview.classList.add('hidden');
-    return;
-  }
-  document.getElementById('samplePreviewTopEvent').textContent = sample.top_event;
-  document.getElementById('samplePreviewSystem').textContent = sample.system_context;
-  document.getElementById('samplePreviewIncident').textContent = sample.incident_context;
-  preview.classList.remove('hidden');
-}
-
-function applySample() {
-  const id = document.getElementById('sampleSelect').value;
-  const sample = SAMPLE_SCENARIOS.find(s => s.id === id);
-  if (!sample) return;
-  document.getElementById('top_event').value = sample.top_event;
-  document.getElementById('systemContextInput').value = sample.system_context;
-  document.getElementById('incidentContextInput').value = sample.incident_context;
-  document.getElementById('demoPointsInput').value = sample.demo_points;
-}
-</script>
-{% endif %}
+{% block extra_scripts %}
+<script type="module" src="/static/js/pages/new.js"></script>
 {% endblock %}

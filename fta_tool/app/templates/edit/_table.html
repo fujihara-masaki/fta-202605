@@ -1,0 +1,40 @@
+{#- Table view (the 一覧表 tab): every factor in the server's order. The
+    parent column names a broken link instead of 「（頂上事象）」 (C-09, J-25). -#}
+{% import "_macros.html" as ui %}
+<div data-region="table">
+  {%- if view.nodes %}
+  <div class="ui-table-wrap edit-table-wrap">
+    <table class="ui-table edit-table" aria-label="要因の一覧表">
+      <thead>
+        <tr>
+          <th scope="col">階層</th>
+          <th scope="col">要因</th>
+          <th scope="col">親要因</th>
+          <th scope="col">評価</th>
+          <th scope="col">直接要因評価</th>
+          <th scope="col">要確認</th>
+          <th scope="col">説明</th>
+        </tr>
+      </thead>
+      <tbody>
+        {%- for n in view.nodes %}
+        <tr data-node-id="{{ n.id }}" data-role="table-item" data-judgement="{{ n.judgement }}" data-kind="{{ n.kind }}">
+          <td><span class="ui-tag ui-tag--level">{{ n.level_name }}</span></td>
+          <td class="edit-table__title">
+            <button type="button" class="edit-link" data-action="select" data-node-id="{{ n.id }}" data-role="table">{{ n.title }}</button>
+            <span class="ui-tag {{ 'ui-tag--ai' if n.ai_generated else 'ui-tag--manual' }}">{{ 'AI' if n.ai_generated else '手動' }}</span>
+          </td>
+          <td class="edit-table__parent">{{ n.parent_display }}{% if n.kind == 'upper' %} <span class="ui-tag ui-tag--issue">上位に不整合あり</span>{% endif %}</td>
+          <td>{{ ui.judgement_chip(n) }}</td>
+          <td>{{ n.direct_cause_label or '-' }}</td>
+          <td class="edit-table__warning">{{ n.warning_text or '-' }}</td>
+          <td class="edit-table__desc">{{ n.description }}</td>
+        </tr>
+        {%- endfor %}
+      </tbody>
+    </table>
+  </div>
+  {%- else %}
+  <p class="edit-empty">要因がまだありません。</p>
+  {%- endif %}
+</div>
