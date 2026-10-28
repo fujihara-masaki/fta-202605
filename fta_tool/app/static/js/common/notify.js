@@ -7,7 +7,9 @@
 // failing) updates the one already shown with a repeat count, and beyond
 // MAX_TOASTS the oldest notifications are closed — non-errors first, then
 // errors — so persistent errors cannot pile up and cover the page. The
-// newest notification is never the one closed.
+// newest notification is never the one closed. Where the stack is limited
+// in height and scrolls (low display areas of the edit screen, PR-7), the
+// newest is scrolled into view.
 
 import { el } from './dom.js';
 
@@ -113,6 +115,7 @@ export function notify(message, { type = 'success' } = {}) {
       count.textContent = `（${repeats}回）`;
       count.hidden = false;
       stack.append(toast); // move to the newest position
+      stack.scrollTop = stack.scrollHeight;
       schedule();
     },
   });
@@ -126,6 +129,7 @@ export function notify(message, { type = 'success' } = {}) {
 
   stack.append(toast);
   enforceLimit(stack, toast);
+  stack.scrollTop = stack.scrollHeight;
   announce(label, { assertive: kind === 'error' });
   schedule();
   return handle;

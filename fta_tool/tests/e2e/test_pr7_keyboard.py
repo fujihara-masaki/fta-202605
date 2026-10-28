@@ -7,11 +7,13 @@ proves the control is in the tab order and reached from where the focus
 was), and controls are used with Enter, Space, the arrow keys and Esc. No
 mouse click, no locator.click().
 
-* E-K01  the representative scenario (付録D 1〜5, 8〜11) by keyboard only:
+* E-K01  the representative scenario (付録D 1〜5, 7〜11; 6, the result
+         categories, is the same Enter on the generation button and is
+         E-G03's) by keyboard only:
          create an analysis from the empty list, edit the top event and
          generate 一次 without saving (the automatic save), judge Yes and
          generate 二次, save the inspector's fields, add a factor manually,
-         delete one, the export menu, leave with an unsaved change (three
+         delete one, the filter, the export menu, leave with an unsaved change (three
          choices); at a folded width the structure navigation by keyboard;
          while a generation runs, the keyboard cannot get round its
          restrictions (no write is sent, no link is followed).
@@ -186,6 +188,14 @@ def test_E_K01_the_representative_scenario_by_keyboard_only(page, e2e_server, di
     page.keyboard.press("Escape")
     expect(menu).to_have_attribute("aria-expanded", "false")
     expect(menu).to_be_focused()
+
+    # 7. Search: the filter by keyboard, then クリア.
+    tab_to(page, page.locator("#edit-filter-text"), backwards=True)
+    page.keyboard.type("存在しない要因名")
+    expect(page.locator("#edit-filter-count")).to_contain_text("一致 0件")
+    tab_to(page, page.locator('[data-action="filter-clear"]'))
+    page.keyboard.press("Enter")
+    expect(page.locator("#edit-filter-text")).to_have_value("")
 
     # 11. While a generation runs, the keyboard gets round nothing: the
     #     restricted buttons are out of reach (disabled), 一覧へ by Enter stays.

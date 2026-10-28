@@ -1103,6 +1103,24 @@ a[aria-disabled="true"][data-gen-locked] {
     transform: none;
   }
 }
+/* Low display areas (below 700px high, e.g. 1366x768 at 125 %: 500px): the
+   notifications take at most 30 % of the height and scroll inside (the
+   newest is kept in view, js/common/notify.js), so they never cover the
+   whole work area; none is closed earlier for it (J-24: errors stay until
+   closed). The panes keep room below their content to scroll any control
+   above them. */
+@media (height < 700px) {
+  .edit-body .ui-toast-stack {
+    max-height: 30vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    pointer-events: auto;
+  }
+  .edit-center .edit-pane__scroll,
+  .edit-nav .edit-pane__scroll {
+    padding-bottom: calc(30vh + 48px);
+  }
+}
 /* Below 1024px the work area keeps its content as wide as at 1024px (1024px
    less the inspector) and scrolls it sideways itself. */
 @media (width < 1024px) {

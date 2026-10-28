@@ -45,9 +45,9 @@ HIT = """(el) => {
 # Scroll the nearest scrolling ancestor of the element so that its bottom is
 # above the top of the notifications (plus a small gap); false if it cannot.
 ABOVE_NOTIFICATIONS = """(el) => {
-  const toasts = [...document.querySelectorAll('#ui-toasts .ui-toast')];
-  if (!toasts.length) return false;
-  const top = Math.min(...toasts.map((t) => t.getBoundingClientRect().top));
+  const stack = document.getElementById('ui-toasts');
+  if (!stack || !stack.querySelector('.ui-toast')) return false;
+  const top = stack.getBoundingClientRect().top;  // the stack may scroll inside (low display areas)
   let box = el.parentElement;
   while (box && !(box.scrollHeight > box.clientHeight && /(auto|scroll)/.test(getComputedStyle(box).overflowY))) {
     box = box.parentElement;

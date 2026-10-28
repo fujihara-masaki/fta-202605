@@ -64,6 +64,8 @@ PREFLIGHT_TESTS = (
     # PR-C: W-02's PowerShell wrapper in Windows PowerShell 5.1 (and pwsh
     # when installed), so the user runs nothing more for it on Windows.
     "tests/e2e/test_windows_tools.py::test_run_cache_check_ps1_with_the_installed_powershell",
+    # PR-7: the wrapper of the zoom and display-scale check.
+    "tests/e2e/test_windows_tools.py::test_run_display_check_ps1_with_the_installed_powershell",
 ) if sys.platform == "win32" else ())
 
 # Acceptance IDs that the required run must cover. Later PRs append theirs.

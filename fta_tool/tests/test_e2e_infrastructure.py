@@ -542,10 +542,11 @@ VIEWPORT_RULES = {
                        "max-width: calc(100vw - 16px)", "width: min(560px, calc(100vw - 32px))"),
     "edit.css": ("height: calc(100vh - var(--header-height))",
                  "grid-template-columns: clamp(240px, 17vw, 320px) minmax(0, 1fr) clamp(340px, 23vw, 440px)",
-                 "width: min(560px, calc(100vw - 340px - 2 * var(--space-4)))"),
+                 "width: min(560px, calc(100vw - 340px - 2 * var(--space-4)))",
+                 "max-height: 30vh", "padding-bottom: calc(30vh + 48px)"),
 }
 # The display-area conditions (PR-7, J-20): edit.css only.
-MEDIA_RULES = {"css/edit.css": ["@media (width < 1280px)", "@media (width < 1024px)"]}
+MEDIA_RULES = {"css/edit.css": ["@media (width < 1280px)", "@media (height < 700px)", "@media (width < 1024px)"]}
 VIEWPORT_UNIT = re.compile(r"[\w-]+\s*:[^;{}]*\b\d*\.?\d+(?:[dsl])?v(?:w|h|min|max|i|b)\b[^;{}]*")
 
 
@@ -575,7 +576,7 @@ def test_the_layout_boundaries_follow_the_edit_pages_stylesheets():
     assert set(support.LAYOUT_BOUNDARIES["width"]) == {
         1280, 1024, 240 / 0.17, 320 / 0.17, 340 / 0.23, 440 / 0.23, 560 + 340 + 32,
         520 + 32, 560 + 32, 340 + 16}
-    assert support.LAYOUT_BOUNDARIES["height"] == ()
+    assert support.LAYOUT_BOUNDARIES["height"] == (700,)
     # chrome-1905x945 and its measured 1906x946 are between two of them.
     assert not [b for b in support.LAYOUT_BOUNDARIES["width"] if 1905 <= b <= 1906]
 

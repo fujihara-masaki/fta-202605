@@ -434,11 +434,13 @@ def measure_viewport(page) -> dict:
 # 320/0.17, 340/0.23 and 440/0.23; the notifications below 1280px,
 # min(560px, 100vw - 340px - 32px), at 932; the dialogs,
 # min(520px | 560px, 100vw - 32px), at 552 and 592; the menu panel (340px,
-# at most 100vw - 16px) at 356. Heights: none (the page is 100vh less the
-# header; the dialogs' max-height depends on their content).
+# at most 100vw - 16px) at 356. Heights: 700 (below it the notifications
+# take at most 30vh and scroll, and the panes keep 30vh + 48px below their
+# content; PR-7); otherwise the page is 100vh less the header and the
+# dialogs' max-height depends on their content.
 LAYOUT_BOUNDARIES = {
     "width": (356, 552, 592, 932, 1024, 1280, 240 / 0.17, 340 / 0.23, 320 / 0.17, 440 / 0.23),
-    "height": (),
+    "height": (700,),
 }
 
 
