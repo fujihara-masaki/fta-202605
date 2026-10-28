@@ -42,6 +42,7 @@ import pathlib
 import platform
 import shlex
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -59,7 +60,11 @@ PREFLIGHT_TESTS = (
     "tests/e2e/test_edit_page.py::test_E_E01_without_factors_step_1_and_the_top_event",
     "tests/e2e/test_edit_page.py::test_E_E01_with_factors_step_2_and_the_first_primary_factor",
     "tests/e2e/test_edit_page.py::test_three_panes_fit_at_the_base_and_the_measured_sizes",
-)
+) + ((
+    # PR-C: W-02's PowerShell wrapper in Windows PowerShell 5.1 (and pwsh
+    # when installed), so the user runs nothing more for it on Windows.
+    "tests/e2e/test_windows_tools.py::test_run_cache_check_ps1_with_the_installed_powershell",
+) if sys.platform == "win32" else ())
 
 # Acceptance IDs that the required run must cover. Later PRs append theirs.
 # E-xx / T-xx follow plan section 8.9; PR1-xx / PR2-xx / PR3-xx are checks
@@ -129,6 +134,17 @@ REQUIRED_IDS: dict[str, str] = {
     "E-G10": "生成（PR-6）：生成中の詳細の取得待ち（新しく選んだ要因の GET を送らない、前の要因の詳細を出さない、取得済みの要因は保存済みの内容と取得時刻）、終了後に最後に選んだ要因だけ取得、古い応答の破棄、再取得で下書きを保持し変わった保存値を知らせる、初回の失敗と再取得の失敗を区別",
     "E-G11": "生成（PR-6）：生成中の保存の抑止（タイトルの Enter・フォーカス移動、インスペクタの保存は送らず下書きと理由が残る）、未保存の要因の切替は2択（理由）、変更なしなら確認なし、終了後は3択",
     "E-G12": "生成（PR-6）：制限の解除。成功・部分失敗・通信失敗・HTTP 異常・スタブの例外・画面の JavaScript の例外・部分更新の失敗のいずれでも終了処理の後に操作が戻る、反映が遅い間は制限が続く、分析の削除や不整合による無効化は残る。離れて戻った後も制限・状態表示・生成中の行が残らない",
+    # PR-C (docs/static-assets-cache-control-plan.md, section 6): the static
+    # files after an update, in one browser context and one origin, each
+    # operation with its own new version (tests/e2e/test_static_cache.py).
+    "C-00": "静的ファイルのキャッシュ（PR-C）：キャッシュの試験が成立条件を守る（通信の差し替え・記録の再生・キャッシュの無効化・別のコンテキスト・消去・値の読み取りのための fetch／import を使わない。強制の再読み込みは移行の手順だけ）",
+    "C-01": "静的ファイルのキャッシュ（PR-C）：CSS だけの更新。一覧・新規作成・編集で、リンク・goto・F5 の各操作の直前に未取得の版へ変え、旧 ETag・200・新しい本文・適用された版、変えていないファイルの 304",
+    "C-02": "静的ファイルのキャッシュ（PR-C）：入口が同じで下位のモジュール（深さ3・共通・評価）だけの更新。各操作で新しい版が実行され、評価の保存と詳細の表示が動く",
+    "C-03": "静的ファイルのキャッシュ（PR-C）：3画面の各操作（初回・再訪・リンク・goto・F5・強制の再読み込み）で HTML の要求がサーバーに届く（HTML の応答を変えない案の前提）",
+    "C-04": "静的ファイルのキャッシュ（PR-C）：従来の配信で保存された状態から、3画面の強制の再読み込み1回ずつで38件が no-cache になり、その後の各操作で新しい版を取得・適用する",
+    "C-05": "静的ファイルのキャッシュ（PR-C）：検出力。従来の配信と案A（no-cache だけ、同じ秒の更新）では、同じ手順が古い版の使用を検出する",
+    "C-06": "静的ファイルのキャッシュ（PR-C）：同じ秒の更新と古い時刻への置換も、各操作で新しい版を取得・適用する",
+    "C-07": "静的ファイルのキャッシュ（PR-C）：CSS の更新の後、通常の画面遷移で開いた編集画面で、生成中の評価のボタンが淡色・禁止のカーソルになり、押しても変わらず、終了後に戻る",
 }
 
 OUTCOME_LABELS = {
@@ -322,6 +338,9 @@ def _phase_window(report: pytest.TestReport) -> str:
     return f"（{clock(start)}〜{clock(stop)}）"
 
 
+NOTE_PROPERTY = "fta_note"
+
+
 def on_report(item: pytest.Item, report: pytest.TestReport) -> None:
     run = state(item.config)
     record = run.records.get(item.nodeid)
@@ -344,6 +363,11 @@ def on_report(item: pytest.Item, report: pytest.TestReport) -> None:
         record.reason = f"{report.when}{_phase_window(report)}: {_failure_reason(report)}"
     elif report.when == "call" and record.outcome is None:
         record.outcome = "passed"
+        # A passed test may name what it actually ran with (record_property
+        # "fta_note"), e.g. which PowerShell: it goes to the report's 備考.
+        notes = [str(value) for name, value in getattr(report, "user_properties", []) if name == NOTE_PROPERTY]
+        if notes:
+            record.reason = "／".join(notes)
 
 
 def add_known_console(item: pytest.Item, watchers: list) -> None:
@@ -544,6 +568,16 @@ def _verdict_text(run: RunState) -> str:
     return text
 
 
+def browser_executable(config: pytest.Config) -> Optional[str]:
+    """The Chromium given by --e2e-browser-executable: used instead of the
+    browser of the pinned Playwright, and named so in the record (never as
+    Playwright's own). Refused together with --browser-channel."""
+    value = config.getoption("e2e_browser_executable", default=None) or None
+    if value and config.getoption("browser_channel", default=None):
+        raise pytest.UsageError("--e2e-browser-executable と --browser-channel は同時に使えません")
+    return value
+
+
 def _browser_rows(config: pytest.Config, run: RunState) -> list[str]:
     """What was asked for (channel, headed/headless) and what was started."""
     launch = run.launch or {}
@@ -552,8 +586,9 @@ def _browser_rows(config: pytest.Config, run: RunState) -> list[str]:
         f"未起動（起動できませんでした：{_cell(launch['error'])}）" if launch.get("error") else "未起動")
     headed = launch.get("headless") is False or bool(config.getoption("headed", default=False))
     slowmo = config.getoption("slowmo", default=0) or 0
+    executable = browser_executable(config)
     return [
-        f"| ブラウザの channel（指定） | {channel or 'なし（Playwright 同梱の Chromium）'} |",
+        f"| ブラウザの channel（指定） | {channel or (_cell('なし。--e2e-browser-executable で指定した実行ファイル（Playwright の固定版が使うブラウザではない）：' + executable) if executable else 'なし（Playwright 同梱の Chromium）')} |",
         f"| 起動したブラウザ | {_cell(started)} |",
         f"| ブラウザの実行ファイル | {_cell(launch.get('executable') or '-')} |",
         f"| ブラウザのプロフィール | {_cell(launch.get('profile') or '-')} |",

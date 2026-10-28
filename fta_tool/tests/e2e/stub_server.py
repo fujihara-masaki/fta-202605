@@ -43,6 +43,38 @@ the same file (the functions are wrapped, the data is never changed):
                                 detail_view.build_detail_view gives up after
                                 N factors, as if it could not be completed
 
+Static files (PR-C, tests/e2e/test_static_cache.py and
+tests/e2e/cache_manual_check.py only; unset, the app is served as it is):
+  FTA_E2E_STATIC_DIR   serve /static from this copy instead of app/static
+                       (the repository's files are never changed). Each
+                       request reads the policy from static_control.json in
+                       the working directory ({"policy": ...}):
+                         app           the app's RevalidatedStaticFiles
+                         baseline      Starlette's StaticFiles as served
+                                       before PR-C (no Cache-Control,
+                                       ETag of time and size)
+                         nocache-only  plan option A: Cache-Control:
+                                       no-cache with Starlette's ETag and
+                                       its If-Modified-Since check
+  FTA_E2E_STATIC_LOG   every HTTP request as a JSON line when its response
+                       has ended: method, path (as received, and raw),
+                       status, the cache headers of the request
+                       (If-None-Match, If-Modified-Since, Cache-Control,
+                       Pragma) and of the response (ETag, Cache-Control,
+                       Content-Type, Last-Modified), the SHA-256 of the body
+                       sent, the policy. No other header, no cookie.
+  FTA_E2E_PROBE_LOG    POST /__fta_e2e/probe stores its JSON body (what a
+                       page reports it actually used) as a JSON line. With
+  FTA_E2E_PROBE_RUN    set as well, every HTML page gets a small inline
+                       script before </body> that, at the page's load
+                       event, reports this run's id, the path, the
+                       navigation type, the CSS marker's computed value, the
+                       module markers (globalThis.__ftaCacheProbe) and the
+                       browser's version. It is part of the HTML, which is
+                       fetched on every navigation, and never touches a
+                       static file: a module cached before this run still
+                       lets the page be seen (cache_manual_check.py).
+
 Diagnosis only (tests/e2e/diagnose_navigation.py), when FTA_E2E_ACCESS_LOG
 names a file: every request is written to it as JSON lines when it arrives,
 when its response starts (status) and ends (bytes), or when the client went
@@ -53,6 +85,7 @@ and times only: no query, no header, no body. The E2E tests do not set it.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
 import os
@@ -279,6 +312,207 @@ class AccessLog:
             raise
 
 
+# ----- static files (PR-C, test only) -------------------------------------
+
+STATIC_POLICIES = ("app", "baseline", "nocache-only")
+STATIC_CONTROL = "static_control.json"
+PROBE_PATH = "/__fta_e2e/probe"
+
+
+def _static_classes():
+    from starlette.staticfiles import StaticFiles
+
+    from app.static_files import CACHE_CONTROL, RevalidatedStaticFiles
+
+    class NoCacheOnlyStaticFiles(StaticFiles):
+        """Plan option A alone: Cache-Control: no-cache, Starlette's ETag
+        (time and size) and its check (If-Modified-Since even when the ETags
+        differ). For the check that the tests can see what PR-C prevents."""
+
+        def file_response(self, full_path, stat_result, scope, status_code=200):
+            response = super().file_response(full_path, stat_result, scope, status_code)
+            response.headers["cache-control"] = CACHE_CONTROL
+            return response
+
+    return {"app": RevalidatedStaticFiles, "baseline": StaticFiles, "nocache-only": NoCacheOnlyStaticFiles}
+
+
+def read_static_policy(workdir: pathlib.Path) -> str:
+    path = workdir / STATIC_CONTROL
+    if not path.exists():
+        return "app"
+    policy = json.loads(path.read_text(encoding="utf-8")).get("policy", "app")
+    if policy not in STATIC_POLICIES:
+        raise RuntimeError(f"E2E: 未知の静的ファイルの配信方式です（{policy}）")
+    return policy
+
+
+class PolicyStaticFiles:
+    """/static from a copy (FTA_E2E_STATIC_DIR), with the policy of
+    static_control.json read for every request: one server, one origin, while
+    a test switches from the old serving to the new one."""
+
+    def __init__(self, directory: pathlib.Path, workdir: pathlib.Path):
+        self.workdir = workdir
+        self.apps = {name: cls(directory=str(directory)) for name, cls in _static_classes().items()}
+
+    async def __call__(self, scope, receive, send):
+        policy = read_static_policy(self.workdir)
+        scope.setdefault("state", {})["fta_static_policy"] = policy
+        await self.apps[policy](scope, receive, send)
+
+
+def install_static_copy(main_module, directory: pathlib.Path, workdir: pathlib.Path) -> None:
+    for route in main_module.app.routes:
+        if getattr(route, "name", None) == "static":
+            served = PolicyStaticFiles(directory, workdir)
+            route._base_app = served
+            route.app = served
+            return
+    raise RuntimeError("E2E: /static のマウントが見つかりません")
+
+
+_LOGGED_REQUEST_HEADERS = ("if-none-match", "if-modified-since", "cache-control", "pragma")
+_LOGGED_RESPONSE_HEADERS = ("etag", "cache-control", "content-type", "last-modified", "content-length")
+
+
+class RequestLog:
+    """ASGI wrapper: one JSON line per HTTP request when its response has
+    ended (FTA_E2E_STATIC_LOG). It never changes a request or a response."""
+
+    def __init__(self, app, path: pathlib.Path):
+        self.app = app
+        self.path = path
+        self._numbers = itertools.count(1)
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers") or []}
+        agent = headers.get("user-agent", "")
+        record = {
+            "n": next(self._numbers),
+            "method": scope.get("method"),
+            "path": scope.get("path"),
+            "raw_path": (scope.get("raw_path") or b"").decode("latin-1"),
+            "client": ("python-httpx" if agent.startswith("python-httpx")
+                       else "browser" if agent.startswith("Mozilla/") else "other" if agent else "none"),
+            "request": {name: headers[name] for name in _LOGGED_REQUEST_HEADERS if name in headers},
+        }
+        digest = hashlib.sha256()
+        state = {"bytes": 0}
+
+        async def logged_send(message):
+            if message["type"] == "http.response.start":
+                response = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in message.get("headers") or []}
+                record["status"] = message.get("status")
+                record["response"] = {name: response[name] for name in _LOGGED_RESPONSE_HEADERS if name in response}
+            elif message["type"] == "http.response.body":
+                body = message.get("body") or b""
+                digest.update(body)
+                state["bytes"] += len(body)
+            await send(message)
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                record["body_bytes"] = state["bytes"]
+                record["body_sha256"] = digest.hexdigest()
+                record["policy"] = (scope.get("state") or {}).get("fta_static_policy")
+                record["time"] = time.time()
+                _append_jsonl(self.path, record)
+
+        await self.app(scope, receive, logged_send)
+
+
+PROBE_SCRIPT = """<script>(function () {
+  var run = %s;
+  addEventListener('load', function () {
+    setTimeout(function () {
+      var entry = performance.getEntriesByType('navigation')[0];
+      var css = getComputedStyle(document.documentElement).getPropertyValue('--fta-cache-probe-components')
+        .trim().replace(/^["']|["']$/g, '');
+      var send = function (browser) {
+        var report = { run: run, path: location.pathname, navigation: entry ? entry.type : null, css: css,
+                       js: Object.assign({}, globalThis.__ftaCacheProbe || {}), browser: browser,
+                       userAgent: navigator.userAgent, at: Date.now() };
+        navigator.sendBeacon('%s', new Blob([JSON.stringify(report)], { type: 'application/json' }));
+      };
+      var data = navigator.userAgentData;
+      if (data && data.getHighEntropyValues) {
+        data.getHighEntropyValues(['fullVersionList']).then(function (v) { send(v.fullVersionList); },
+                                                              function () { send(null); });
+      } else {
+        send(null);
+      }
+    }, 0);
+  });
+})();</script>"""
+
+
+class ProbeEndpoint:
+    """POST /__fta_e2e/probe (FTA_E2E_PROBE_LOG): a page's own report of the
+    values it used. With a run id (FTA_E2E_PROBE_RUN), the HTML pages carry
+    the inline script that sends it (cache_manual_check.py)."""
+
+    def __init__(self, app, path: pathlib.Path, run: str = ""):
+        self.app = app
+        self.path = path
+        self.script = (PROBE_SCRIPT % (json.dumps(run), PROBE_PATH)).encode("utf-8") if run else b""
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        if scope.get("path") == PROBE_PATH and scope.get("method") == "POST":
+            await self._store(receive, send)
+            return
+        if not self.script or scope.get("method") != "GET":
+            await self.app(scope, receive, send)
+            return
+        start = {}
+        body = []
+
+        async def html_send(message):
+            if message["type"] == "http.response.start":
+                headers = dict((k.lower(), v) for k, v in message.get("headers") or [])
+                if b"text/html" not in headers.get(b"content-type", b""):
+                    start["pass"] = True
+                    await send(message)
+                    return
+                start["message"] = message
+                return
+            if start.get("pass"):
+                await send(message)
+                return
+            body.append(message.get("body") or b"")
+            if message.get("more_body", False):
+                return
+            html = b"".join(body)
+            at = html.rfind(b"</body>")
+            html = html[:at] + self.script + html[at:] if at >= 0 else html + self.script
+            first = start["message"]
+            headers = [(k, v) for k, v in first.get("headers") or [] if k.lower() != b"content-length"]
+            headers.append((b"content-length", str(len(html)).encode("latin-1")))
+            await send({**first, "headers": headers})
+            await send({"type": "http.response.body", "body": html, "more_body": False})
+
+        await self.app(scope, receive, html_send)
+
+    async def _store(self, receive, send):
+        body = b""
+        while True:
+            message = await receive()
+            body += message.get("body") or b""
+            if not message.get("more_body") or len(body) > 65536:
+                break
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            data = {"unreadable": body[:200].decode("latin-1")}
+        _append_jsonl(self.path, {"time": time.time(), "data": data})
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+
 def _check_working_directory() -> pathlib.Path:
     workdir = pathlib.Path(os.environ["FTA_E2E_WORKDIR"]).resolve()
     cwd = pathlib.Path.cwd().resolve()
@@ -304,9 +538,19 @@ def main() -> None:
     install_guards(main_module, workdir)
     install_integrity_faults(main_module, workdir)
 
+    static_dir = os.environ.get("FTA_E2E_STATIC_DIR")
+    if static_dir:  # PR-C's tests only
+        install_static_copy(main_module, pathlib.Path(static_dir), workdir)
+
     import uvicorn
 
     app = main_module.app
+    probe_log = os.environ.get("FTA_E2E_PROBE_LOG")
+    if probe_log:  # PR-C's check with the user's browser only
+        app = ProbeEndpoint(app, pathlib.Path(probe_log), os.environ.get("FTA_E2E_PROBE_RUN", ""))
+    static_log = os.environ.get("FTA_E2E_STATIC_LOG")
+    if static_log:  # PR-C's tests only
+        app = RequestLog(app, pathlib.Path(static_log))
     access_log = os.environ.get("FTA_E2E_ACCESS_LOG")
     if access_log:  # the diagnosis only
         app = AccessLog(app, pathlib.Path(access_log))
