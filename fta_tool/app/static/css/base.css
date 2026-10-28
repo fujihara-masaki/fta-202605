@@ -1,8 +1,8 @@
 /* ===== Base: shared chrome for every screen =====
  * Loaded on all screens. Rules for the shared chrome (skip link, header) use
- * their own class names and set their font explicitly, so the screens that
- * have not been migrated yet (still styled by style.css) keep their look.
- * Element-level resets apply only to migrated screens (body.ui-page).
+ * their own class names and set their font explicitly. Element-level resets
+ * apply to the redesigned screens (body.ui-page: every screen since PR-6;
+ * the legacy style.css was removed in PR-7).
  */
 
 .visually-hidden {

@@ -73,9 +73,18 @@ def folder_client(directory: pathlib.Path, cls=RevalidatedStaticFiles) -> TestCl
 
 # ----- H-01 ---------------------------------------------------------------------
 
+# The type of each kind of static file. PR-7 removed style.css (7 → 6
+# stylesheets), added js/pages/edit/nav-drawer.js (31 → 32 modules) and the
+# screens' icon favicon.svg: 39 files, and the icon is revalidated as the
+# rest (H-01, H-02).
+CONTENT_TYPES = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+                 ".svg": "image/svg+xml"}
+
+
 def test_H_01_every_static_file_first_fetch(client):
-    assert len(ASSETS) == 38, ASSETS
-    assert sum(a.endswith(".css") for a in ASSETS) == 7 and sum(a.endswith(".js") for a in ASSETS) == 31
+    assert len(ASSETS) == 39, ASSETS
+    assert sum(a.endswith(".css") for a in ASSETS) == 6 and sum(a.endswith(".js") for a in ASSETS) == 32
+    assert [a for a in ASSETS if a.endswith(".svg")] == ["favicon.svg"]
     for rel in ASSETS:
         data = (STATIC_DIR / rel).read_bytes()
         response = client.get(f"/static/{rel}")
@@ -84,8 +93,7 @@ def test_H_01_every_static_file_first_fetch(client):
         assert STRONG_ETAG.match(response.headers["etag"]), rel
         assert response.headers["etag"] == sha_etag(data) == content_etag(STATIC_DIR / rel), rel
         assert response.headers["last-modified"] == formatdate((STATIC_DIR / rel).stat().st_mtime, usegmt=True)
-        expected_type = "text/css; charset=utf-8" if rel.endswith(".css") else "text/javascript; charset=utf-8"
-        assert response.headers["content-type"] == expected_type, rel
+        assert response.headers["content-type"] == CONTENT_TYPES[pathlib.PurePosixPath(rel).suffix], rel
         assert response.headers["content-length"] == str(len(data))
         assert response.content == data, rel
 

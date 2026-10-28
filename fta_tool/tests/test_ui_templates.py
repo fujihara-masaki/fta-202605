@@ -11,9 +11,10 @@ T-03  New analysis: the form posts the same field names (ids kept), the
       sample file the form has no sample panel and still creates.
 
 Also covered: the grouped factor count (crud.count_nodes_by_analysis), the
-shared frame (skip link, live regions, aria-current), which screens still
-load the legacy style.css (app.js is gone since PR-6), and the JavaScript MIME type that ES
-modules need.
+shared frame (skip link, live regions, aria-current, the icon every screen
+declares), that no screen loads the legacy app.js (gone since PR-6) or
+style.css (gone since PR-7), and the JavaScript MIME type that ES modules
+need.
 """
 
 from __future__ import annotations
@@ -475,11 +476,11 @@ def test_count_nodes_by_analysis_uses_one_grouped_result(client):
 def test_shared_frame_on_every_screen(client):
     analysis_id = _create(client, "共通の枠")
     expectations = {
-        "/": ("分析一覧", False),
-        "/analyses/new": ("新規作成", False),  # migrated in PR-2
-        f"/analyses/{analysis_id}": (None, True),
+        "/": "分析一覧",
+        "/analyses/new": "新規作成",  # migrated in PR-2
+        f"/analyses/{analysis_id}": None,
     }
-    for path, (current, legacy) in expectations.items():
+    for path, current in expectations.items():
         root = parse(client.get(path).text)
         skip = root.find("a", **{"class": "skip-link"})
         assert skip.attrs["href"] == "#main" and root.find("main", id="main")
@@ -493,11 +494,15 @@ def test_shared_frame_on_every_screen(client):
         assert "/static/js/common/boot.js" in scripts
         assert "/static/css/tokens.css" in styles
         # The legacy app.js was removed in PR-6 (generation moved to
-        # js/pages/edit); the edit screen still loads the legacy stylesheet
-        # (its unused rules go in PR-7). No page renders the old toast (判断4).
+        # js/pages/edit), the legacy style.css in PR-7. No page renders the
+        # old toast (判断4).
         assert "/static/app.js" not in scripts, path
-        assert ("/static/style.css" in styles) is legacy, path
+        assert "/static/style.css" not in styles, path
         assert not root.find_all(id="toast"), path
+        # PR-7: the icon, declared on every screen (so the browser never asks
+        # for /favicon.ico) and served from /static.
+        icons = [(link.attrs.get("href"), link.attrs.get("type")) for link in root.find_all("link", rel="icon")]
+        assert icons == [("/static/favicon.svg", "image/svg+xml")], path
 
 
 def test_javascript_is_served_with_a_javascript_mime_type(client):
@@ -644,7 +649,7 @@ def test_T04_edit_regions_steps_tabs_and_moved_inputs(client):
     sources = [s.attrs["src"] for s in scripts if "src" in s.attrs]
     assert "/static/js/pages/edit.js" in sources and "/static/app.js" not in sources
     styles = [s.attrs["href"] for s in root.find_all("link", rel="stylesheet")]
-    assert "/static/css/edit.css" in styles and "/static/style.css" in styles
+    assert "/static/css/edit.css" in styles and "/static/style.css" not in styles
     assert "ui-page" in root.find("body").attrs["class"].split()
 
 

@@ -29,12 +29,16 @@
 //   log and its badges kept per analysis in sessionStorage
 //   (edit/genlog.js), and the details of the factor shown read again after
 //   it (edit/inspector.js).
+// - PR-7: below 1280px the structure navigation is folded and shown by its
+//   button over the work area (edit/nav-drawer.js); choosing a factor in it
+//   closes it.
 // Text from the user or the LLM is only ever inserted as text.
 
 import { el } from '../common/dom.js';
 import { notify } from '../common/notify.js';
 import { requestSwitch } from '../common/unsaved.js';
 import { installBridge } from './edit/bridge.js';
+import { createNavDrawer } from './edit/nav-drawer.js';
 import { applyFilter, clearFilter, currentFilter, initFilter } from './edit/filter.js';
 import {
   currentFactorSource,
@@ -121,6 +125,7 @@ function start(root, model) {
     gone: false,
     writes: createWriteTracker(),
     centerScroll: { work: 0, tree: 0, table: 0, ...(savedScroll && savedScroll.center) },
+    navDrawer: createNavDrawer(root),
   };
 
   app.saveSession = () => {
@@ -177,6 +182,7 @@ function start(root, model) {
     writeHash(app.state);
     if (!same || focusWarning) renderInspector(app, { focusWarning });
     revealSelection(app, source);
+    if (source === 'nav') app.navDrawer.afterSelect();
   };
 
   // Every R-01 route (plan 5.1): a switch to another factor or to the top

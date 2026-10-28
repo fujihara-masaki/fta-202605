@@ -8,9 +8,8 @@
 * page: pytest-playwright's page, run at the plan's base viewports
   (1280x800 and 1440x900; plan 8.0). A console error, an uncaught page error
   or a request to another origin fails the test (E-X01 is checked on every
-  test as well as in its own test). The one exception is the browser's own
-  404 for /favicon.ico of the test's server, matched with the browser's
-  records (tests/e2e/support.py); each one is listed in the report.
+  test as well as in its own test). There is no exception: the favicon 404
+  let through until PR-7 is gone with the app's icon (tests/e2e/support.py).
 * browser: skipped with an explanation when the browser cannot be started
   (a failure in the required run and the preflight, see
   tests/e2e/acceptance.py). With --browser-channel (chrome, msedge) Playwright
@@ -37,7 +36,9 @@ from tests.e2e.support import (
     start_server,
 )
 
-VIEWPORTS = [(1280, 800), (1440, 900)]
+# The base sizes (plan 8.0); --e2e-viewport-set pr7 adds PR-7's to every
+# test that does not choose its own (tests/conftest.py, acceptance.py).
+VIEWPORTS = [case.size for case in acceptance.BASE_CASES]
 
 WATCHER_KEY = pytest.StashKey[PageWatcher]()
 CHECKED_KEY = pytest.StashKey[tuple]()  # how far the page was checked at the end of the test
@@ -151,20 +152,34 @@ def output_path(pytestconfig, request) -> str:
     return str(output_dir / name)
 
 
-@pytest.fixture(params=VIEWPORTS, ids=[f"{w}x{h}" for w, h in VIEWPORTS])
-def viewport(request):
-    width, height = request.param
-    label = f"{width}×{height}"
-    run = acceptance.state(request.config)
-    if label not in run.viewports:
-        run.viewports.append(label)
-    return {"width": width, "height": height}
+@pytest.fixture
+def display_case(request) -> acceptance.DisplayCase:
+    """The display area of the test (an acceptance.DisplayCase): given by the
+    test's own parametrize (a (width, height) or a DisplayCase) or by
+    --e2e-viewport-set (tests/conftest.py pytest_generate_tests)."""
+    param = request.node.callspec.params.get("viewport") if hasattr(request.node, "callspec") else None
+    if isinstance(param, acceptance.DisplayCase):
+        return param
+    width, height = param if param else VIEWPORTS[0]
+    return acceptance.DisplayCase(f"{width}x{height}", width, height)
 
 
 @pytest.fixture
-def browser_context_args(browser_context_args, viewport, e2e_server):
+def viewport(request, display_case):
+    label = f"{display_case.width}×{display_case.height}" + (
+        f"（DPR {acceptance.css_px(display_case.dpr)}）" if display_case.dpr else "")
+    run = acceptance.state(request.config)
+    if label not in run.viewports:
+        run.viewports.append(label)
+    return {"width": display_case.width, "height": display_case.height}
+
+
+@pytest.fixture
+def browser_context_args(browser_context_args, viewport, display_case, e2e_server):
+    extra = {"device_scale_factor": display_case.dpr} if display_case.dpr else {}
     return {
         **browser_context_args,
+        **extra,
         "viewport": viewport,
         "locale": "ja-JP",
         "timezone_id": "Asia/Tokyo",
@@ -211,16 +226,6 @@ def pytest_runtest_call(item):
         item.stash[CHECKED_KEY] = checked
         assert not problems, " / ".join(problems)
     return result
-
-
-@pytest.hookimpl(wrapper=True)
-def pytest_runtest_teardown(item, nextitem):
-    """After every fixture's check: the known favicon 404s the test's pages
-    let through (tests/e2e/support.py), each once, go to the report."""
-    try:
-        return (yield)
-    finally:
-        acceptance.add_known_console(item, PageWatcher.take_made())
 
 
 @pytest.fixture

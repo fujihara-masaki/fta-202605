@@ -63,6 +63,7 @@
   --shadow-lg: 0 12px 32px rgba(20, 35, 50, 0.24);
 
   /* Layers (dialogs use the browser's top layer instead) */
+  --z-drawer: 50; /* the folded structure navigation of the edit page */
   --z-header: 100;
   --z-menu: 150;
   --z-toast: 400;

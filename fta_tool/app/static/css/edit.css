@@ -1,14 +1,25 @@
-/* ===== Analysis edit (B), PR-3 skeleton =====
+/* ===== Analysis edit (B) =====
  * Three panes below the header and the work steps: structure navigation,
  * work area (tabs, filter, the chosen view) and inspector, each scrolling
- * on its own. PR-3 builds for display areas 1280px wide and wider (J-20,
- * provisional); the widths below that, zoom levels and low display areas are
- * finished in PR-7. The user's display area was measured as
- * document.documentElement.clientWidth × clientHeight: 1905×945 CSS px
- * (Chrome) and 1912×914 (Edge) at 100 % (plan 5.9.4); the pane widths scale
- * with the width between those and 1280px.
- * Parts come from components.css; the legacy dialogs, generation badges and
- * header parts of app.js keep their rules in style.css.
+ * on its own. Widths and heights are those of the display area the browser
+ * lays out (CSS px, document.documentElement.clientWidth × clientHeight;
+ * J-20, plan 5.9.4, finished in PR-7):
+ *   1280px and wider   the three panes side by side;
+ *   1024〜1279px       the structure navigation is folded: the button
+ *                      「構造を表示」 at the start of the header shows it over
+ *                      the left of the work area (js/pages/edit/
+ *                      nav-drawer.js); the work area and the inspector stay;
+ *   below 1024px       the work area's content keeps the width it has at
+ *                      1024px and scrolls sideways inside the work area; the
+ *                      inspector (its 保存・取消 at its bottom), the header and
+ *                      the dialogs stay within the display area, so they are
+ *                      reached without scrolling sideways.
+ * Low display areas (about 500px high) keep the 保存・取消 bar at the bottom
+ * of the inspector (sticky) and the dialogs within the display area (their
+ * body scrolls). The user's display areas measured on 2026-10-28 (plan
+ * 5.9.4): Chrome 1920×945・1536×756・1280×630, Edge 1912×914・1530×731・
+ * 1275×609 at zoom 100・125・150 % — Edge at 150 % is below 1280px.
+ * Parts come from components.css.
  */
 
 .edit-page [hidden] {
@@ -19,7 +30,6 @@
   display: flex;
   flex-direction: column;
   height: calc(100vh - var(--header-height));
-  min-width: 1100px;
   overflow: hidden;
 }
 
@@ -78,6 +88,17 @@
 .edit-title-editor__error {
   grid-column: 1 / -1;
   margin: 0;
+}
+/* The AI provider in use (moved from the legacy style.css in PR-7). */
+.ai-badge {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--color-primary);
+  border-radius: 999px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
 }
 
 /* ----- Work steps ①〜⑤ ----- */
@@ -152,6 +173,7 @@
 
 /* ----- Three panes ----- */
 .edit-layout {
+  position: relative;
   display: grid;
   flex: 1;
   grid-template-columns: clamp(240px, 17vw, 320px) minmax(0, 1fr) clamp(340px, 23vw, 440px);
@@ -818,28 +840,6 @@
   font-weight: 700;
 }
 
-/* ----- Notifications while a legacy dialog of app.js is open -----
-   The dialogs (detail 560px wide, manual add 400px; replaced in PR-5・PR-6)
-   are centred and keep their buttons at the bottom, where the notifications
-   appear, and errors stay until they are closed (J-24). While a dialog is
-   open the notifications go to the top right, beside the dialog, so they
-   cover no part of it (×, 保存・追加, キャンセル included) however many are
-   stacked; when it closes they are back at the bottom centre. The width
-   keeps a gap beside the widest dialog from 1100px (the page's minimum
-   width) up; narrower display areas are PR-7.
-   Since PR-5 the edit page has no legacy dialog (.modal) any more, so this
-   rule no longer applies; it is kept, with the layout boundaries it gives
-   (tests/e2e/support.py LAYOUT_BOUNDARIES), until the old CSS is removed
-   in PR-7. */
-.edit-body:has(.modal:not(.hidden)) .ui-toast-stack {
-  top: var(--space-5);
-  right: var(--space-4);
-  bottom: auto;
-  left: auto;
-  width: clamp(220px, calc((100vw - 560px) / 2 - 2 * var(--space-4)), 360px);
-  transform: none;
-}
-
 /* ----- Inspector: the factor's editor (PR-5) -----
    Seven fields saved with 保存; the 保存・取消 bar stays at the bottom of the
    inspector's scroll area while the editor is in view (position: sticky),
@@ -1059,4 +1059,54 @@
 a[aria-disabled="true"][data-gen-locked] {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+/* ----- Display areas narrower than 1280px (PR-7, J-20) ----- */
+/* The button of the header that shows the folded structure navigation:
+   only below 1280px. */
+.edit-nav-toggle {
+  display: none;
+  flex: none;
+}
+@media (width < 1280px) {
+  .edit-layout {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+  .edit-nav-toggle {
+    display: inline-flex;
+  }
+  /* Folded: shown over the left of the work area while it is open. The
+     header and the work steps stay above it, the notifications and the
+     dialogs over it. */
+  .edit-nav {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: var(--z-drawer);
+    width: 320px;
+    border-right: 1px solid var(--color-border-strong);
+    box-shadow: var(--shadow-lg);
+  }
+  .edit-nav:not([data-open]) {
+    display: none;
+  }
+  /* Room below the last factors, above the notifications (as the work area). */
+  .edit-nav .edit-pane__scroll {
+    padding-bottom: 128px;
+  }
+  /* The notifications go to the bottom left, over the work area only, so
+     they never cover the inspector (its 保存・取消 at the bottom). */
+  .edit-body .ui-toast-stack {
+    left: var(--space-4);
+    width: min(560px, calc(100vw - 340px - 2 * var(--space-4)));
+    transform: none;
+  }
+}
+/* Below 1024px the work area keeps its content as wide as at 1024px (1024px
+   less the inspector) and scrolls it sideways itself. */
+@media (width < 1024px) {
+  .edit-center .edit-view {
+    min-width: 684px;
+  }
 }

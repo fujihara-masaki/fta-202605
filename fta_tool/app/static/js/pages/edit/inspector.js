@@ -117,7 +117,7 @@ function actionButton(app, label, attrs, { blocked = '', generate = false, varia
   }, label);
 }
 
-function childList(app, parent, items) {
+function childList(items) {
   if (!items.length) return el('p', { class: 'edit-inspector__status' }, '子要因はありません。');
   return el('ul', { class: 'edit-children' }, items.map((child) => el('li', {},
     chip(child),
@@ -139,7 +139,7 @@ function topContent(app) {
       el('button', { type: 'button', class: 'ui-btn ui-btn--sm', 'data-action': 'step', 'data-step': '1' },
         '「① 頂上事象・参考情報」を開く')),
     section(`一次要因（${roots.length}件）`, [
-      childList(app, null, roots),
+      childList(roots),
       el('div', { class: 'edit-inspector__actions' },
         roots.length
           ? actionButton(app, '一次要因を追加生成', { 'data-action': 'generate-additional', 'data-level': '1' }, { generate: true })
@@ -176,7 +176,7 @@ function detailsSection(current) {
 // ancestor (J-25, 判断3).
 function childrenSection(app, node) {
   const items = childrenOf(app.model, node);
-  const content = [childList(app, node, items)];
+  const content = [childList(items)];
   if (node.level === 1 || node.level === 2) {
     const reason = node.canParent ? '' : node.parentReason;
     const describedBy = reason ? 'inspector-children-reason' : null;
@@ -333,7 +333,7 @@ function onLoaded(app, current, focusWarning) {
   }
 }
 
-export function renderInspector(app, { focusWarning = false, focusTitle = false } = {}) {
+export function renderInspector(app, { focusWarning = false } = {}) {
   const root = body();
   if (!root) return;
   const captured = captureFocus();
@@ -391,10 +391,6 @@ export function renderInspector(app, { focusWarning = false, focusTitle = false 
         button.disabled = true;
       });
     if (editor) editor.render();
-  }
-  if (focusTitle) {
-    const title = root.querySelector('[data-inspector-title]');
-    if (title) title.focus({ preventScroll: false });
   }
 }
 

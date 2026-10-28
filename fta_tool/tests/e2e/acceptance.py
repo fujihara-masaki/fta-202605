@@ -21,8 +21,8 @@ environment, the commit, the browser and the viewports (``--e2e-report``
 writes it as Markdown for the pull request); also when the run started and
 ended, the browser channel asked for and what was actually started
 (tests/e2e/conftest.py), the code-side .env, the test server and where the
-evidence of failures goes. Every console error let through as the known
-favicon 404 (tests/e2e/support.py) is listed with its test, URL and message.
+evidence of failures goes. No console error is let through (the favicon
+404 excepted until PR-7 is gone with the app's icon, tests/e2e/support.py).
 For each failed test the files actually left in its evidence folder are
 listed (pytest-playwright's options say only what it tries to keep), with
 the page taken by tests/e2e/conftest.py or the reason it could not be taken.
@@ -82,7 +82,7 @@ REQUIRED_IDS: dict[str, str] = {
     "E-L06": "分析の削除ダイアログ：件数、キャンセル・Esc、確定、失敗時の表示",
     "E-L07": "出力メニュー：キーボード操作、URL と download、改名中でも離脱確認が出ない",
     "E-L08": "空の一覧",
-    "E-X01": "全画面で、外部へのリクエストがない",
+    "E-X01": "全画面で、外部へのリクエストがない。PR-7：全画面がアプリの favicon（/static/favicon.svg）を宣言し、同じサーバーから 200 で取得でき、/favicon.ico を要求しない（favicon の 404 の既知の例外は廃止）",
     "E-N01": "新規作成：2列の配置、4項目の保存（現行と同じ形）と編集画面への移動",
     "E-N02": "新規作成：タイトルの検査（空白のみ・256文字）、エラーとフォーカス、送信しない",
     "E-N03": "新規作成：サンプルのプレビュー・転記・未保存表示、demo_points の保存、タイトルは転記しない",
@@ -145,6 +145,15 @@ REQUIRED_IDS: dict[str, str] = {
     "C-05": "静的ファイルのキャッシュ（PR-C）：検出力。従来の配信と案A（no-cache だけ、同じ秒の更新）では、同じ手順が古い版の使用を検出する",
     "C-06": "静的ファイルのキャッシュ（PR-C）：同じ秒の更新と古い時刻への置換も、各操作で新しい版を取得・適用する",
     "C-07": "静的ファイルのキャッシュ（PR-C）：CSS の更新の後、通常の画面遷移で開いた編集画面で、生成中の評価のボタンが淡色・禁止のカーソルになり、押しても変わらず、終了後に戻る",
+    # PR-7 (plan 8.7, 8.9): the display areas, the keyboard and the fonts.
+    # Sizes given to the browser (and a devicePixelRatio), never a zoom level.
+    "E-K01": "仕上げ（PR-7）：キーボードだけ（Tab・Shift+Tab・Enter・Space・矢印・Esc）で付録Dの代表シナリオ（作成、未保存の頂上事象からの一次生成と自動保存、評価と二次生成、インスペクタの保存、手動追加、削除、出力メニュー、未保存の離脱の3択、折りたたんだ構造ナビ）を完了し、生成中の操作制限をキーボードで回避できない",
+    "E-K02": "仕上げ（PR-7）：ダイアログ（要因の切替・画面の移動の未保存確認、要因の削除、手動追加、一覧の削除、新規作成の離脱確認）の初期フォーカス、Tab・Shift+Tab で背後の画面へ出ない、Esc は取消、閉じた後の戻り先（消えていれば近くの要素）。折りたたんだ構造ナビの Esc と戻り先",
+    "E-K03": "仕上げ（PR-7）：読み上げ領域（role=status polite・role=alert assertive）に、生成の開始・親ごとの結果・要約、生成の失敗、保存の失敗が書かれる（DOM の確認。スクリーンリーダーの読み上げは手動）",
+    "E-V01": "仕上げ（PR-7）：想定寸法と 2026-10-28 の実測値の寸法（DPR を含む）で、1280px 以上は3ペイン・未満は構造ナビの折りたたみ（開閉ボタンで重ねて表示）、主要な操作（作業ステップ・タブ・絞り込み・作業リスト・評価・保存・取消・削除・ヘッダー・操作バー・生成中の状態表示・生成ログ・通知・保存失敗の表示・各ダイアログ、一覧・新規作成）が表示領域の中に見え、中心と4点の最前面がその要素（通知などに覆われない）。実ブラウザの拡大・表示倍率の確認とは別に記録",
+    "E-V02": "仕上げ（PR-7）：幅 1024px 以上で、ページ全体の横スクロールが出ない（構造ナビを開いた状態・生成中・ダイアログ表示中を含む）。構造ナビ・インスペクタは横にスクロールせず、1024px 未満では作業エリアだけが横にスクロールする",
+    "E-V03": "仕上げ（PR-7）：表示領域 900×600 と 1093×500 で、インスペクタの保存・取消とダイアログのボタンに、ページを横スクロールせずに届く（保存・取消は入力中に追加のスクロールなしで見える）",
+    "E-F01": "仕上げ（PR-7）：BIZ UDPGothic を除いた代替フォント（Windows の代替・sans-serif・serif）で、一覧・新規作成・編集画面・ダイアログの見出し・ボタンが欠けず（省略記号の作業ステップ名を除く）、操作の並びが重ならず、主要な操作に届く。描画に使われたフォントを記録",
 }
 
 OUTCOME_LABELS = {
@@ -154,6 +163,12 @@ OUTCOME_LABELS = {
     "not_run": "未実施",
 }
 
+# The console check (tests/e2e/support.py PageWatcher): no exception since
+# PR-7 (the favicon 404 let through from 2026-10-03 is gone with the icon).
+CONSOLE_EXCEPTION_ROW = "コンソールのエラーの例外"
+CONSOLE_EXCEPTION_TEXT = ("なし（PR-7 で favicon を実装し、favicon の 404 の既知の例外を廃止。"
+                          "すべてのコンソールのエラー・ページの例外・外部への要求を失敗にする）")
+
 # PR3-LAYOUT's judgement of the measured display area (tests/e2e/support.py).
 VIEWPORT_EXACT = "一致"
 VIEWPORT_TOLERATED = "許容した差"
@@ -162,6 +177,62 @@ VIEWPORT_VERDICTS = (VIEWPORT_EXACT, VIEWPORT_TOLERATED, VIEWPORT_REFUSED)
 # The cases whose difference may be tolerated, with the CSS px allowed per
 # axis (the user's instruction of 2026-10-06): chrome-1905x945 only.
 VIEWPORT_ALLOWED = {"chrome-1905x945": 1}
+
+
+@dataclass(frozen=True)
+class DisplayCase:
+    """A display area the tests ask the browser for (CSS px) and the
+    devicePixelRatio emulated with it (None: Playwright's default, 1). It is
+    the size of a zoom level or display scale, never that zoom level: the
+    browser is not zoomed (plan 5.9.4)."""
+
+    label: str
+    width: int
+    height: int
+    dpr: Optional[float] = None
+    origin: str = ""
+
+    @property
+    def size(self) -> tuple[int, int]:
+        return (self.width, self.height)
+
+
+# The base sizes of every test (plan 8.0).
+BASE_CASES = (
+    DisplayCase("1280x800", 1280, 800, origin="基本寸法（計画 第8.0節）"),
+    DisplayCase("1440x900", 1440, 900, origin="基本寸法（計画 第8.0節）"),
+)
+# PR-7 (plan 5.9.4, 8.7): the assumed sizes of the plan, then the user's
+# display areas measured on 2026-10-28 (Windows 11, 1920x1080, maximized,
+# DevTools in another window; the Windows display scale not confirmed),
+# with their devicePixelRatio. Edge at 150 % (1275px) is below the 1280px
+# boundary, Chrome at 150 % (1280px) on it.
+PR7_CASES = (
+    DisplayCase("1920x1080", 1920, 1080, origin="想定寸法：1920×1080・倍率100%"),
+    DisplayCase("1536x730", 1536, 730, origin="想定寸法：1920×1080・125%"),
+    DisplayCase("1280x620", 1280, 620, origin="想定寸法：1920×1080・150%"),
+    DisplayCase("1366x650", 1366, 650, origin="想定寸法：1366×768・100%"),
+    DisplayCase("1093x500", 1093, 500, origin="想定寸法：1366×768・125%"),
+    DisplayCase("1024x683", 1024, 683, origin="想定寸法"),
+    DisplayCase("900x600", 900, 600, origin="想定寸法（1024px 未満）"),
+    DisplayCase("chrome100-1920x945", 1920, 945, 1.0, origin="実測値 2026-10-28：Chrome 拡大100%"),
+    DisplayCase("chrome125-1536x756", 1536, 756, 1.25, origin="実測値 2026-10-28：Chrome 拡大125%"),
+    DisplayCase("chrome150-1280x630", 1280, 630, 1.5, origin="実測値 2026-10-28：Chrome 拡大150%"),
+    DisplayCase("edge125-1530x731", 1530, 731, 1.25, origin="実測値 2026-10-28：Edge 拡大125%"),
+    DisplayCase("edge150-1275x609", 1275, 609, 1.5, origin="実測値 2026-10-28：Edge 拡大150%"),
+)
+# --e2e-viewport-set: "base" runs each test at BASE_CASES (the default);
+# "pr7" runs every test that does not choose its own sizes at BASE_CASES and
+# PR7_CASES (plan 8.7: すべての実ブラウザのテストを 1280×800・1440×900 と
+# PR-7 で追加したサイズで実行する).
+VIEWPORT_SETS = {"base": BASE_CASES, "pr7": BASE_CASES + PR7_CASES}
+
+
+def viewport_set(config: pytest.Config) -> str:
+    value = config.getoption("e2e_viewport_set", default=None) or "base"
+    if value not in VIEWPORT_SETS:
+        raise pytest.UsageError(f"--e2e-viewport-set は {'・'.join(VIEWPORT_SETS)} のどれかです（指定：{value}）")
+    return value
 
 
 @dataclass
@@ -195,10 +266,6 @@ class RunState:
     duration_seconds: Optional[float] = None
     id_results: dict[str, dict] = field(default_factory=dict)
     verdict: Optional[str] = None
-    # The known favicon 404s let through (test, URL, message, the response),
-    # and the pages whose browser records (CDP) could not be read.
-    known_console: list[dict] = field(default_factory=list)
-    cdp_unavailable: list[str] = field(default_factory=list)
     # Per test: where pytest-playwright keeps its screenshot and trace
     # ("folder") and the page of a failed test taken by the page fixture
     # ("screenshot": the file, or why there is none).
@@ -206,6 +273,12 @@ class RunState:
     # PR3-LAYOUT, per test: the requested display area, the browser's
     # measurements before and after the app was shown and the judgement.
     viewport_checks: dict[str, dict] = field(default_factory=dict)
+    # PR-7 (E-V01〜E-V03, E-F01): per test, the display area asked for (and
+    # the devicePixelRatio emulated) with what the browser measured and the
+    # layout found; the screenshots kept for the visual review.
+    display_records: dict[str, dict] = field(default_factory=dict)
+    screenshots: list[dict] = field(default_factory=list)
+    viewport_set: str = "base"
 
 
 STATE_KEY = pytest.StashKey[RunState]()
@@ -234,6 +307,7 @@ def configure(config: pytest.Config) -> None:
         env_label=env_label,
         started=_dt.datetime.now().astimezone(),
         started_clock=time.monotonic(),
+        viewport_set=viewport_set(config),
     )
 
 
@@ -370,17 +444,6 @@ def on_report(item: pytest.Item, report: pytest.TestReport) -> None:
             record.reason = "／".join(notes)
 
 
-def add_known_console(item: pytest.Item, watchers: list) -> None:
-    """What the pages of a test let through as the known favicon 404, each
-    console error once (PageWatcher.known holds one entry per message)."""
-    run = state(item.config)
-    for watcher in watchers:
-        for index in sorted(watcher.known):
-            run.known_console.append({"nodeid": item.nodeid, **watcher.known[index]})
-        if watcher.cdp_error:
-            run.cdp_unavailable.append(f"{item.nodeid}：{watcher.cdp_error}")
-
-
 def add_evidence_folder(item: pytest.Item, folder) -> None:
     state(item.config).evidence.setdefault(item.nodeid, {})["folder"] = str(folder)
 
@@ -391,6 +454,23 @@ def add_failure_screenshot(item: pytest.Item, result: dict) -> None:
 
 def record_viewport(item: pytest.Item, **values) -> None:
     state(item.config).viewport_checks.setdefault(item.nodeid, {}).update(values)
+
+
+def record_display(item: pytest.Item, **values) -> None:
+    state(item.config).display_records.setdefault(item.nodeid, {}).update(values)
+
+
+def add_screenshot(item: pytest.Item, name: str, result: dict) -> None:
+    state(item.config).screenshots.append({"nodeid": item.nodeid, "name": name, **result})
+
+
+def screens_dir(config: pytest.Config) -> Optional[pathlib.Path]:
+    """--e2e-screens: where the screenshots for the visual review go (none: not kept)."""
+    value = config.getoption("e2e_screens", default=None)
+    if not value:
+        return None
+    path = pathlib.Path(value)
+    return path if path.is_absolute() else pathlib.Path(config.invocation_params.dir) / path
 
 
 def css_px(value) -> str:
@@ -659,9 +739,10 @@ def render_markdown(config: pytest.Config, run: RunState) -> str:
         f"| 必須受入検証として実行 | {_kind_of_run(run)} |",
         *_environment_rows(config, run),
         f"| 画面寸法（CSS ピクセル） | {'、'.join(run.viewports) or '-'} |",
+        f"| 寸法の組（--e2e-viewport-set） | {_viewport_set_text(run)} |",
         *_viewport_summary_rows(run),
         f"| 結果（テスト単位） | 成功 {counts['passed']}・失敗 {counts['failed']}・スキップ {counts['skipped']}・未実施 {counts['not_run']} |",
-        f"| 既知の例外（favicon の 404） | {len(run.known_console)} 件（コンソールの確認から除いたもの。下の「既知の例外として除いたコンソールのエラー」） |",
+        f"| {CONSOLE_EXCEPTION_ROW} | {CONSOLE_EXCEPTION_TEXT} |",
         f"| 判定 | {_verdict_text(run)} |",
         "",
         "### 受入項目ごとの結果" + ("（準備確認で実行した項目だけ）" if run.preflight else ""),
@@ -682,7 +763,8 @@ def render_markdown(config: pytest.Config, run: RunState) -> str:
     lines += ["", *_evidence_lines(config, run)]
     if run.viewport_checks:
         lines += ["", *_viewport_lines(run)]
-    lines += ["", *_known_console_lines(run)]
+    if run.display_records or run.screenshots:
+        lines += ["", *_display_lines(run)]
     if not run.playwright_available:
         lines += ["", f"注：{run.playwright_reason}"]
     lines.append("")
@@ -740,6 +822,44 @@ def _viewport_summary_rows(run: RunState) -> list[str]:
     return [f"| 画面寸法の要求と実測（PR3-LAYOUT） | {text}（下の「画面寸法の要求と実測（PR3-LAYOUT）」） |"]
 
 
+def _viewport_set_text(run: RunState) -> str:
+    if run.viewport_set == "pr7":
+        return ("pr7：寸法を自分で選ばないテストを、基本寸法と PR-7 の寸法（想定寸法・2026-10-28 の実測値）のすべてで実行"
+                "（計画 第8.7節の「すべての実ブラウザのテストを…PR-7 で追加したサイズで実行する」）")
+    return ("base：寸法を自分で選ばないテストは基本寸法（1280×800・1440×900）だけ。PR-7 の寸法は E-V01〜E-V03・E-F01 などが"
+            "自分で選んで実行。計画 第8.7節の全テストの全寸法での実行は、この記録では未実施（--e2e-viewport-set pr7）")
+
+
+def _display_lines(run: RunState) -> list[str]:
+    lines = [
+        "### 表示領域の記録（PR-7：E-V01〜E-V03・E-F01）",
+        "",
+        "Playwright で表示領域の寸法（と devicePixelRatio）を指定した自動テストの記録です。**ブラウザの拡大・Windows の表示倍率を"
+        "実際に変えた確認ではありません**（実機の確認は別に記録します。manual-check-pr7.md）。実測は "
+        "`document.documentElement.clientWidth`×`clientHeight` と `window.devicePixelRatio` です。",
+        "",
+    ]
+    if run.display_records:
+        lines += ["| テスト | 寸法の出所 | 要求（CSS px・DPR） | 実測 | レイアウト | 備考 |", "|---|---|---|---|---|---|"]
+        for nodeid, record in run.display_records.items():
+            requested = record.get("requested") or ("-", "-")
+            dpr = record.get("dpr")
+            asked = f"{requested[0]}×{requested[1]}・DPR {css_px(dpr) if dpr else '1（既定）'}"
+            lines.append(f"| `{nodeid}` | {_cell(record.get('origin', '-'))} | {asked} "
+                         f"| {_cell(_measured(record.get('measured')))} | {_cell(record.get('layout', '-'))} "
+                         f"| {_cell(record.get('note', ''))} |")
+    lines += ["", "#### 目視のレビュー用の画面（自動判定の補完。受入の判定には含めない）", ""]
+    if not run.screenshots:
+        lines.append("保存した画面はありません（--e2e-screens を指定していない、または撮るテストを実行していない）。")
+    else:
+        lines += ["| テスト | 画面 | ファイル |", "|---|---|---|"]
+        for shot in run.screenshots:
+            where = (f"{shot['file']}（{shot.get('bytes')} バイト）" if shot.get("file")
+                     else f"保存できなかった：{shot.get('reason')}")
+            lines.append(f"| `{shot['nodeid']}` | {_cell(shot['name'])} | {_cell(where)} |")
+    return lines
+
+
 def _measured(values: Optional[dict]) -> str:
     if not values:
         return "測っていない"
@@ -795,30 +915,6 @@ def _viewport_lines(run: RunState) -> list[str]:
     return lines
 
 
-def _known_console_lines(run: RunState) -> list[str]:
-    lines = [
-        "### 既知の例外として除いたコンソールのエラー（favicon の 404）",
-        "",
-        "既知事項に対する検証条件の限定変更です（2026-10-03 の利用者の判断）。favicon の不具合を直したものではありません"
-        "（favicon の実装とこの除外の廃止は PR-7）。",
-        "",
-        "除くのは、テストのサーバーと同じオリジンの `/favicon.ico`（クエリ・別のパス・別のオリジンは対象外）に対するブラウザ自身の要求"
-        "（CDP の種類 Other）の 404 で、コンソールの文・発生元の URL・ブラウザの記録（CDP の Log と応答）が1件ずつ一致するものだけです。"
-        "ほかの 404、500、通信の失敗、発生元の分からないエラーは失敗のままです。",
-        "",
-        f"件数：{len(run.known_console)}",
-    ]
-    if run.known_console:
-        lines += ["", "| テスト | 発生元の URL | 元のメッセージ | 応答（CDP） |", "|---|---|---|---|"]
-        for event in run.known_console:
-            lines.append(f"| `{event['nodeid']}` | `{event['url']}` | {_cell(event['text'])} "
-                         f"| {event['status']}、種類 {event['type']}（要求 {event['request_id']}） |")
-    if run.cdp_unavailable:
-        lines += ["", f"注：ブラウザの記録（CDP）を読めなかったページが {len(run.cdp_unavailable)} 件あります"
-                      "（そのページでは何も除いていません）：" + "、".join(_cell(t) for t in run.cdp_unavailable)]
-    return lines
-
-
 def terminal_summary(terminalreporter, config: pytest.Config) -> None:
     run = config.stash.get(STATE_KEY, None)
     if run is None or run.verdict is None:
@@ -841,7 +937,7 @@ def terminal_summary(terminalreporter, config: pytest.Config) -> None:
                 + (f"（{launch['error']}）" if launch.get("error") else ""))
     if run.preflight_missing:
         tr.line("見つからない準備確認のテスト: " + "、".join(run.preflight_missing), red=True)
-    tr.line(f"既知の例外（favicon の 404。コンソールの確認から除いたもの）: {len(run.known_console)} 件")
+    tr.line(f"{CONSOLE_EXCEPTION_ROW}: {CONSOLE_EXCEPTION_TEXT}")
     if run.viewport_checks:
         counts = viewport_counts(run)
         tr.line("画面寸法の要求と実測（PR3-LAYOUT）: " + "・".join(f"{v} {n} 件" for v, n in counts.items())
@@ -849,6 +945,11 @@ def terminal_summary(terminalreporter, config: pytest.Config) -> None:
                           f" → 実測 {c['size'][0]}×{c['size'][1]}）"
                           for nodeid, c in run.viewport_checks.items()
                           if c.get("verdict") in (VIEWPORT_TOLERATED, VIEWPORT_REFUSED) and c.get("size")))
+    tr.line(f"寸法の組: {run.viewport_set}" + ("" if run.viewport_set == "pr7" else
+            "（全テストの PR-7 の全寸法での実行は未実施：--e2e-viewport-set pr7）"))
+    if run.screenshots:
+        saved = sum(1 for shot in run.screenshots if shot.get("file"))
+        tr.line(f"目視のレビュー用の画面: {saved} 件保存（{len(run.screenshots) - saved} 件は保存できず。e2e-report.md）")
     evidence = failure_evidence(run)
     if evidence:
         traces = sum(1 for e in evidence if any(_owner(n) == "pytest-playwright の trace" for n, _ in e["files"]))

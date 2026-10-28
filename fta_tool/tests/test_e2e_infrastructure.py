@@ -15,12 +15,10 @@ the check in Google Chrome of 2026-10-03, see tests/e2e/README.md).
 * the record of a failed test's evidence lists the files actually left
   (the options are only what pytest-playwright tries to keep) and says why
   the page could not be taken, which pytest-playwright does not;
-* the known favicon 404 (the user's decision of 2026-10-03, PR-7 removes
-  it): only the browser's own 404 for /favicon.ico of the test's server,
-  matched with the browser's records, is let through; the same message of
-  another resource, origin, status, type or without its origin or records
-  fails; another error next to it fails the test; each one is recorded
-  once; and the exception ends as soon as the app has an icon;
+* no console error is let through: the favicon 404 the user let through on
+  2026-10-03 is gone since PR-7 gave the app its icon; a 404 of
+  /favicon.ico, of the icon or of anything else fails, and the record says
+  that there is no exception;
 * PR3-LAYOUT's display area (the user's instruction of 2026-10-06): a
   difference from the requested size is tolerated only for chrome-1905x945,
   up to +1 CSS px on each axis, when the browser had it before the app and
@@ -286,56 +284,25 @@ def test_the_test_server_is_reached_without_a_proxy(tmp_path, monkeypatch):
         server.http.close()
 
 
-# ----- the known favicon 404 (the user's decision of 2026-10-03) ------------------
+# ----- no console error is let through (PR-7 removed the favicon exception) ------
 
 ORIGIN = "http://127.0.0.1:43210"
 FAVICON = ORIGIN + "/favicon.ico"
-REASONS = {404: "Not Found", 500: "Internal Server Error"}
-
-
-class FakeCDP:
-    def __init__(self):
-        self.handlers = {}
-
-    def on(self, name, handler):
-        self.handlers[name] = handler
-
-    def send(self, method, params=None):
-        return {}
 
 
 class FakeBrowserPage:
-    """What PageWatcher uses of a page; cdp None: no CDP session (not Chromium)."""
+    """What PageWatcher uses of a page."""
 
-    def __init__(self, cdp):
+    def __init__(self):
         self.handlers = {}
-        self.cdp = cdp
-        self.waits = 0
-        self.on_wait = None
-        self.context = types.SimpleNamespace(on=lambda name, handler: None, new_cdp_session=self._cdp_session)
-
-    def _cdp_session(self, page):
-        if self.cdp is None:
-            raise RuntimeError("CDP session is only available in Chromium")
-        return self.cdp
+        self.context = types.SimpleNamespace(on=lambda name, handler: None)
 
     def on(self, name, handler):
         self.handlers[name] = handler
 
-    def wait_for_timeout(self, milliseconds):
-        self.waits += 1
-        if self.on_wait:
-            self.on_wait()
 
-
-@pytest.fixture(autouse=True)
-def _no_watcher_left():
-    yield
-    support.PageWatcher.take_made()  # the fakes never reach a report of the E2E tests
-
-
-def watched(cdp: bool = True):
-    page = FakeBrowserPage(FakeCDP() if cdp else None)
+def watched():
+    page = FakeBrowserPage()
     return support.PageWatcher(page, ORIGIN), page
 
 
@@ -343,199 +310,51 @@ def console_error(page, text: str, url: str = "") -> None:
     page.handlers["console"](types.SimpleNamespace(type="error", text=text, location={"url": url} if url else {}))
 
 
-def failed_load(page, url: str, *, status: int = 404, kind: str = "Other", request_id: str = "7.1",
-                console: bool = True, log: bool = True, response: bool = True) -> None:
-    """What the browser reports for a resource that failed to load, as
-    Chromium 141 and Edge 154 did (the response, its log entry, the console)."""
-    text = f"Failed to load resource: the server responded with a status of {status} ({REASONS[status]})"
-    if response and page.cdp:
-        page.cdp.handlers["Network.responseReceived"](
-            {"requestId": request_id, "type": kind, "response": {"url": url, "status": status}})
-    if log and page.cdp:
-        page.cdp.handlers["Log.entryAdded"]({"entry": {
-            "source": "network", "level": "error", "text": text, "url": url, "networkRequestId": request_id}})
-    if console:
-        console_error(page, text, url)
-
-
-def test_the_browsers_own_favicon_404_of_the_tests_server_is_let_through():
-    watcher, page = watched()
-    failed_load(page, FAVICON)
-    assert watcher.problems() == []
-    assert watcher.known == {0: {"url": FAVICON, "text": support.FAVICON_404_TEXT, "status": 404,
-                                 "type": "Other", "request_id": "7.1"}}
-
-
 @pytest.mark.parametrize("path", [
-    "/static/js/pages/edit.js", "/static/css/edit.css", "/analyses/1/nodes", "/favicon.ico?v=1",
-    "/favicon.ico/", "/static/favicon.ico", "/Favicon.ico", "/favicon.png",
+    "/favicon.ico", "/static/favicon.svg", "/static/js/pages/edit.js", "/static/css/edit.css", "/analyses/1/nodes",
+    "/favicon.ico?v=1",
 ])
-def test_the_same_404_of_another_resource_fails(path):
+def test_a_404_fails_whatever_it_is_of(path):
     watcher, page = watched()
-    failed_load(page, ORIGIN + path)
-    assert watcher.problems() == [f"コンソールのエラー: ['{support.FAVICON_404_TEXT}（{ORIGIN}{path}）']"]
-    assert watcher.known == {}
-    assert watcher.responses == {}  # only the response of <origin>/favicon.ico is kept
+    console_error(page, support.NOT_FOUND_TEXT, ORIGIN + path)
+    assert watcher.problems() == [f"コンソールのエラー: ['{support.NOT_FOUND_TEXT}（{ORIGIN}{path}）']"]
 
 
-def test_another_message_of_the_favicon_fails():
-    watcher, page = watched()  # e.g. a 404 without its reason phrase: not the known message
-    text = "Failed to load resource: the server responded with a status of 404 ()"
-    page.cdp.handlers["Network.responseReceived"](
-        {"requestId": "7.1", "type": "Other", "response": {"url": FAVICON, "status": 404}})
-    page.cdp.handlers["Log.entryAdded"]({"entry": {"source": "network", "level": "error", "text": text,
-                                                   "url": FAVICON, "networkRequestId": "7.1"}})
-    console_error(page, text, FAVICON)
-    assert len(watcher.problems()) == 1 and watcher.known == {}
-
-
-@pytest.mark.parametrize("kind", ["Fetch", "Image", "Script", "XHR"])
-def test_the_favicon_loaded_by_the_page_fails(kind):
+def test_the_favicon_exception_is_gone():
+    """The names of the exception (FAVICON_404_TEXT, the CDP records of it)
+    are gone; the watcher has nothing that could let an error through."""
+    for name in ("FAVICON_404_TEXT", "FAVICON_PATH", "FAVICON_RESOURCE_TYPE"):
+        assert not hasattr(support, name), name
     watcher, page = watched()
-    failed_load(page, FAVICON, kind=kind)
-    assert len(watcher.problems()) == 1 and watcher.known == {}
+    for attribute in ("known", "network_log", "responses", "cdp_error"):
+        assert not hasattr(watcher, attribute), attribute
+    assert not hasattr(acceptance, "add_known_console")
 
 
-@pytest.mark.parametrize("url", ["http://127.0.0.1:43211/favicon.ico", "http://localhost:43210/favicon.ico",
-                                 "https://127.0.0.1:43210/favicon.ico", "http://example.com/favicon.ico"])
-def test_a_favicon_of_another_origin_fails(url):
+def test_only_a_tests_own_allowance_lets_its_error_through():
     watcher, page = watched()
-    failed_load(page, url)
-    assert len(watcher.problems()) == 1 and watcher.known == {}
-
-
-def test_a_favicon_500_a_failed_connection_or_another_answer_fails():
-    watcher, page = watched()
-    failed_load(page, FAVICON, status=500, request_id="7.1")
-    refused = "Failed to load resource: net::ERR_CONNECTION_REFUSED"  # no response at all
-    page.cdp.handlers["Log.entryAdded"]({"entry": {"source": "network", "level": "error", "text": refused,
-                                                   "url": FAVICON, "networkRequestId": "7.2"}})
-    console_error(page, refused, FAVICON)
-    # The console says 404 while the browser's record of the response says 500.
-    page.cdp.handlers["Network.responseReceived"](
-        {"requestId": "7.3", "type": "Other", "response": {"url": FAVICON, "status": 500}})
-    page.cdp.handlers["Log.entryAdded"]({"entry": {"source": "network", "level": "error",
-                                                   "text": support.FAVICON_404_TEXT, "url": FAVICON,
-                                                   "networkRequestId": "7.3"}})
-    console_error(page, support.FAVICON_404_TEXT, FAVICON)
-    problems = watcher.problems()
-    assert len(problems) == 1 and problems[0].count(f"（{FAVICON}）") == 3
-    assert watcher.known == {}
-
-
-def test_without_its_origin_or_the_browsers_records_the_404_fails():
-    watcher, page = watched()
-    console_error(page, support.FAVICON_404_TEXT)  # where it came from is not known
-    assert watcher.problems() == [f"コンソールのエラー: ['{support.FAVICON_404_TEXT}']"] and watcher.known == {}
-    for missing in ({"log": False}, {"response": False}):
-        watcher, page = watched()
-        failed_load(page, FAVICON, **missing)
-        assert len(watcher.problems()) == 1 and watcher.known == {}
-        assert page.waits == 20  # waited 2 seconds for the browser's records, then failed
-    watcher, page = watched(cdp=False)
-    failed_load(page, FAVICON)
-    assert len(watcher.problems()) == 1 and watcher.known == {}
-    assert "Chromium" in watcher.cdp_error and page.waits == 0
-
-
-def test_the_browsers_records_coming_a_moment_later_are_waited_for():
-    watcher, page = watched()
-    failed_load(page, FAVICON, log=False, response=False)  # the console message comes first
-
-    def records_arrive():
-        if page.waits == 3:
-            failed_load(page, FAVICON, console=False)
-
-    page.on_wait = records_arrive
-    assert watcher.problems() == [] and list(watcher.known) == [0] and page.waits == 3
-
-
-def test_each_console_error_is_paired_with_the_browsers_log_in_order():
-    watcher, page = watched()  # the page fetches /favicon.ico, then the browser asks for its icon
-    failed_load(page, FAVICON, kind="Fetch", request_id="7.1")
-    failed_load(page, FAVICON, kind="Other", request_id="7.2")
-    assert len(watcher.problems()) == 1 and list(watcher.known) == [1] and watcher.known[1]["request_id"] == "7.2"
-    watcher, page = watched()  # the other way round
-    failed_load(page, FAVICON, kind="Other", request_id="7.1")
-    failed_load(page, FAVICON, kind="Fetch", request_id="7.2")
-    assert len(watcher.problems()) == 1 and list(watcher.known) == [0]
-    watcher, page = watched()  # two console errors, one log entry: one is let through
-    failed_load(page, FAVICON, request_id="7.1")
-    console_error(page, support.FAVICON_404_TEXT, FAVICON)
-    assert len(watcher.problems()) == 1 and list(watcher.known) == [0]
-
-
-def test_the_known_favicon_next_to_another_error_fails_by_the_other():
-    watcher, page = watched()
-    failed_load(page, FAVICON, request_id="7.1")
-    failed_load(page, ORIGIN + "/static/js/pages/edit.js", kind="Script", request_id="7.2")
+    watcher.allow_console_error(r"status of 500")
+    console_error(page, "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+                  ORIGIN + "/nodes/1/update")
+    console_error(page, support.NOT_FOUND_TEXT, FAVICON)
     page.handlers["pageerror"](RuntimeError("TypeError: x is undefined"))
     assert watcher.problems() == [
-        f"コンソールのエラー: ['{support.FAVICON_404_TEXT}（{ORIGIN}/static/js/pages/edit.js）']",
+        f"コンソールのエラー: ['{support.NOT_FOUND_TEXT}（{FAVICON}）']",
         "ページのエラー（例外）: ['TypeError: x is undefined']",
     ]
-    assert list(watcher.known) == [0]
 
 
-def test_each_known_exception_is_recorded_once():
+def test_the_record_says_there_is_no_console_exception():
     config = configured(e2e_required=True)
-    item = types.SimpleNamespace(nodeid="tests/e2e/test_x.py::test_x[1280x800]", config=config)
-    watcher, page = watched()
-    watcher.allow_console_error(r"status of 404")  # a test's own allowance does not hide it from the record
-    failed_load(page, FAVICON, request_id="7.1")
-    checked = watcher.mark()
-    assert watcher.problems(support.PageWatcher.START, checked) == []  # at the end of the test
-    failed_load(page, FAVICON, request_id="7.2")  # one more, later
-    assert watcher.problems(checked) == []  # at its teardown
-    assert watcher.problems() == [] and watcher.problems() == []  # checked again
-    tab, tab_page = watched()  # another page of the same test
-    failed_load(tab_page, FAVICON, request_id="8.1")
-    failed_load(tab_page, ORIGIN + "/static/app.js", kind="Script", request_id="8.2")
-    assert len(tab.problems()) == 1  # the test fails by the other error ...
-    with pytest.raises(AssertionError):  # ... (here: in its teardown) and still records its known one
-        teardown_of(item, error=AssertionError("コンソールのエラー"))
-    teardown_of(item)  # the next test's teardown: nothing of this test again
-    run = acceptance.state(config)
-    assert [(e["nodeid"], e["request_id"]) for e in run.known_console] == [
-        (item.nodeid, "7.1"), (item.nodeid, "7.2"), (item.nodeid, "8.1")]
+    text = acceptance.render_markdown(config, acceptance.state(config))
+    assert f"| {acceptance.CONSOLE_EXCEPTION_ROW} | {acceptance.CONSOLE_EXCEPTION_TEXT} |" in text
+    assert "既知の例外" not in text.replace(acceptance.CONSOLE_EXCEPTION_TEXT, "")
 
 
-def teardown_of(item, error=None) -> None:
-    """tests/e2e/conftest.py's pytest_runtest_teardown, around a teardown
-    that went well (error None) or raised `error`."""
-    from tests.e2e import conftest
-
-    hook = conftest.pytest_runtest_teardown(item, None)
-    next(hook)
-    try:
-        if error is None:
-            hook.send(None)
-        else:
-            hook.throw(error)
-    except StopIteration:
-        pass
-
-
-def test_the_record_lists_each_known_exception():
-    config = configured(e2e_required=True)
-    run = acceptance.state(config)
-    text = acceptance.render_markdown(config, run)
-    assert "| 既知の例外（favicon の 404） | 0 件" in text and "件数：0" in text
-    run.known_console.append({"nodeid": "tests/e2e/test_x.py::test_x[1280x800]", "url": FAVICON,
-                              "text": support.FAVICON_404_TEXT, "status": 404, "type": "Other", "request_id": "7.1"})
-    run.cdp_unavailable.append("tests/e2e/test_y.py::test_y[1280x800]：CDP session is only available in Chromium")
-    text = acceptance.render_markdown(config, run)
-    assert "| 既知の例外（favicon の 404） | 1 件" in text and "件数：1" in text
-    assert (f"| `tests/e2e/test_x.py::test_x[1280x800]` | `{FAVICON}` | {support.FAVICON_404_TEXT} "
-            "| 404、種類 Other（要求 7.1） |") in text
-    assert "検証条件の限定変更" in text and "直したものではありません" in text and "PR-7" in text
-    assert "ブラウザの記録（CDP）を読めなかったページが 1 件" in text
-
-
-def test_the_favicon_exception_lasts_only_while_the_app_has_no_icon():
-    """PR-7 adds the icon and removes the exception (tests/e2e/support.py).
-    As soon as the app declares an icon or answers /favicon.ico this fails,
-    so that a 404 of an icon the app has is never let through."""
+def test_every_screen_declares_the_icon_the_app_serves():
+    """The icon is declared once, in base.html, so the browser asks for it
+    and never for /favicon.ico (which the app does not answer: no route was
+    added for it)."""
     from fastapi.testclient import TestClient
 
     from app.main import app
@@ -543,11 +362,13 @@ def test_the_favicon_exception_lasts_only_while_the_app_has_no_icon():
     templates = support.FTA_TOOL_DIR / "app" / "templates"
     declared = [str(path.relative_to(templates)) for path in sorted(templates.rglob("*.html"))
                 if re.search(r"""rel\s*=\s*["'][^"']*\bicon\b""", path.read_text(encoding="utf-8"), re.IGNORECASE)]
+    assert declared == ["base.html"]
     with TestClient(app) as client:
-        status = client.get("/favicon.ico").status_code
-    assert declared == [] and status == 404, (
-        "アプリに favicon ができました。tests/e2e/support.py の favicon の 404 の例外（FAVICON_404_TEXT など）と"
-        f"この確認を削除してください（宣言：{declared}、/favicon.ico：{status}）")
+        icon = client.get(support.FAVICON_URL)
+        assert icon.status_code == 200 and icon.headers["content-type"] == "image/svg+xml"
+        assert icon.headers["cache-control"] == "no-cache" and icon.headers["etag"]  # PR-C's revalidation
+        assert icon.content.startswith(b"<svg") and b"http" not in icon.content.replace(b"http://www.w3.org/2000/svg", b"")
+        assert client.get("/favicon.ico").status_code == 404
 
 
 # ----- the evidence a failed test actually left -------------------------------------------
@@ -721,9 +542,10 @@ VIEWPORT_RULES = {
                        "max-width: calc(100vw - 16px)", "width: min(560px, calc(100vw - 32px))"),
     "edit.css": ("height: calc(100vh - var(--header-height))",
                  "grid-template-columns: clamp(240px, 17vw, 320px) minmax(0, 1fr) clamp(340px, 23vw, 440px)",
-                 "width: clamp(220px, calc((100vw - 560px) / 2 - 2 * var(--space-4)), 360px)"),
-    "style.css": ("max-height: 85vh",),
+                 "width: min(560px, calc(100vw - 340px - 2 * var(--space-4)))"),
 }
+# The display-area conditions (PR-7, J-20): edit.css only.
+MEDIA_RULES = {"css/edit.css": ["@media (width < 1280px)", "@media (width < 1024px)"]}
 VIEWPORT_UNIT = re.compile(r"[\w-]+\s*:[^;{}]*\b\d*\.?\d+(?:[dsl])?v(?:w|h|min|max|i|b)\b[^;{}]*")
 
 
@@ -732,19 +554,26 @@ def test_the_layout_boundaries_follow_the_edit_pages_stylesheets():
     sheets = sorted({name for template in EDIT_PAGE_TEMPLATES
                      for name in re.findall(r'href="/static/([^"]+\.css)"',
                                             (app / "templates" / template).read_text(encoding="utf-8"))})
-    assert sheets == ["css/base.css", "css/components.css", "css/edit.css", "css/tokens.css", "style.css"]
-    found = {}
+    assert sheets == ["css/base.css", "css/components.css", "css/edit.css", "css/tokens.css"]
+    found, media = {}, {}
     for sheet in sheets:
         text = re.sub(r"/\*.*?\*/", "", (app / "static" / sheet).read_text(encoding="utf-8"), flags=re.S)
-        assert not re.search(r"@(media|container)\b", text), f"{sheet}：表示領域の条件が加わった（LAYOUT_BOUNDARIES を見直す）"
+        assert not re.search(r"@container\b", text), sheet
+        conditions = [" ".join(m.split()) for m in re.findall(r"@media[^{]*", text)]
+        if conditions:
+            media[sheet] = [c.strip() for c in conditions]
         rules = tuple(" ".join(rule.split()) for rule in VIEWPORT_UNIT.findall(text))
         if rules:
             found[pathlib.Path(sheet).name] = rules
         if sheet == "css/edit.css":
-            assert re.search(r"\.edit-page\s*\{[^}]*min-width:\s*1100px", text)
+            # No minimum width of the whole page any more (1100px until PR-7).
+            assert not re.search(r"\.edit-page\s*\{[^}]*min-width", text)
+            assert re.search(r"@media \(width < 1280px\)\s*\{\s*\.edit-layout\s*\{\s*grid-template-columns: minmax\(0, 1fr\) 340px;", text)
+            assert re.search(r"@media \(width < 1024px\)\s*\{\s*\.edit-center \.edit-view\s*\{\s*min-width: 684px;", text)
+    assert media == MEDIA_RULES, "表示領域の条件が変わった（LAYOUT_BOUNDARIES を見直す）"
     assert found == VIEWPORT_RULES, "表示領域に依存する規則が変わった：support.LAYOUT_BOUNDARIES を見直す"
     assert set(support.LAYOUT_BOUNDARIES["width"]) == {
-        1280, 1100, 240 / 0.17, 320 / 0.17, 340 / 0.23, 440 / 0.23, 560 + 2 * (220 + 32), 560 + 2 * (360 + 32),
+        1280, 1024, 240 / 0.17, 320 / 0.17, 340 / 0.23, 440 / 0.23, 560 + 340 + 32,
         520 + 32, 560 + 32, 340 + 16}
     assert support.LAYOUT_BOUNDARIES["height"] == ()
     # chrome-1905x945 and its measured 1906x946 are between two of them.
@@ -811,3 +640,53 @@ def test_the_record_has_no_display_area_section_without_pr3_layout(tmp_path):
     config = configured(e2e_preflight=True)
     text = acceptance.render_markdown(config, acceptance.state(config))
     assert "画面寸法の要求と実測" not in text
+
+
+# ----- the required acceptance IDs (PR-7: 68 → 75) ------------------------------------
+
+PR7_IDS = ("E-K01", "E-K02", "E-K03", "E-V01", "E-V02", "E-V03", "E-F01")
+
+
+def test_the_required_ids_are_75_without_duplicates_and_each_is_tested():
+    import ast
+
+    source = (pathlib.Path(acceptance.__file__)).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    keys = next(node.value.keys for node in ast.walk(tree)
+                if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", "") == "REQUIRED_IDS")
+    written = [key.value for key in keys]
+    assert len(written) == len(set(written)), sorted({k for k in written if written.count(k) > 1})
+    assert len(acceptance.REQUIRED_IDS) == 75
+    assert list(acceptance.REQUIRED_IDS)[-7:] == list(PR7_IDS)
+    # PR-C's 68 are kept as they were, before PR-7's.
+    assert list(acceptance.REQUIRED_IDS)[60:68] == [f"C-0{n}" for n in range(8)]
+    e2e = pathlib.Path(acceptance.FTA_TOOL_DIR) / "tests" / "e2e"
+    marked = set()
+    for path in e2e.glob("test_*.py"):
+        # acceptance("E-xx", …), or the ids given to a helper that marks some
+        # parameters (test_pr7_viewports.py: cases(small_ids=("E-V03",))).
+        for args in re.findall(r"(?:acceptance|small_ids=)\(([^)]*)\)", path.read_text(encoding="utf-8")):
+            marked.update(re.findall(r'"([A-Z0-9-]+)"', args))
+    assert set(acceptance.REQUIRED_IDS) - marked == set(), "必須 ID を付けたテストがない"
+    assert all(acceptance.REQUIRED_IDS[i] for i in PR7_IDS)
+
+
+def test_the_pr7_display_cases():
+    labels = [case.label for case in acceptance.PR7_CASES]
+    assert len(labels) == len(set(labels)) == 12
+    sizes = {case.label: (case.size, case.dpr) for case in acceptance.PR7_CASES}
+    # The assumed sizes of plan 5.9.4 …
+    for label in ("1920x1080", "1536x730", "1280x620", "1366x650", "1093x500", "1024x683", "900x600"):
+        assert sizes[label] == ((int(label.split("x")[0]), int(label.split("x")[1])), None)
+    # … and the display areas measured on 2026-10-28, with their devicePixelRatio.
+    assert sizes["chrome150-1280x630"] == ((1280, 630), 1.5) and sizes["edge150-1275x609"] == ((1275, 609), 1.5)
+    assert sizes["chrome125-1536x756"] == ((1536, 756), 1.25) and sizes["edge125-1530x731"] == ((1530, 731), 1.25)
+    assert sizes["chrome100-1920x945"] == ((1920, 945), 1.0)
+    assert [case.size for case in acceptance.BASE_CASES] == [(1280, 800), (1440, 900)]
+    assert acceptance.VIEWPORT_SETS["pr7"] == acceptance.BASE_CASES + acceptance.PR7_CASES
+    config = configured(e2e_viewport_set="pr7")
+    assert acceptance.state(config).viewport_set == "pr7"
+    text = acceptance.render_markdown(config, acceptance.state(config))
+    assert "| 寸法の組（--e2e-viewport-set） | pr7：" in text
+    text = acceptance.render_markdown(configured(), acceptance.state(configured()))
+    assert "全テストの全寸法での実行は、この記録では未実施" in text

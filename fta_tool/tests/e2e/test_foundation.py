@@ -1,7 +1,8 @@
 """E2E: shared foundation (PR-1) — E-X01 and the PR1-BASE / PR1-STUB checks.
 
 * E-X01: no request leaves the app on any screen (also checked after every
-  E2E test by the page fixture), no web font is declared.
+  E2E test by the page fixture), no web font is declared; PR-7: every
+  screen has the app's own icon, and /favicon.ico is never asked for.
 * PR1-BASE-NOTIFY: J-24 — success/warning notifications close by themselves,
   errors stay until closed; live regions for screen readers.
 * PR1-BASE-STORAGE: with Web Storage unavailable the list still works and
@@ -72,12 +73,39 @@ def test_E_X01_no_request_leaves_the_app(page, page_watch, e2e_server):
                      "/static/css/tokens.css", "/static/js/common/boot.js", "/static/js/pages/list.js",
                      "/static/css/new.css", "/static/js/pages/new.js",
                      "/static/css/edit.css", "/static/js/pages/edit.js", "/static/js/pages/edit/model.js",
-                     "/static/style.css", "/static/js/pages/edit/generation.js"):
+                     "/static/js/pages/edit/nav-drawer.js", "/static/js/pages/edit/generation.js"):
         assert expected in paths, f"{expected} was not requested: {sorted(paths)}"
+    assert "/static/style.css" not in paths  # removed in PR-7
     assert page_watch.foreign_requests == []
     assert all(url.startswith(e2e_server.url) for url in page_watch.requests)
     assert fonts_on_list == 0  # no web font (J-28)
     assert font_family.startswith('"BIZ UDPGothic"')
+
+
+@pytest.mark.acceptance("E-X01")
+def test_E_X01_every_screen_has_the_apps_own_icon(page, page_watch, e2e_server):
+    """PR-7: the icon is declared on every screen and served by the app
+    (200, the type of an SVG, PR-C's revalidation); the browser never asks
+    for /favicon.ico, and every request for the icon is answered with 200.
+    The 404 of /favicon.ico is no longer let through (tests/e2e/support.py)."""
+    analysis_id = e2e_server.create_analysis("アイコンの確認", top_event="頂上")
+    answers: list[tuple[str, int]] = []
+    page.on("response", lambda r: answers.append((r.url.removeprefix(e2e_server.url), r.status))
+            if "favicon" in r.url else None)
+    for path in ("/", "/analyses/new", f"/analyses/{analysis_id}"):
+        page.goto(path)
+        icon = page.locator('link[rel="icon"]')
+        expect(icon).to_have_count(1)
+        expect(icon).to_have_attribute("href", "/static/favicon.svg")
+        expect(icon).to_have_attribute("type", "image/svg+xml")
+        response = page.request.get(e2e_server.url + "/static/favicon.svg")
+        assert response.status == 200 and response.headers["content-type"] == "image/svg+xml"
+        assert response.headers["cache-control"] == "no-cache" and response.headers.get("etag")
+    page.wait_for_load_state("networkidle")
+    paths = {url.removeprefix(e2e_server.url) for url in page_watch.requests}
+    assert not [p for p in paths if p.startswith("/favicon.ico")], sorted(paths)
+    assert all(status == 200 for _, status in answers), answers
+    assert page_watch.foreign_requests == []
 
 
 # ----- PR1-BASE-NOTIFY --------------------------------------------------------

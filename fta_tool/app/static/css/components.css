@@ -1,8 +1,6 @@
 /* ===== Shared components =====
- * Class names are prefixed with "ui-" so they never collide with the legacy
- * classes (.btn, .modal, .toast …) still used by the screens that have not
- * been migrated. Every component sets its own font, so it looks the same on
- * migrated and legacy screens.
+ * Class names are prefixed with "ui-" (the legacy classes .btn, .modal,
+ * .toast … went with style.css in PR-7). Every component sets its own font.
  */
 
 /* ----- Buttons ----- */
