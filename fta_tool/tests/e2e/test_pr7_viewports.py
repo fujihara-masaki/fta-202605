@@ -60,6 +60,7 @@ from tests.e2e.edit_helpers import (
     toast,
     wait_phase,
 )
+from tests.e2e import layout_checks
 from tests.e2e.layout_checks import assert_no_page_hscroll, layout, pane_scroll, reach
 from tests.e2e.support import expect, measure_viewport, save_screenshot
 
@@ -169,7 +170,12 @@ def main_controls(page, b) -> dict:
 
 def editor_bar(page, what: str) -> None:
     """保存・取消 while a field of the editor is in use: in view without any
-    further scrolling (sticky at the inspector's bottom)."""
+    further scrolling (sticky at the inspector's bottom). The focus brings the
+    field into view, as the user's click or Tab does. Before a field is in
+    use, at a low display area (1093×500) the editor (with its bar) starts
+    below the inspector's visible part: the other checks of 保存 reach it by
+    scrolling the inspector, and the record says so (plan 8.7 condition 2,
+    14.8)."""
     factor_field(page, "title").focus()
     reach(factor_save(page), name=f"保存（{what}）", scroll=False)
     reach(factor_cancel(page), name=f"取消（{what}）", scroll=False)
@@ -277,7 +283,7 @@ def test_E_V01_dialogs_fit_and_their_buttons_are_reached(page, e2e_server, displ
         assert box["x"] + box["width"] <= display_case.width + 0.5, (name, box)
         assert box["y"] + box["height"] <= display_case.height + 0.5, (name, box)
         for label in buttons:
-            reach(dialog.get_by_role("button", name=label, exact=True), name=f"{name}：{label}")
+            reach(dialog.get_by_role("button", name=label, exact=True), name=f"{name}：{label}", scroll=False)
         expect_scrolling(page, display_case, name)
         keep(page, request, name)
 
@@ -333,7 +339,7 @@ def test_E_V01_list_and_new_screens(page, e2e_server, display_case, request):
     dialog = page.get_by_role("dialog")
     expect(dialog).to_be_visible()
     for button in dialog.get_by_role("button").all():
-        reach(button, name="一覧の削除ダイアログ")
+        reach(button, name="一覧の削除ダイアログ", scroll=False)
     keep(page, request, "一覧の削除ダイアログ")
     page.keyboard.press("Escape")
 
@@ -353,7 +359,7 @@ def test_E_V01_list_and_new_screens(page, e2e_server, display_case, request):
     page.locator("[data-cancel-link]").click()
     dialog = page.get_by_role("dialog", name="作成していない入力があります")
     for label in ("入力を続ける", "破棄して移動"):
-        reach(dialog.get_by_role("button", name=label), name=f"新規作成の確認：{label}")
+        reach(dialog.get_by_role("button", name=label), name=f"新規作成の確認：{label}", scroll=False)
     page.keyboard.press("Escape")
 
 
@@ -403,3 +409,45 @@ def test_the_pr7_layout_checks_catch_what_they_must(page, e2e_server, display_ca
             expect_layout(page, display_case)
         else:
             editor_bar(page, "不具合")
+
+
+@pytest.mark.acceptance("E-V01")
+@pytest.mark.parametrize("viewport", [CASE_BY_LABEL["1093x500"]], ids=["1093x500"], indirect=True)
+def test_reach_tells_as_shown_a_pane_scroll_and_a_notification_over_it_apart(page, e2e_server, display_case):
+    """reach() keeps "not covered from the start" apart from "reached after
+    a scroll", and scroll=False (the main buttons) accepts neither."""
+    analysis_id, a, b, c, d = build(e2e_server, "到達の区別")
+    open_edit(page, analysis_id, f"#sel={b}&step=3&view=work")
+    expect_editor_ready(page, b)
+    seen = []
+    layout_checks.OBSERVERS.append(seen.append)
+    try:
+        generate = step_panel(page, 3).get_by_role("button", name="Yesの一次要因から二次要因を生成")
+        reach(generate, name="生成")  # below the work area's visible part at this size
+        assert seen[-1]["how"] == layout_checks.REACHED_BY_PANE_SCROLL
+        reach(generate, name="生成（スクロールした後）")
+        assert seen[-1]["how"] == layout_checks.REACHED_AS_SHOWN
+
+        # 保存 before a field is in use: the editor starts below the
+        # inspector's visible part at this size (plan 14.8).
+        with pytest.raises(AssertionError, match="追加のスクロールなし"):
+            reach(factor_save(page), name="保存（スクロールなし）", scroll=False)
+        assert seen[-1]["how"] == layout_checks.NOT_REACHED
+        reach(factor_save(page), name="保存（インスペクタをスクロール）")
+        assert seen[-1]["how"] == layout_checks.REACHED_BY_PANE_SCROLL
+
+        # A notification over a control of the work area (moved there).
+        page.evaluate("async () => (await import('/static/js/common/notify.js')).notify("
+                      "'到達の区別の確認', { type: 'error' })")
+        top = generate.evaluate("(el) => el.getBoundingClientRect().top")
+        page.add_style_tag(content=f".ui-toast-stack {{ top: {top - 8}px !important; bottom: auto !important; }}")
+        with pytest.raises(AssertionError, match="覆われている"):
+            reach(generate, name="生成（通知の下。スクロールなし）", scroll=False)
+        assert seen[-1]["how"] == layout_checks.NOT_REACHED and not seen[-1]["covered_by_notifications"]
+        reach(generate, name="生成（通知の下）")
+        entry = seen[-1]
+        assert entry["how"] == layout_checks.REACHED_ABOVE_NOTIFICATIONS
+        assert entry["first_misses"] and entry["covered_by_notifications"]
+        assert [t["text"] for t in entry["notifications"]] == ["到達の区別の確認"]
+    finally:
+        layout_checks.OBSERVERS.remove(seen.append)

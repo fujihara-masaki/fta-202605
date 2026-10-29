@@ -26,7 +26,7 @@ import sys
 
 import pytest
 
-from tests.e2e import acceptance
+from tests.e2e import acceptance, layout_checks
 from tests.e2e.support import (
     FAILURE_SCREENSHOT,
     PageWatcher,
@@ -99,6 +99,18 @@ def e2e_server(tmp_path_factory, pytestconfig):
         yield server
     finally:
         server.close()
+
+
+@pytest.fixture(autouse=True)
+def _record_reaches(request):
+    """How each control checked by reach() was reached goes to the record
+    (tests/e2e/layout_checks.py, acceptance.py)."""
+    def observer(entry):
+        acceptance.record_reach(request.node, entry)
+
+    layout_checks.OBSERVERS.append(observer)
+    yield
+    layout_checks.OBSERVERS.remove(observer)
 
 
 @pytest.fixture(autouse=True)

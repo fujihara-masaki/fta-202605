@@ -141,7 +141,7 @@ def test_E_F01_without_biz_udpgothic_nothing_is_cut_off_or_overlaps(page, e2e_se
     expect(dialog).to_be_visible()
     check_screen(page, "手動追加のダイアログ")
     for label in ("追加する", "キャンセル"):
-        reach(dialog.get_by_role("button", name=label), name=f"手動追加：{label}（{substitute}）")
+        reach(dialog.get_by_role("button", name=label), name=f"手動追加：{label}（{substitute}）", scroll=False)
     keep("手動追加のダイアログ")
     page.keyboard.press("Escape")
 

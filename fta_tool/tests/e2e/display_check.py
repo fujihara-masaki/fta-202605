@@ -68,7 +68,8 @@ import traceback
 from typing import Callable, Optional
 
 from tests.e2e.acceptance import DisplayCase
-from tests.e2e.layout_checks import reach
+from tests.e2e.layout_checks import (NOT_REACHED, OBSERVERS, REACHED_ABOVE_NOTIFICATIONS, REACHED_AS_SHOWN,
+                                     REACHED_BY_PANE_SCROLL, reach)
 from tests.e2e.support import FTA_TOOL_DIR, free_port, save_screenshot, start_server
 
 # Below these the plan has no assumed size (plan 5.9.4: 1024px wide and
@@ -114,6 +115,22 @@ def git_head() -> tuple[str, bool]:
     return run("rev-parse", "HEAD") or "取得できませんでした", bool(run("status", "--porcelain", "--untracked-files=no"))
 
 
+def make_data(server) -> dict:
+    """The tool's test data (the E2E server's API): an analysis with four
+    factors and a second analysis for the list."""
+    analysis_id = server.create_analysis("表示倍率の確認", top_event="ログインできない",
+                                         system_context="Web 2台・DB 1台")
+    a = server.add_level1(analysis_id, "一次要因A：ネットワーク機器の設定変更が反映されていない可能性がある", "説明A")
+    b = server.add_child(a, "二次要因B", "説明B")
+    # 「障害」 is in two of the four factors (D's title, C's description):
+    # the word the IME check of the filter asks for.
+    c = server.add_child(b, "三次要因C", "障害の記録が残っていない")
+    d = server.add_level1(analysis_id, "一次要因D：認証サーバーの障害")
+    server.update_node(a, user_judgement="yes")
+    list_id = server.create_analysis("一覧の確認：長いタイトルが折り返されても操作が見えること", top_event="頂上事象")
+    return {"analysis": analysis_id, "a": a, "b": b, "c": c, "d": d, "list": list_id}
+
+
 class DisplayCheck:
     def __init__(self, args):
         self.args = args
@@ -133,7 +150,15 @@ class DisplayCheck:
         self.base_dpr: Optional[float] = None
         self.data: dict = {}
         self.console_errors: list[str] = []
-        self.requests: list[tuple[str, str]] = []
+        # Every request of the page (method, path and the Playwright request,
+        # for its response), in order. Playwright's sync API runs the
+        # callback only while one of its calls runs: every wait here goes
+        # through pump() (page.wait_for_timeout), never time.sleep().
+        self.requests: list[dict] = []
+        # How each control was reached (layout_checks.reach(): as shown, by
+        # scrolling its pane, or above the notifications), per zoom level.
+        self.reaches: list[dict] = []
+        self.level_name = ""
 
     # ----- output ---------------------------------------------------------------
     def say(self, text: str = "") -> None:
@@ -163,16 +188,7 @@ class DisplayCheck:
     def start(self) -> None:
         self.work.mkdir(parents=True)
         self.server = start_server(self.work, free_port())
-        server = self.server
-        analysis_id = server.create_analysis("表示倍率の確認", top_event="ログインできない",
-                                             system_context="Web 2台・DB 1台")
-        a = server.add_level1(analysis_id, "一次要因A：ネットワーク機器の設定変更が反映されていない可能性がある", "説明A")
-        b = server.add_child(a, "二次要因B", "説明B")
-        c = server.add_child(b, "三次要因C")
-        d = server.add_level1(analysis_id, "一次要因D")
-        server.update_node(a, user_judgement="yes")
-        list_id = server.create_analysis("一覧の確認：長いタイトルが折り返されても操作が見えること", top_event="頂上事象")
-        self.data = {"analysis": analysis_id, "a": a, "b": b, "c": c, "d": d, "list": list_id}
+        self.data = make_data(self.server)
         from playwright.sync_api import sync_playwright
 
         self.playwright = sync_playwright().start()
@@ -205,7 +221,8 @@ class DisplayCheck:
         self.page.set_default_timeout(10000)
         self.page.on("console", lambda m: self.console_errors.append(m.text) if m.type == "error" else None)
         self.page.on("pageerror", lambda e: self.console_errors.append(f"例外：{e}"))
-        self.page.on("request", lambda r: self.requests.append((r.method, "/" + r.url.split("/", 3)[3])))
+        self.page.on("request", lambda r: self.requests.append(
+            {"method": r.method, "path": "/" + r.url.split("/", 3)[3], "request": r}))
 
     def measure(self) -> dict:
         return self.page.evaluate(MEASURE)
@@ -276,9 +293,9 @@ class DisplayCheck:
         while time.monotonic() < deadline:
             measured = self.measure()
             if abs(measured["devicePixelRatio"] - target) <= DPR_TOLERANCE:
-                time.sleep(1.0)  # the layout settles
+                self.pump(1.0)  # the layout settles
                 return self.measure()
-            time.sleep(0.5)
+            self.pump(0.5)
         return None
 
     def run_level(self, zoom: int, measured: dict) -> None:
@@ -297,6 +314,7 @@ class DisplayCheck:
                      + ("結果は参考で、判定に含めません。" if reference else "") + "影響を利用者に示して判断を受けます（第5.9.4節）。")
         if reference:
             level += "（想定を下回る・参考）"
+        self.level_name = level
         for name, check in self.checks():
             errors_before = len(self.console_errors)
             try:
@@ -346,7 +364,7 @@ class DisplayCheck:
         row.locator('[data-action="delete"]').click()
         dialog = page.get_by_role("dialog", name="分析を削除しますか？")
         for button in dialog.get_by_role("button").all():
-            reach(button)
+            reach(button, name="一覧の削除ダイアログ", scroll=False)
         self.keep(entry, "一覧の削除ダイアログ")
         page.keyboard.press("Escape")
 
@@ -365,7 +383,7 @@ class DisplayCheck:
         page.locator("[data-cancel-link]").click()
         dialog = page.get_by_role("dialog", name="作成していない入力があります")
         for label in ("入力を続ける", "破棄して移動"):
-            reach(dialog.get_by_role("button", name=label))
+            reach(dialog.get_by_role("button", name=label), name=f"新規作成の確認：{label}", scroll=False)
         page.keyboard.press("Escape")
         page.fill("#title", "")
 
@@ -417,7 +435,7 @@ class DisplayCheck:
             assert box["x"] >= 0 and box["y"] >= 0 and box["x"] + box["width"] <= case.width + 0.5 \
                 and box["y"] + box["height"] <= case.height + 0.5, (name, box)
             for label in buttons:
-                reach(dialog.get_by_role("button", name=label, exact=True), name=f"{name}：{label}")
+                reach(dialog.get_by_role("button", name=label, exact=True), name=f"{name}：{label}", scroll=False)
             self.keep(entry, name)
 
         factor_field(page, "memo").fill("切り替える前の下書き")
@@ -470,6 +488,40 @@ class DisplayCheck:
         self.server.set_stub_mode("create")
 
     # ----- Microsoft IME (C-08) ---------------------------------------------------
+    # Five fields, each judged by judge_ime() from what the page reports (the
+    # composition events) and what it sends (the requests), watched from the
+    # moment the field is ready, before the user types:
+    #   phase 1  from the field ready until the conversion was confirmed and
+    #            the page had IME_SETTLE seconds more: no request of the save
+    #            (whether it came before, with or after the compositionend the
+    #            tool saw) — else NG "確定の Enter で送信";
+    #   phase 2  after the tool asks for the next Enter: exactly one request
+    #            of the save, its response a success (2xx, or 303 for the new
+    #            analysis) and the saved value (read from the test database)
+    #            the text the user confirmed — "送信" and "保存" are told apart
+    #            in the record;
+    #   the filter: no request at all while the user types and confirms, and
+    #            the count and the work list's rows match the factors whose
+    #            name or description contains the confirmed text
+    #            (js/pages/edit/filter.js).
+    # The tool's judgement is tested with composed events
+    # (tests/e2e/test_display_check.py); that is not a check of the
+    # Microsoft IME, which only the user's run on Windows is.
+    IME_SETTLE = 3.0
+    FILTER_WORD = "障害"
+
+    def pump(self, seconds: float) -> None:
+        """Let the page and Playwright's events run (never time.sleep)."""
+        self.page.wait_for_timeout(int(seconds * 1000))
+
+    def wait_for(self, check, timeout: float, step: float = 0.2):
+        deadline = time.monotonic() + timeout
+        while True:
+            found = check()
+            if found or time.monotonic() >= deadline:
+                return found
+            self.pump(step)
+
     def ime(self) -> None:
         level = "日本語入力"
         self.say("")
@@ -477,20 +529,37 @@ class DisplayCheck:
         self.say("  IME をオンにして日本語を入力し、変換して Enter で**確定だけ**してください。そのまま手を止めると、")
         self.say("  ツールが「確定の Enter で保存・送信されていないこと」を確かめ、次の操作を案内します。")
         self.ask("  準備ができたら、このウィンドウで Enter を押してください。")
-        steps = [
-            ("一覧の改名", self.ime_rename, "POST", f"/analyses/{self.data['list']}/title"),
-            ("新規作成のタイトル", self.ime_new, "POST", "/analyses"),
-            ("編集画面の分析タイトル", self.ime_title, "POST", f"/analyses/{self.data['analysis']}/title"),
-            ("手動追加のタイトル", self.ime_add, "POST", f"/nodes/{self.data['b']}/children"),
-            ("絞り込み", self.ime_filter, None, None),
-        ]
-        for name, open_field, method, path in steps:
+        for name, open_field, target in self.ime_steps():
             try:
                 field = open_field()
-                self.judge_ime(level, name, field, method, path)
+                self.judge_ime(level, name, field, target)
             except Exception as error:  # noqa: BLE001 - recorded as NG
                 text = str(error).strip().splitlines()
                 self.record(level, name, False, (text[0] if text else type(error).__name__)[:300], "利用者（IME）＋自動")
+
+    def ime_steps(self) -> list:
+        data, server = self.data, self.server
+
+        def title_of(analysis_id):
+            return lambda: (server.analysis(analysis_id) or {}).get("title")
+
+        def new_analysis_titles():
+            return [row[0] for row in server.query("SELECT title FROM analyses ORDER BY id")]
+
+        def children_of(parent):
+            return lambda: [row[0] for row in server.query("SELECT title FROM nodes WHERE parent_id = ? ORDER BY id",
+                                                           (parent,))]
+        return [
+            ("一覧の改名", self.ime_rename, {"method": "POST", "path": f"/analyses/{data['list']}/title",
+                                          "ok": (200,), "saved": title_of(data["list"]), "kind": "value"}),
+            ("新規作成のタイトル", self.ime_new, {"method": "POST", "path": "/analyses", "ok": (303,),
+                                             "saved": new_analysis_titles, "kind": "one-of"}),
+            ("編集画面の分析タイトル", self.ime_title, {"method": "POST", "path": f"/analyses/{data['analysis']}/title",
+                                                "ok": (200,), "saved": title_of(data["analysis"]), "kind": "value"}),
+            ("手動追加のタイトル", self.ime_add, {"method": "POST", "path": f"/nodes/{data['b']}/children",
+                                             "ok": (200,), "saved": children_of(data["b"]), "kind": "one-of"}),
+            ("絞り込み", self.ime_filter, {"kind": "filter"}),
+        ]
 
     def ime_rename(self):
         self.page.goto("/")
@@ -525,51 +594,118 @@ class DisplayCheck:
     def ime_filter(self):
         self.open_edit()
         field = self.page.locator("#edit-filter-text")
+        field.fill("")
         field.focus()
         return field
 
-    def judge_ime(self, level, name, field, method, path) -> None:
+    def judge_ime(self, level, name, field, target) -> dict:
+        """Judge one field (see above). Returns what was found (also in the record)."""
         page = self.page
+        who = "利用者（IME）＋自動"
+        found = {"field": name, "composition": None, "sent_on_confirm": [], "sent_after": [], "status": None,
+                 "saved": None, "value": "", "filter": None}
         page.evaluate("() => { window.__ftaComposition = []; }")
+        watch_from = len(self.requests)  # before the user types: nothing sent from here is missed
         page.bring_to_front()
-        self.say(f"  【{name}】入力欄にフォーカスがあります。日本語を入力・変換し、Enter で確定してから手を止めてください。")
-        deadline = time.monotonic() + self.args.ime_timeout
-        ended = None
-        while time.monotonic() < deadline:
-            events = page.evaluate("() => window.__ftaComposition")
-            ends = [e for e in events if e["type"] == "compositionend" and e["data"]]
-            if ends:
-                ended = ends[-1]
-                break
-            time.sleep(0.3)
-        if ended is None:
-            self.record(level, name, False, "時間内に IME の変換（compositionend）を検出できませんでした", "利用者（IME）＋自動")
-            return
-        sent_before = len(self.requests)
-        time.sleep(3)
+        word = f"（例：「しょうがい」と入力して「{self.FILTER_WORD}」に変換）" if target["kind"] == "filter" else ""
+        self.say(f"  【{name}】入力欄にフォーカスがあります。日本語を入力・変換し{word}、Enter で確定してから手を止めてください。")
+
+        def ended():
+            ends = [e for e in page.evaluate("() => window.__ftaComposition") if e["type"] == "compositionend" and e["data"]]
+            return ends[-1] if ends else None
+
+        end = self.wait_for(ended, self.args.ime_timeout)
+        if end is None:
+            self.record(level, name, False, "時間内に IME の変換（compositionend）を検出できませんでした", who)
+            return found
+        found["composition"] = end
+        self.pump(self.IME_SETTLE)  # the Enter that confirmed it, and what it may have sent
         value = field.input_value() if field.count() else ""
-        sent = [r for r in self.requests[sent_before:] if method and r == (method, path)]
-        if sent:
-            self.record(level, name, False, f"変換を確定した Enter で送信された（{method} {path}）", "利用者（IME）＋自動")
-            return
-        if method is None:  # the filter: nothing is ever sent, the text filters
-            count = page.locator("#edit-filter-count").inner_text()
-            self.record(level, name, value == field.input_value() and bool(value),
-                        f"確定した文字「{value}」で絞り込み（{count}）。送信なし", "利用者（IME）＋自動")
-            return
+        found["value"] = value
+        phase1 = self.requests[watch_from:]
+
+        if target["kind"] == "filter":
+            return self.judge_filter(level, name, value, phase1, found, who)
+
+        def is_target(entry):
+            return entry["method"] == target["method"] and entry["path"] == target["path"]
+
+        found["sent_on_confirm"] = [e["path"] for e in phase1 if is_target(e)]
+        if found["sent_on_confirm"]:
+            self.record(level, name, False, f"変換を確定した Enter で送信された（{target['method']} {target['path']}。"
+                        "確定の前後を問わず、入力欄の準備の後から次の Enter の案内までに送られた要求）", who)
+            return found
         self.say(f"    確定の Enter では送信されていません（入力欄の値「{value}」）。もう一度 Enter を押して保存してください。")
-        sent_before = len(self.requests)
-        deadline = time.monotonic() + self.args.ime_timeout
-        while time.monotonic() < deadline and not [r for r in self.requests[sent_before:] if r == (method, path)]:
-            time.sleep(0.3)
-        saved = [r for r in self.requests[sent_before:] if r == (method, path)]
-        self.record(level, name, bool(saved) and any(ord(ch) > 0x2fff for ch in value),
-                    f"確定の Enter では送信なし、次の Enter で送信{'あり' if saved else 'なし（時間切れ）'}（値「{value}」）",
-                    "利用者（IME）＋自動")
-        time.sleep(1.5)
+        after_from = len(self.requests)
+        sent = self.wait_for(lambda: [e for e in self.requests[after_from:] if is_target(e)], self.args.ime_timeout)
+        if not sent:
+            self.record(level, name, False, f"確定の Enter では送信なし。次の Enter で送信なし（{self.args.ime_timeout:.0f} 秒で時間切れ）"
+                        f"（値「{value}」）", who)
+            return found
+        self.pump(1.0)  # a second request of the same save, if any
+        sent = [e for e in self.requests[after_from:] if is_target(e)]
+        found["sent_after"] = [e["path"] for e in sent]
+        response = sent[0]["request"].response()
+        found["status"] = response.status if response else None
+        expected = value.replace("\r\n", "\n").strip()  # stored as the server does (str.strip())
+        saved = self.wait_for(lambda: self.saved_text(target, expected), 5.0)
+        found["saved"] = saved
+        problems = []
+        if len(sent) != 1:
+            problems.append(f"次の Enter で {len(sent)} 回送信")
+        if found["status"] not in target["ok"]:
+            problems.append(f"応答が {found['status']}（成功ではない）")
+        if not saved:
+            problems.append("保存された値が確定した文字と一致しない（テスト用 DB）")
+        if not any(ord(ch) > 0x2fff for ch in value):
+            problems.append("確定した文字に日本語がない（IME で入力していない可能性）")
+        detail = (f"確定の Enter：送信なし／次の Enter：送信 {len(sent)} 回・応答 {found['status']}"
+                  f"／保存：{'確定した文字「' + value + '」と一致' if saved else '一致しない'}")
+        self.record(level, name, not problems, detail + ("。NG：" + "、".join(problems) if problems else ""), who)
+        self.pump(1.5)
+        return found
+
+    def saved_text(self, target, expected: str) -> bool:
+        current = target["saved"]()
+        if target["kind"] == "value":
+            return bool(expected) and current == expected
+        return bool(expected) and expected in (current or [])
+
+    def judge_filter(self, level, name, value, phase1, found, who) -> dict:
+        """The filter sends nothing; its count and rows follow the text."""
+        page = self.page
+        sent = [f"{e['method']} {e['path']}" for e in phase1]
+        text = value.strip().lower()
+        nodes = self.server.query("SELECT id, title, description FROM nodes WHERE analysis_id = ?",
+                                  (self.data["analysis"],))
+        hits = {row[0] for row in nodes if text and text in f"{row[1] or ''} {row[2] or ''}".lower()}
+        expected_count = f"一致 {len(hits)}件（全{len(nodes)}件）"
+        count = page.locator("#edit-filter-count").inner_text()
+        rows = page.evaluate("""() => [...document.querySelectorAll('[data-role="work-item"][data-node-id]')]
+          .map((el) => [Number(el.dataset.nodeId), !el.hidden])""")
+        wrong_rows = [node_id for node_id, shown in rows if shown != (node_id in hits)]
+        found["filter"] = {"text": value, "hits": sorted(hits), "count": count, "expected": expected_count,
+                           "requests": sent, "wrong_rows": wrong_rows}
+        problems = []
+        if sent:
+            problems.append(f"入力・確定の間に要求が送られた：{sent}")
+        if not hits:
+            problems.append(f"確定した文字「{value}」に一致する要因がなく、絞り込みの反映を確かめられない"
+                            f"（「{self.FILTER_WORD}」で確かめる）")
+        if count != expected_count:
+            problems.append(f"件数の表示「{count}」が期待「{expected_count}」と違う")
+        if wrong_rows:
+            problems.append(f"作業リストの表示が一致しない行：{wrong_rows}")
+        detail = f"確定した文字「{value}」で{count}（期待 {expected_count}）。要求の送信：{len(sent)} 件"
+        self.record(level, name, not problems, detail + ("。NG：" + "、".join(problems) if problems else ""), who)
+        return found
 
     # ----- the whole run ----------------------------------------------------------
+    def reached(self, entry: dict) -> None:
+        self.reaches.append({"level": self.level_name, **entry})
+
     def run(self) -> None:
+        OBSERVERS.append(self.reached)
         self.start()
         self.describe_environment()
         page = self.page
@@ -602,6 +738,8 @@ class DisplayCheck:
             self.ime()
 
     def close(self) -> None:
+        if self.reached in OBSERVERS:
+            OBSERVERS.remove(self.reached)
         for thing in (self.context, self.browser):
             try:
                 if thing is not None:
@@ -622,7 +760,7 @@ class DisplayCheck:
         code = 1 if failed else (2 if incomplete else 0)
         verdict = {0: "OK", 1: "NG", 2: "未完了"}[code]
         payload = {"verdict": verdict, "exit_code": code, "reason": self.reason, "environment": self.environment,
-                   "levels": self.levels, "results": self.results,
+                   "levels": self.levels, "results": self.results, "reaches": self.reaches,
                    "written": _dt.datetime.now().astimezone().isoformat(timespec="seconds")}
         (self.out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         lines = ["# PR-7 表示倍率・ブラウザの拡大・日本語入力の確認（display_check）", "",
@@ -645,6 +783,7 @@ class DisplayCheck:
         for r in self.results:
             detail = str(r["detail"]).replace("|", "／").replace("\n", " ")
             lines.append(f"| {r['level']} | {r['item']} | {'OK' if r['ok'] else 'NG'} | {r['operated_by']} | {detail} |")
+        lines += self.reach_lines()
         lines += ["", "## 目視のレビュー用の画面（screens）", ""]
         for entry in self.levels:
             for shot in entry["screens"]:
@@ -658,6 +797,32 @@ class DisplayCheck:
         (self.out / "result.md").write_text("\n".join(lines), encoding="utf-8")
         self.say(f"判定：{verdict}（{self.out / 'result.md'}）")
         return code
+
+
+    def reach_lines(self) -> list[str]:
+        """Not covered from the start, or reached only after a scroll (plan 8.7 condition 4)."""
+        lines = ["", "## 主要な操作への到達", "",
+                 "保存・取消（入力中）とダイアログのボタンは、スクロールなしで表示領域の中にあり、通知にも覆われないことを確かめます"
+                 "（そうでなければ NG）。ほかの操作は、ペインをスクロールして届けば OK で、下部の通知だけが重なる場合は通知の上まで"
+                 "ペインをスクロールして判定します。**「通知の上へスクロール」は、最初は通知に覆われていた操作です。**", "",
+                 "| 条件 | 確かめた数 | 表示のまま（うちスクロールなしが要件） | ペインのスクロールで到達 | 通知の上へスクロールして到達 "
+                 "| 届かない（NG） |",
+                 "|---|---|---|---|---|---|"]
+        levels = list(dict.fromkeys(e["level"] for e in self.reaches))
+        for level in levels:
+            entries = [e for e in self.reaches if e["level"] == level]
+            shown = [e for e in entries if e["how"] == REACHED_AS_SHOWN]
+            lines.append(f"| {level} | {len(entries)} | {len(shown)}（{sum(e['no_scroll_required'] for e in shown)}） "
+                         f"| {sum(e['how'] == REACHED_BY_PANE_SCROLL for e in entries)} "
+                         f"| {sum(e['how'] == REACHED_ABOVE_NOTIFICATIONS for e in entries)} "
+                         f"| {sum(e['how'] == NOT_REACHED for e in entries)} |")
+        other = [e for e in self.reaches if e["how"] != REACHED_AS_SHOWN]
+        if other:
+            lines += ["", "| 条件 | 操作 | 届き方 | 表示領域 | 重なった通知 |", "|---|---|---|---|---|"]
+            for e in other:
+                toasts = "、".join(f"{t['kind']}「{t['text']}」" for t in e["notifications"]) or "-"
+                lines.append(f"| {e['level']} | {e['name']} | {e['how']} | {e['client'][0]}×{e['client'][1]} | {toasts} |")
+        return lines
 
 
 def main(argv=None) -> int:

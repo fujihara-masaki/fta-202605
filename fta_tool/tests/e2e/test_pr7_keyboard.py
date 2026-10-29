@@ -66,12 +66,13 @@ ACTIVE = """() => {
 
 
 def tab_to(page, locator, *, backwards: bool = False, limit: int = 400) -> int:
-    """Press Tab (Shift+Tab) until `locator` has the focus; the presses it took."""
+    """Press Tab (Shift+Tab) until `locator` has the focus; the presses it took.
+    The locator is resolved at each press: a partial update (e.g. after a
+    save) draws the inspector again with new elements."""
     key = "Shift+Tab" if backwards else "Tab"
-    handle = locator.element_handle()
     for presses in range(1, limit + 1):
         page.keyboard.press(key)
-        if page.evaluate("(el) => document.activeElement === el", handle):
+        if locator.evaluate("(el) => document.activeElement === el"):
             return presses
     raise AssertionError(f"{key} を {limit} 回押しても届かない：{locator}")
 
@@ -470,3 +471,25 @@ def test_the_announcement_check_catches_a_missing_live_region(page, e2e_server):
     wait_phase(page, "idle", timeout=30)
     page.wait_for_timeout(200)
     assert [text for region, text in live(page) if region == "ui-live-status"] == []
+
+
+@pytest.mark.acceptance("E-K01")
+def test_tab_to_follows_a_control_drawn_again_while_it_tabs(page, e2e_server):
+    # As the inspector after a save: the target is replaced by a new element
+    # (renderInspector) while the Tab presses go on. A handle taken before
+    # would never get the focus (E-K01 failed so, intermittently).
+    page.goto("/")
+    page.evaluate("""() => {
+      document.body.insertAdjacentHTML('beforeend', '<button id="first">1</button><button class="target">2</button>');
+      document.getElementById('first').addEventListener('focus', () => {
+        const fresh = document.createElement('button');
+        fresh.className = 'target';
+        fresh.textContent = '2';
+        document.querySelector('.target').replaceWith(fresh);
+      });
+      document.activeElement && document.activeElement.blur();
+    }""")
+    # Start just before #first, so that the target is replaced on the way.
+    page.evaluate("""() => { const b = document.createElement('button'); b.id = 'start';
+      document.getElementById('first').before(b); b.focus(); }""")
+    assert tab_to(page, page.locator(".target")) == 2

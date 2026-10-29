@@ -703,3 +703,36 @@ def test_the_pr7_display_cases():
     assert "| 寸法の組（--e2e-viewport-set） | pr7：" in text
     text = acceptance.render_markdown(configured(), acceptance.state(configured()))
     assert "全テストの全寸法での実行は、この記録では未実施" in text
+
+
+def test_the_record_tells_a_control_covered_by_a_notification_at_first_apart():
+    from tests.e2e import layout_checks
+
+    config = configured(e2e_preflight=True)
+    run = acceptance.state(config)
+    item = FakeItem("tests/e2e/test_pr7_viewports.py::test_E_V01_generation_status_log_notifications_and_a_failed_save[1093x500]")
+    item.config = config
+
+    def entry(name, how, required=False, covered=()):
+        return {"name": name, "how": how, "no_scroll_required": required, "client": [1093, 500],
+                "box": [41, 305.4, 228.5, 36], "first_misses": list(covered), "covered_by_notifications": list(covered),
+                "notifications": [{"kind": "success", "text": "二次要因の通常生成：3件作成しました",
+                                   "box": [16, 422, 560, 54]}] if covered else []}
+    for value in (entry("保存（入力中）", layout_checks.REACHED_AS_SHOWN, required=True),
+                  entry("生成中の状態表示", layout_checks.REACHED_AS_SHOWN),
+                  entry("保存（生成中）", layout_checks.REACHED_BY_PANE_SCROLL),
+                  entry("操作バーの生成（生成後）", layout_checks.REACHED_ABOVE_NOTIFICATIONS,
+                        covered=[{"x": 75, "y": 358, "over": "div.ui-toast.ui-toast--success"}])):
+        acceptance.record_reach(item, value)
+    text = acceptance.render_markdown(config, run)
+    section = text.split("### 主要な操作への到達")[1]
+    assert f"| `{item.nodeid}` | 4 | 2（1） | 1 | 1 | 0 |" in section
+    assert "最初は通知に覆われていた操作" in section
+    assert "| 保存（生成中） | 1093×500 |" in section
+    assert (f"| `{item.nodeid}` | 操作バーの生成（生成後） | 1093×500 | 41, 305.4, 228.5×36 | (75, 358) "
+            "| success「二次要因の通常生成：3件作成しました」16,422 560×54 |") in section
+
+
+def test_the_record_has_no_reach_section_without_reach():
+    config = configured(e2e_preflight=True)
+    assert "### 主要な操作への到達" not in acceptance.render_markdown(config, acceptance.state(config))

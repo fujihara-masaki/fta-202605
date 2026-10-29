@@ -3,13 +3,22 @@ E-V03, E-F01; plan 5.9.4, 8.7): positions, sizes, visibility and the
 element drawn on top. Screenshots only complement them (the visual review).
 
 * reach(): the control is shown (visible), fully inside the display area
-  after scrolling the pane it is in (never the page sideways), and on top
-  at five points of it (its centre and four points near its corners), so
-  nothing (a notification, the folded navigation, another pane) covers it.
-  Only the notifications at the bottom may be over it at first: the panes
-  keep room below their content (128px, PR-4) so that it can be scrolled
-  above them, and reach() does that scroll as a user would (it fails if the
-  pane cannot scroll that far);
+  and on top at five points of it (its centre and four points near its
+  corners), so nothing (a notification, the folded navigation, another
+  pane) covers it; never by scrolling the page sideways. Two kinds of
+  control (plan 8.7, conditions 2 and 4):
+  - scroll=False, the main buttons (保存・取消 of the inspector, the
+    buttons of a dialog): as shown, without any scrolling, and not covered
+    (by a notification either);
+  - scroll=True, a control in a pane that scrolls: reached by scrolling
+    that pane as a user would. If then only the notifications at the
+    bottom are over it, the pane is scrolled above them (the panes keep
+    128px of room below their content, PR-4); it fails if the pane cannot
+    scroll that far.
+  Each call tells the observers (OBSERVERS) how the control was reached —
+  REACHED_AS_SHOWN, REACHED_BY_PANE_SCROLL, REACHED_ABOVE_NOTIFICATIONS or
+  NOT_REACHED (the check then fails), with what covered it at first — so that the record keeps "not covered
+  from the start" apart from "reached after a scroll" (acceptance.py);
 * page_scroll(): the page's own scroll size against the display area;
 * pane_scroll(): the panes' sideways scrolling;
 * layout(): which layout the edit page has (three panes or the folded
@@ -18,12 +27,27 @@ element drawn on top. Screenshots only complement them (the visual review).
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Callable, Optional
 
 from tests.e2e.support import expect
 
 # Fully inside: up to half a CSS px out (fractional boxes at a DPR of 1.25).
 EDGE = 0.5
+
+# How reach() got to a control (the record, plan 8.7 condition 4).
+REACHED_AS_SHOWN = "表示のまま（スクロールなし・覆われない）"
+REACHED_BY_PANE_SCROLL = "ペインのスクロールで到達"
+REACHED_ABOVE_NOTIFICATIONS = "通知に覆われていたため、通知の上へスクロールして到達"
+NOT_REACHED = "届かない（失敗）"
+
+# Called with one dict per reach() (tests/e2e/conftest.py, display_check.py).
+OBSERVERS: list[Callable[[dict], None]] = []
+
+NOTIFICATIONS = """() => [...document.querySelectorAll('#ui-toasts .ui-toast')].map((toast) => {
+  const r = toast.getBoundingClientRect();
+  return { kind: toast.dataset.toastType, text: (toast.dataset.message || '').slice(0, 40),
+           box: [r.x, r.y, r.width, r.height].map((v) => Math.round(v)) };
+})"""
 
 HIT = """(el) => {
   const r = el.getBoundingClientRect();
@@ -91,24 +115,44 @@ def describe(locator) -> str:
 
 def reach(locator, *, timeout: Optional[float] = None, name: str = "", scroll: bool = True) -> dict:
     """The control can be reached and used as it is shown: see the module.
-    Scrolls the pane it is in (Playwright scrolls the nearest scrolling
-    ancestors), never asks for a sideways scroll of the page. scroll=False:
-    it must be in view as it is (e.g. 保存・取消 while a field is in use)."""
+    scroll=True: by scrolling the pane it is in (Playwright scrolls the
+    nearest scrolling ancestors) and, if only the notifications cover it
+    then, above them. scroll=False: as it is, with no scrolling at all (the
+    main buttons). Never a sideways scroll of the page."""
     expect(locator).to_be_visible(timeout=timeout)
-    if scroll:
+    label = name or describe(locator)
+    first = locator.evaluate(HIT)  # as shown, before any scroll
+    found, how, covered, notifications = first, REACHED_AS_SHOWN, [], []
+    if not (_inside(first) and not first["misses"]):
+        how = REACHED_BY_PANE_SCROLL
+    if scroll and how != REACHED_AS_SHOWN:
         locator.scroll_into_view_if_needed(timeout=timeout)
-    found = locator.evaluate(HIT)
-    if scroll and found["misses"] and all(miss["over"] and "ui-toast" in miss["over"] for miss in found["misses"]):
-        if locator.evaluate(ABOVE_NOTIFICATIONS):
-            found = locator.evaluate(HIT)
+        found = locator.evaluate(HIT)
+        if found["misses"] and all(miss["over"] and "ui-toast" in miss["over"] for miss in found["misses"]):
+            covered, notifications = found["misses"], locator.page.evaluate(NOTIFICATIONS)
+            if locator.evaluate(ABOVE_NOTIFICATIONS):
+                found = locator.evaluate(HIT)
+                how = REACHED_ABOVE_NOTIFICATIONS
+    if found["scrollX"] != 0 or not _inside(found) or found["misses"]:
+        how = NOT_REACHED
+    for observer in OBSERVERS:
+        observer({"name": label, "how": how, "no_scroll_required": not scroll, "client": found["client"],
+                  "box": [round(v, 1) for v in found["box"]], "first_misses": first["misses"],
+                  "covered_by_notifications": covered, "notifications": notifications})
     x, y, w, h = found["box"]
     width, height = found["client"]
-    label = name or describe(locator)
+    rule = "（追加のスクロールなしで届く必要がある主要なボタン）" if not scroll else ""
     assert found["scrollX"] == 0, f"{label}：ページを横にスクロールしないと届かない（scrollX {found['scrollX']}）"
-    assert x >= -EDGE and y >= -EDGE and x + w <= width + EDGE and y + h <= height + EDGE, (
-        f"{label}：表示領域 {width}×{height} の外にはみ出す（{x:.1f}, {y:.1f}, {w:.1f}×{h:.1f}）")
-    assert not found["misses"], f"{label}：ほかの要素に覆われている {found['misses']}"
+    assert _inside(found), (
+        f"{label}：表示領域 {width}×{height} の外にはみ出す（{x:.1f}, {y:.1f}, {w:.1f}×{h:.1f}）{rule}")
+    assert not found["misses"], f"{label}：ほかの要素に覆われている {found['misses']}{rule}"
     return found
+
+
+def _inside(found: dict) -> bool:
+    x, y, w, h = found["box"]
+    width, height = found["client"]
+    return x >= -EDGE and y >= -EDGE and x + w <= width + EDGE and y + h <= height + EDGE
 
 
 def page_scroll(page) -> dict:

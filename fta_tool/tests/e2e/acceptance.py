@@ -280,6 +280,10 @@ class RunState:
     # layout found; the screenshots kept for the visual review.
     display_records: dict[str, dict] = field(default_factory=dict)
     screenshots: list[dict] = field(default_factory=list)
+    # Per test: how each control checked by layout_checks.reach() was
+    # reached (as shown / by scrolling its pane / above the notifications;
+    # plan 8.7 condition 4), so that the record tells them apart.
+    reaches: dict[str, list[dict]] = field(default_factory=dict)
     viewport_set: str = "base"
 
 
@@ -460,6 +464,10 @@ def record_viewport(item: pytest.Item, **values) -> None:
 
 def record_display(item: pytest.Item, **values) -> None:
     state(item.config).display_records.setdefault(item.nodeid, {}).update(values)
+
+
+def record_reach(item: pytest.Item, entry: dict) -> None:
+    state(item.config).reaches.setdefault(item.nodeid, []).append(entry)
 
 
 def add_screenshot(item: pytest.Item, name: str, result: dict) -> None:
@@ -767,6 +775,8 @@ def render_markdown(config: pytest.Config, run: RunState) -> str:
         lines += ["", *_viewport_lines(run)]
     if run.display_records or run.screenshots:
         lines += ["", *_display_lines(run)]
+    if run.reaches:
+        lines += ["", *_reach_lines(run)]
     if not run.playwright_available:
         lines += ["", f"注：{run.playwright_reason}"]
     lines.append("")
@@ -859,6 +869,63 @@ def _display_lines(run: RunState) -> list[str]:
             where = (f"{shot['file']}（{shot.get('bytes')} バイト）" if shot.get("file")
                      else f"保存できなかった：{shot.get('reason')}")
             lines.append(f"| `{shot['nodeid']}` | {_cell(shot['name'])} | {_cell(where)} |")
+    return lines
+
+
+def _reach_lines(run: RunState) -> list[str]:
+    from tests.e2e.layout_checks import (NOT_REACHED, REACHED_ABOVE_NOTIFICATIONS, REACHED_AS_SHOWN,
+                                         REACHED_BY_PANE_SCROLL)
+
+    lines = [
+        "### 主要な操作への到達（第8.7節の条件2・4。tests/e2e/layout_checks.py の reach()）",
+        "",
+        "「表示のまま」は、スクロールせずに表示領域の中にあり、覆うもの（通知を含む）がなかった操作です。インスペクタの保存・取消と"
+        "ダイアログのボタンは、追加のスクロールなしで届くことが要件で（「スクロールなしが要件」）、表示のままでなければ失敗にします。"
+        "ほかの操作は、それがあるペインをスクロールして届けば合格で、スクロールした後に下部の通知だけが重なる場合は、"
+        "通知の上までペインをスクロールして判定します（ペインの下の余白 128px。PR-4）。"
+        "**「通知の上へスクロールして到達」は、最初は通知に覆われていた操作です**（下の表に、要素・表示領域・重なった通知を書きます）。"
+        "「届かない（失敗）」は検査が失敗にした操作で（検出力の確認のテストでは、失敗にすることを確かめた操作）、"
+        "失敗したテストの行は、失敗した時点までの数です。",
+        "",
+        "| テスト | 確かめた数 | 表示のまま（うちスクロールなしが要件） | ペインのスクロールで到達 | 通知の上へスクロールして到達 | 届かない（失敗） |",
+        "|---|---|---|---|---|---|",
+    ]
+    covered = []
+    for nodeid, entries in run.reaches.items():
+        shown = [e for e in entries if e["how"] == REACHED_AS_SHOWN]
+        required = [e for e in shown if e["no_scroll_required"]]
+        pane = [e for e in entries if e["how"] == REACHED_BY_PANE_SCROLL]
+        above = [e for e in entries if e["how"] == REACHED_ABOVE_NOTIFICATIONS]
+        missed = [e for e in entries if e["how"] == NOT_REACHED]
+        covered += [(nodeid, e) for e in above]
+        lines.append(f"| `{nodeid}` | {len(entries)} | {len(shown)}（{len(required)}） | {len(pane)} | {len(above)} "
+                     f"| {len(missed)} |")
+    scrolled: dict[str, list[str]] = {}
+    for entries in run.reaches.values():
+        for e in entries:
+            if e["how"] == REACHED_BY_PANE_SCROLL:
+                size = f"{e['client'][0]}×{e['client'][1]}"
+                scrolled.setdefault(e["name"], [])
+                if size not in scrolled[e["name"]]:
+                    scrolled[e["name"]].append(size)
+    lines += ["", "#### ペインのスクロールで届いた操作（スクロールしないと表示領域の外にあった）", ""]
+    if scrolled:
+        lines += ["| 操作 | 表示領域 |", "|---|---|"]
+        lines += [f"| {_cell(name)} | {'、'.join(sizes)} |" for name, sizes in scrolled.items()]
+    else:
+        lines.append("ありません。")
+    lines += ["", "#### 最初は通知に覆われ、通知の上へスクロールして届いた操作", ""]
+    if not covered:
+        return lines + ["ありません。"]
+    lines += ["| テスト | 操作 | 表示領域 | 届いた位置（x, y, 幅×高さ） | 重なった点 | 重なった通知（種類・文・位置） |",
+              "|---|---|---|---|---|---|"]
+    for nodeid, e in covered:
+        points = "、".join(f"({m['x']}, {m['y']})" for m in e["covered_by_notifications"])
+        toasts = "、".join(f"{t['kind']}「{t['text']}」{t['box'][0]},{t['box'][1]} {t['box'][2]}×{t['box'][3]}"
+                          for t in e["notifications"])
+        x, y, w, h = e["box"]
+        lines.append(f"| `{nodeid}` | {_cell(e['name'])} | {e['client'][0]}×{e['client'][1]} "
+                     f"| {x}, {y}, {w}×{h} | {points} | {_cell(toasts)} |")
     return lines
 
 
