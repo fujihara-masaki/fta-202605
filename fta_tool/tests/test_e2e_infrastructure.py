@@ -550,15 +550,16 @@ def test_a_boundary_of_the_height_is_not_crossed_either():
 # support.LAYOUT_BOUNDARIES was derived.
 EDIT_PAGE_TEMPLATES = ("base.html", "analysis_detail.html")
 VIEWPORT_RULES = {
+    "base.css": ("height: 100vh",),
     "components.css": ("width: min(520px, calc(100vw - 32px))", "max-height: calc(100vh - 32px)",
-                       "max-width: calc(100vw - 16px)", "width: min(560px, calc(100vw - 32px))"),
+                       "max-width: calc(100vw - 16px)", "max-height: 30vh", "max-height: 25vh"),
     "edit.css": ("height: calc(100vh - var(--header-height))",
-                 "grid-template-columns: clamp(240px, 17vw, 320px) minmax(0, 1fr) clamp(340px, 23vw, 440px)",
-                 "width: min(560px, calc(100vw - 340px - 2 * var(--space-4)))",
-                 "max-height: 30vh", "padding-bottom: calc(30vh + 48px)"),
+                 "grid-template-columns: clamp(240px, 17vw, 320px) minmax(0, 1fr) clamp(340px, 23vw, 440px)"),
 }
-# The display-area conditions (PR-7, J-20): edit.css only.
-MEDIA_RULES = {"css/edit.css": ["@media (width < 1280px)", "@media (height < 700px)", "@media (width < 1024px)"]}
+# The display-area conditions (PR-7, J-20): the edit page's widths and the
+# notifications' height (components.css, since the fix of 2026-10-29).
+MEDIA_RULES = {"css/components.css": ["@media (height < 700px)"],
+               "css/edit.css": ["@media (width < 1280px)", "@media (width < 1024px)"]}
 VIEWPORT_UNIT = re.compile(r"[\w-]+\s*:[^;{}]*\b\d*\.?\d+(?:[dsl])?v(?:w|h|min|max|i|b)\b[^;{}]*")
 
 
@@ -586,8 +587,7 @@ def test_the_layout_boundaries_follow_the_edit_pages_stylesheets():
     assert media == MEDIA_RULES, "表示領域の条件が変わった（LAYOUT_BOUNDARIES を見直す）"
     assert found == VIEWPORT_RULES, "表示領域に依存する規則が変わった：support.LAYOUT_BOUNDARIES を見直す"
     assert set(support.LAYOUT_BOUNDARIES["width"]) == {
-        1280, 1024, 240 / 0.17, 320 / 0.17, 340 / 0.23, 440 / 0.23, 560 + 340 + 32,
-        520 + 32, 560 + 32, 340 + 16}
+        1280, 1024, 240 / 0.17, 320 / 0.17, 340 / 0.23, 440 / 0.23, 520 + 32, 340 + 16}
     assert support.LAYOUT_BOUNDARIES["height"] == (700,)
     # chrome-1905x945 and its measured 1906x946 are between two of them.
     assert not [b for b in support.LAYOUT_BOUNDARIES["width"] if 1905 <= b <= 1906]
@@ -705,7 +705,7 @@ def test_the_pr7_display_cases():
     assert "全テストの全寸法での実行は、この記録では未実施" in text
 
 
-def test_the_record_tells_a_control_covered_by_a_notification_at_first_apart():
+def test_the_record_tells_how_each_control_was_reached_and_names_a_covering_notification():
     from tests.e2e import layout_checks
 
     config = configured(e2e_preflight=True)
@@ -718,17 +718,17 @@ def test_the_record_tells_a_control_covered_by_a_notification_at_first_apart():
                 "box": [41, 305.4, 228.5, 36], "first_misses": list(covered), "covered_by_notifications": list(covered),
                 "notifications": [{"kind": "success", "text": "二次要因の通常生成：3件作成しました",
                                    "box": [16, 422, 560, 54]}] if covered else []}
-    for value in (entry("保存（入力中）", layout_checks.REACHED_AS_SHOWN, required=True),
+    for value in (entry("保存（入力の前）", layout_checks.REACHED_AS_SHOWN, required=True),
                   entry("生成中の状態表示", layout_checks.REACHED_AS_SHOWN),
-                  entry("保存（生成中）", layout_checks.REACHED_BY_PANE_SCROLL),
-                  entry("操作バーの生成（生成後）", layout_checks.REACHED_ABOVE_NOTIFICATIONS,
+                  entry("インスペクタの削除", layout_checks.REACHED_BY_PANE_SCROLL),
+                  entry("操作バーの生成（生成後）", layout_checks.NOT_REACHED,
                         covered=[{"x": 75, "y": 358, "over": "div.ui-toast.ui-toast--success"}])):
         acceptance.record_reach(item, value)
     text = acceptance.render_markdown(config, run)
     section = text.split("### 主要な操作への到達")[1]
-    assert f"| `{item.nodeid}` | 4 | 2（1） | 1 | 1 | 0 |" in section
-    assert "最初は通知に覆われていた操作" in section
-    assert "| 保存（生成中） | 1093×500 |" in section
+    assert f"| `{item.nodeid}` | 4 | 2（1） | 1 | 1 |" in section
+    assert "通知に覆われていた操作は、スクロールの有無にかかわらず失敗にします" in section
+    assert "| インスペクタの削除 | 1093×500 |" in section
     assert (f"| `{item.nodeid}` | 操作バーの生成（生成後） | 1093×500 | 41, 305.4, 228.5×36 | (75, 358) "
             "| success「二次要因の通常生成：3件作成しました」16,422 560×54 |") in section
 

@@ -14,9 +14,11 @@
  *                      inspector (its 保存・取消 at its bottom), the header and
  *                      the dialogs stay within the display area, so they are
  *                      reached without scrolling sideways.
- * Low display areas (about 500px high) keep the 保存・取消 bar at the bottom
- * of the inspector (sticky) and the dialogs within the display area (their
- * body scrolls). The user's display areas measured on 2026-10-28 (plan
+ * The notifications are below the work area, in a row of their own: they
+ * never cover a pane (plan 8.7 condition 4). The 保存・取消 bar of the
+ * factor's editor is at the bottom of the inspector, outside its scroll
+ * area, from the moment the editor is shown (condition 2), and the dialogs
+ * stay within the display area (their body scrolls). The user's display areas measured on 2026-10-28 (plan
  * 5.9.4): Chrome 1920×945・1536×756・1280×630, Edge 1912×914・1530×731・
  * 1275×609 at zoom 100・125・150 % — Edge at 150 % is below 1280px.
  * Parts come from components.css.
@@ -172,12 +174,31 @@
 }
 
 /* ----- Three panes ----- */
+/* Row 2 holds the notifications, below the work area only (#ui-toasts in
+   analysis_detail.html; empty, it takes no room). */
 .edit-layout {
   position: relative;
   display: grid;
   flex: 1;
   grid-template-columns: clamp(240px, 17vw, 320px) minmax(0, 1fr) clamp(340px, 23vw, 440px);
+  grid-template-rows: minmax(0, 1fr) auto;
   min-height: 0;
+}
+.edit-nav {
+  grid-column: 1;
+  grid-row: 1 / -1;
+}
+.edit-center {
+  grid-column: 2;
+  grid-row: 1;
+}
+.edit-layout > .ui-toast-stack {
+  grid-column: 2;
+  grid-row: 2;
+}
+.edit-inspector {
+  grid-column: 3;
+  grid-row: 1 / -1;
 }
 .edit-pane {
   display: flex;
@@ -190,6 +211,7 @@
   border-right: 1px solid var(--color-border);
 }
 .edit-inspector {
+  position: relative;
   border-left: 1px solid var(--color-border);
 }
 .edit-center {
@@ -213,13 +235,19 @@
   padding: var(--space-2) var(--space-2) var(--space-5);
 }
 .edit-center .edit-pane__scroll {
-  /* Room below the last controls (①'s save buttons, ⑤'s export links), so
-     they can be scrolled above the shared notifications at the bottom
-     centre, where an error stays until it is closed (J-24; PR-4). */
-  padding: var(--space-4) var(--space-5) 128px;
+  /* The 128px of room below the last controls that PR-4 kept for the
+     notifications over the work area went with PR-7's fix: they have a row
+     of their own below it, and that room would keep the area from getting
+     lower than 144px (it would overlap their row at 500px high). */
+  padding: var(--space-4) var(--space-5) var(--space-6);
 }
 .edit-inspector .edit-pane__scroll {
+  /* Above the 保存・取消 bar (its height: js/pages/edit/inspector.js). */
+  margin-bottom: var(--edit-editor-bar-height, 0px);
   padding: var(--space-3) var(--space-4) var(--space-6);
+}
+.edit-pane__scroll {
+  scroll-padding-block: var(--space-2);
 }
 #edit-work-area:focus,
 #edit-inspector:focus,
@@ -841,10 +869,13 @@
 }
 
 /* ----- Inspector: the factor's editor (PR-5) -----
-   Seven fields saved with 保存; the 保存・取消 bar stays at the bottom of the
-   inspector's scroll area while the editor is in view (position: sticky),
-   so they are reached without scrolling past the fields. Text wraps; no
-   width depends on the font. */
+   Seven fields saved with 保存. The 保存・取消 bar (with the reason of a
+   failed save) is at the bottom of the inspector pane, outside its scroll
+   area, from the moment the editor is shown: placed against the pane
+   (position: absolute; the scroll area is not positioned, so it neither
+   scrolls nor clips it), the scroll area ends above it (PR-7, plan 8.7
+   condition 2). In the page it stays after the fields, so Tab goes from the
+   fields to 保存・取消. Text wraps; no width depends on the font. */
 .edit-editor {
   display: grid;
   gap: var(--space-2);
@@ -881,12 +912,15 @@
   opacity: 0.55;
 }
 .edit-editor__bar {
-  position: sticky;
+  position: absolute;
+  right: 0;
   bottom: 0;
+  left: 0;
   z-index: 1;
   display: grid;
   gap: var(--space-1);
-  margin: 0 calc(-1 * var(--space-4));
+  max-height: 50%;
+  overflow-y: auto;
   padding: var(--space-2) var(--space-4);
   border-top: 1px solid var(--color-border);
   background: var(--color-surface);
@@ -1072,53 +1106,32 @@ a[aria-disabled="true"][data-gen-locked] {
   .edit-layout {
     grid-template-columns: minmax(0, 1fr) 340px;
   }
+  .edit-center,
+  .edit-layout > .ui-toast-stack {
+    grid-column: 1;
+  }
+  .edit-inspector {
+    grid-column: 2;
+  }
   .edit-nav-toggle {
     display: inline-flex;
   }
-  /* Folded: shown over the left of the work area while it is open. The
-     header and the work steps stay above it, the notifications and the
-     dialogs over it. */
+  /* Folded: shown over the left of the work area while it is open (the
+     same cell of the grid), above the notifications' row, so it neither
+     covers them nor is covered. The header and the work steps stay above
+     it, the dialogs over it. */
   .edit-nav {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
+    position: relative;
     z-index: var(--z-drawer);
-    width: 320px;
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: start;
+    width: min(320px, 100%);
     border-right: 1px solid var(--color-border-strong);
     box-shadow: var(--shadow-lg);
   }
   .edit-nav:not([data-open]) {
     display: none;
-  }
-  /* Room below the last factors, above the notifications (as the work area). */
-  .edit-nav .edit-pane__scroll {
-    padding-bottom: 128px;
-  }
-  /* The notifications go to the bottom left, over the work area only, so
-     they never cover the inspector (its 保存・取消 at the bottom). */
-  .edit-body .ui-toast-stack {
-    left: var(--space-4);
-    width: min(560px, calc(100vw - 340px - 2 * var(--space-4)));
-    transform: none;
-  }
-}
-/* Low display areas (below 700px high, e.g. 1366x768 at 125 %: 500px): the
-   notifications take at most 30 % of the height and scroll inside (the
-   newest is kept in view, js/common/notify.js), so they never cover the
-   whole work area; none is closed earlier for it (J-24: errors stay until
-   closed). The panes keep room below their content to scroll any control
-   above them. */
-@media (height < 700px) {
-  .edit-body .ui-toast-stack {
-    max-height: 30vh;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    pointer-events: auto;
-  }
-  .edit-center .edit-pane__scroll,
-  .edit-nav .edit-pane__scroll {
-    padding-bottom: calc(30vh + 48px);
   }
 }
 /* Below 1024px the work area keeps its content as wide as at 1024px (1024px

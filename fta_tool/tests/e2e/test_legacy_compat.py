@@ -240,16 +240,18 @@ def expect_dialog_uncovered(page, dialog) -> None:
 
 
 def expect_normal_place(page) -> None:
-    """Bottom centre, where the notifications are when no dialog is open;
-    below 1280px bottom left, over the work area only, never over the
-    inspector (PR-7, css/edit.css)."""
+    """Where the notifications are when no dialog is open: since PR-7's fix
+    of 2026-10-29 in a row of their own at the bottom, below the work area
+    only (its width, never over the inspector or the structure navigation;
+    css/edit.css), and nothing of the page under them."""
     box = page.locator("#ui-toasts").bounding_box()
+    work = page.locator("#edit-work-area").bounding_box()
+    inspector = page.locator("#edit-inspector").bounding_box()
     size = page.viewport_size
-    if size["width"] >= 1280:
-        assert abs(box["x"] + box["width"] / 2 - size["width"] / 2) <= 2, box
-    else:
-        assert abs(box["x"] - 16) <= 1 and box["x"] + box["width"] <= size["width"] - 340 + 1, box
-    assert 0 <= size["height"] - (box["y"] + box["height"]) <= 48, box
+    assert abs(box["x"] - work["x"]) <= 1 and abs(box["width"] - work["width"]) <= 1, (box, work)
+    assert box["x"] + box["width"] <= inspector["x"] + 1, (box, inspector)
+    assert abs(box["y"] - (work["y"] + work["height"])) <= 1, (box, work)  # right below the work area
+    assert abs(size["height"] - (box["y"] + box["height"])) <= 1, box
 
 
 @pytest.mark.acceptance("PR3-LEGACY-NOTIFY")

@@ -32,7 +32,9 @@
     {% block content %}{% endblock %}
   </main>
   <!-- Notifications (shared): visible stack + live regions for screen readers -->
-  <div id="ui-toasts" class="ui-toast-stack"></div>
+  {#- The stack has a room of its own below the main area (css/base.css);
+      the edit screen puts it below its work area instead (PR-7). -#}
+  {% block toast_stack %}<div id="ui-toasts" class="ui-toast-stack"></div>{% endblock %}
   <div id="ui-live-status" class="visually-hidden" role="status" aria-live="polite"></div>
   <div id="ui-live-alert" class="visually-hidden" role="alert" aria-live="assertive"></div>
   {#- Every screen is migrated; the legacy app.js was removed in PR-6. The

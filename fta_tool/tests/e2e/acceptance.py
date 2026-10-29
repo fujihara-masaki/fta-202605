@@ -149,12 +149,12 @@ REQUIRED_IDS: dict[str, str] = {
     "C-07": "静的ファイルのキャッシュ（PR-C）：CSS の更新の後、通常の画面遷移で開いた編集画面で、生成中の評価のボタンが淡色・禁止のカーソルになり、押しても変わらず、終了後に戻る",
     # PR-7 (plan 8.7, 8.9): the display areas, the keyboard and the fonts.
     # Sizes given to the browser (and a devicePixelRatio), never a zoom level.
-    "E-K01": "仕上げ（PR-7）：キーボードだけ（Tab・Shift+Tab・Enter・Space・矢印・Esc）で付録Dの代表シナリオ（作成、未保存の頂上事象からの一次生成と自動保存、評価と二次生成、インスペクタの保存、手動追加、削除、出力メニュー、未保存の離脱の3択、折りたたんだ構造ナビ）を完了し、生成中の操作制限をキーボードで回避できない",
+    "E-K01": "仕上げ（PR-7）：キーボードだけ（Tab・Shift+Tab・Enter・Space・矢印・Esc）で付録Dの代表シナリオ（作成、未保存の頂上事象からの一次生成と自動保存、評価と二次生成、インスペクタの保存、手動追加、削除、出力メニュー、未保存の離脱の3択、折りたたんだ構造ナビ）を完了し、生成中の操作制限をキーボードで回避できない。通知（消えないエラーを含む複数）が出ている間も、Tab・Shift+Tab・矢印で移った先の操作とフォーカスの表示が、テストがスクロールせずに見えて通知に覆われず、フォーカスの後に通知が出ても隠れない（入力・選択・未保存の状態は変わらない）",
     "E-K02": "仕上げ（PR-7）：ダイアログ（要因の切替・画面の移動の未保存確認、要因の削除、手動追加、一覧の削除、新規作成の離脱確認）の初期フォーカス、Tab・Shift+Tab で背後の画面へ出ない、Esc は取消、閉じた後の戻り先（消えていれば近くの要素）。折りたたんだ構造ナビの Esc と戻り先",
     "E-K03": "仕上げ（PR-7）：読み上げ領域（role=status polite・role=alert assertive）に、生成の開始・親ごとの結果・要約、生成の失敗、保存の失敗が書かれる（DOM の確認。スクリーンリーダーの読み上げは手動）",
-    "E-V01": "仕上げ（PR-7）：想定寸法と 2026-10-28 の実測値の寸法（DPR を含む）で、1280px 以上は3ペイン・未満は構造ナビの折りたたみ（開閉ボタンで重ねて表示）、主要な操作（作業ステップ・タブ・絞り込み・作業リスト・評価・保存・取消・削除・ヘッダー・操作バー・生成中の状態表示・生成ログ・通知・保存失敗の表示・各ダイアログ、一覧・新規作成）が表示領域の中に見え、中心と4点の最前面がその要素（通知などに覆われない）。実ブラウザの拡大・表示倍率の確認とは別に記録",
+    "E-V01": "仕上げ（PR-7）：想定寸法と 2026-10-28 の実測値の寸法（DPR を含む）で、1280px 以上は3ペイン・未満は構造ナビの折りたたみ（開閉ボタンで重ねて表示）、主要な操作（作業ステップ・タブ・絞り込み・作業リスト・評価・保存・取消・削除・ヘッダー・操作バー・生成中の状態表示・生成ログ・通知・保存失敗の表示・各ダイアログ、一覧・新規作成）が表示領域の中に見え、中心と4点の最前面がその要素（通知などに覆われない。通知は作業エリアの下の専用の行で、覆った時点で失敗）。インスペクタの保存・取消は要因の編集欄が出た時点から（入力の前・入力中・保存の成功と失敗の後・要因の切替と部分更新の後も）スクロールなしで見える。実ブラウザの拡大・表示倍率の確認とは別に記録",
     "E-V02": "仕上げ（PR-7）：幅 1024px 以上で、ページ全体の横スクロールが出ない（構造ナビを開いた状態・生成中・ダイアログ表示中を含む）。構造ナビ・インスペクタは横にスクロールせず、1024px 未満では作業エリアだけが横にスクロールする",
-    "E-V03": "仕上げ（PR-7）：表示領域 900×600 と 1093×500 で、インスペクタの保存・取消とダイアログのボタンに、ページを横スクロールせずに届く（保存・取消は入力中に追加のスクロールなしで見える）",
+    "E-V03": "仕上げ（PR-7）：表示領域 900×600 と 1093×500 で、インスペクタの保存・取消とダイアログのボタンに、ページを横スクロールせずに届く（保存・取消は入力の前から追加のスクロールなしで見える）",
     "E-F01": "仕上げ（PR-7）：BIZ UDPGothic を除いた代替フォント（Windows の代替・sans-serif・serif）で、一覧・新規作成・編集画面・ダイアログの見出し・ボタンが欠けず（省略記号の作業ステップ名を除く）、操作の並びが重ならず、主要な操作に届く。描画に使われたフォントを記録",
 }
 
@@ -873,33 +873,29 @@ def _display_lines(run: RunState) -> list[str]:
 
 
 def _reach_lines(run: RunState) -> list[str]:
-    from tests.e2e.layout_checks import (NOT_REACHED, REACHED_ABOVE_NOTIFICATIONS, REACHED_AS_SHOWN,
-                                         REACHED_BY_PANE_SCROLL)
+    from tests.e2e.layout_checks import NOT_REACHED, REACHED_AS_SHOWN, REACHED_BY_PANE_SCROLL
 
     lines = [
         "### 主要な操作への到達（第8.7節の条件2・4。tests/e2e/layout_checks.py の reach()）",
         "",
         "「表示のまま」は、スクロールせずに表示領域の中にあり、覆うもの（通知を含む）がなかった操作です。インスペクタの保存・取消と"
         "ダイアログのボタンは、追加のスクロールなしで届くことが要件で（「スクロールなしが要件」）、表示のままでなければ失敗にします。"
-        "ほかの操作は、それがあるペインをスクロールして届けば合格で、スクロールした後に下部の通知だけが重なる場合は、"
-        "通知の上までペインをスクロールして判定します（ペインの下の余白 128px。PR-4）。"
-        "**「通知の上へスクロールして到達」は、最初は通知に覆われていた操作です**（下の表に、要素・表示領域・重なった通知を書きます）。"
+        "ほかの操作は、それがあるペイン（長い一覧など）をスクロールして届けば合格です。**通知に覆われていた操作は、"
+        "スクロールの有無にかかわらず失敗にします**（PR-7 の 2026-10-29 の修正で、通知の上へスクロールして判定する処理は廃止）。"
         "「届かない（失敗）」は検査が失敗にした操作で（検出力の確認のテストでは、失敗にすることを確かめた操作）、"
         "失敗したテストの行は、失敗した時点までの数です。",
         "",
-        "| テスト | 確かめた数 | 表示のまま（うちスクロールなしが要件） | ペインのスクロールで到達 | 通知の上へスクロールして到達 | 届かない（失敗） |",
-        "|---|---|---|---|---|---|",
+        "| テスト | 確かめた数 | 表示のまま（うちスクロールなしが要件） | ペインのスクロールで到達 | 届かない（失敗） |",
+        "|---|---|---|---|---|",
     ]
     covered = []
     for nodeid, entries in run.reaches.items():
         shown = [e for e in entries if e["how"] == REACHED_AS_SHOWN]
         required = [e for e in shown if e["no_scroll_required"]]
         pane = [e for e in entries if e["how"] == REACHED_BY_PANE_SCROLL]
-        above = [e for e in entries if e["how"] == REACHED_ABOVE_NOTIFICATIONS]
         missed = [e for e in entries if e["how"] == NOT_REACHED]
-        covered += [(nodeid, e) for e in above]
-        lines.append(f"| `{nodeid}` | {len(entries)} | {len(shown)}（{len(required)}） | {len(pane)} | {len(above)} "
-                     f"| {len(missed)} |")
+        covered += [(nodeid, e) for e in missed if e["covered_by_notifications"]]
+        lines.append(f"| `{nodeid}` | {len(entries)} | {len(shown)}（{len(required)}） | {len(pane)} | {len(missed)} |")
     scrolled: dict[str, list[str]] = {}
     for entries in run.reaches.values():
         for e in entries:
@@ -914,10 +910,10 @@ def _reach_lines(run: RunState) -> list[str]:
         lines += [f"| {_cell(name)} | {'、'.join(sizes)} |" for name, sizes in scrolled.items()]
     else:
         lines.append("ありません。")
-    lines += ["", "#### 最初は通知に覆われ、通知の上へスクロールして届いた操作", ""]
+    lines += ["", "#### 通知に覆われていた操作（失敗にしたもの）", ""]
     if not covered:
         return lines + ["ありません。"]
-    lines += ["| テスト | 操作 | 表示領域 | 届いた位置（x, y, 幅×高さ） | 重なった点 | 重なった通知（種類・文・位置） |",
+    lines += ["| テスト | 操作 | 表示領域 | 位置（x, y, 幅×高さ） | 重なった点 | 重なった通知（種類・文・位置） |",
               "|---|---|---|---|---|---|"]
     for nodeid, e in covered:
         points = "、".join(f"({m['x']}, {m['y']})" for m in e["covered_by_notifications"])

@@ -41,7 +41,7 @@ from tests.e2e.edit_helpers import (
     step_panel,
     toast,
 )
-from tests.e2e.support import expect
+from tests.e2e.support import expect, page_scroll_width
 from tests.e2e.test_edit_page import LAYOUT_CASES, check_layout, display_area
 from tests.e2e.test_edit_pr4_layout import check_reachable, inside, readable
 
@@ -115,5 +115,5 @@ def test_PR5_inspector_editor_and_dialogs_are_visible_and_not_covered(page, e2e_
         inside(page, part, width, height)
         readable(page, part)
     dialog.get_by_role("button", name="キャンセル").click()
-    assert page.evaluate("() => document.documentElement.scrollWidth") <= width
+    assert page_scroll_width(page) <= width
     assert e2e_server.get_node(a)["memo"] != "表示の確認のメモ"

@@ -305,6 +305,25 @@ export function currentFactorSource() {
   return current ? current.source : null;
 }
 
+// The editor's 保存・取消 bar is at the bottom of the pane, outside its
+// scroll area (css/edit.css, PR-7): the scroll area ends above it, by the
+// bar's height (it grows with the reason of a failed save).
+let barObserver = null;
+
+function watchBar(current) {
+  const pane = document.getElementById('edit-inspector');
+  if (barObserver) barObserver.disconnect();
+  barObserver = null;
+  if (!pane) return;
+  const bar = current && current.element.isConnected ? current.element.querySelector('.edit-editor__bar') : null;
+  const update = () => pane.style.setProperty('--edit-editor-bar-height', `${bar && bar.isConnected ? bar.offsetHeight : 0}px`);
+  update();
+  if (bar && typeof ResizeObserver !== 'undefined') {
+    barObserver = new ResizeObserver(update);
+    barObserver.observe(bar);
+  }
+}
+
 function closeEditor() {
   if (editor) editor.close();
   editor = null;
@@ -350,6 +369,7 @@ export function renderInspector(app, { focusWarning = false } = {}) {
     } else if (!node) {
       closeEditor();
       root.replaceChildren(el('p', { class: 'edit-inspector__status' }, '要因が選ばれていません。'));
+      watchBar(null);
       return;
     } else if (same) {
       root.replaceChildren(...nodeContent(app, node, editor));
@@ -382,6 +402,7 @@ export function renderInspector(app, { focusWarning = false } = {}) {
       if (focusWarning) focusWarningSection();
     }
   }
+  watchBar(editor);
   restoreCaptured(captured);
   applyRestrictions(app);
   if (app.gone) {

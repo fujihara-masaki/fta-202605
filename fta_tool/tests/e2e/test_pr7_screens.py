@@ -90,7 +90,7 @@ def test_E_V01_representative_screens_of_a_generation(page, e2e_server, page_wat
     select_button(page, "work", b).click()
     expect(page.locator("[data-factor-editor]")).to_have_attribute("data-phase", "waiting")
     reach(gen_status(page).locator("[data-gen-status-text]").first, name="生成中の状態表示")
-    reach(factor_save(page), name="保存（取得待ち。押せないが見える）")
+    reach(factor_save(page), name="保存（取得待ち。押せないが見える）", scroll=False)
     keep(page, request, "生成中・取得待ち")
 
     # The log of a partial failure (one parent created, one failed).

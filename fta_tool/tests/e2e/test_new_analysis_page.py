@@ -33,7 +33,7 @@ from urllib.parse import parse_qs
 
 import pytest
 
-from tests.e2e.support import PageWatcher, expect, free_port, record_dialogs, start_server
+from tests.e2e.support import PageWatcher, expect, free_port, page_scroll_width, record_dialogs, start_server
 
 pytestmark = pytest.mark.e2e
 
@@ -135,7 +135,7 @@ def test_E_N01_two_columns_and_create(page, e2e_server):
     assert actions.bounding_box()["y"] >= max(main_box["y"] + main_box["height"], aside_box["y"] + aside_box["height"])
     expect(actions.get_by_role("link")).to_have_text(["キャンセル"])
     expect(actions.get_by_role("button")).to_have_text(["作成して編集へ"])
-    assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+    assert page_scroll_width(page) <= page.evaluate("document.documentElement.clientWidth")
     # Migrated: no legacy script, stylesheet or toast on this screen.
     assert page.evaluate("typeof window.showToast") == "undefined"
     expect(page.locator("#toast")).to_have_count(0)

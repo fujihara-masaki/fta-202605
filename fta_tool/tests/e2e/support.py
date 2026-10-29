@@ -404,6 +404,25 @@ def record_dialogs(page, action: str = "dismiss") -> list:
     return seen
 
 
+# ----- The page's sideways scroll ---------------------------------------------------
+
+# Since PR-7's fix of 2026-10-29 the main area scrolls (css/base.css), not the
+# page: a content wider than the display area makes #main scroll sideways
+# while the root does not. The page's width is the larger of the root's and
+# the main area's scroll width (with the room of its own scroll bar, so it
+# compares with the display area's width as the root's did).
+PAGE_WIDTH = """() => {
+  const root = document.documentElement, main = document.getElementById('main');
+  const inMain = main ? main.scrollWidth + (main.offsetWidth - main.clientWidth) : 0;
+  return { width: Math.max(root.scrollWidth, inMain), left: Math.max(window.scrollX, main ? main.scrollLeft : 0) };
+}"""
+
+
+def page_scroll_width(page) -> int:
+    """The page's scroll width, the main area's included (see PAGE_WIDTH)."""
+    return page.evaluate(PAGE_WIDTH)["width"]
+
+
 # ----- The display area of PR3-LAYOUT ---------------------------------------------
 
 # What the browser reports about its display area, in CSS px: the root's
@@ -436,15 +455,15 @@ def measure_viewport(page) -> dict:
 # (below it the work area's content keeps its width at 1024px and scrolls
 # sideways; PR-7, edit.css's two media queries); the pane columns
 # clamp(240px, 17vw, 320px) and clamp(340px, 23vw, 440px) stop at 240/0.17,
-# 320/0.17, 340/0.23 and 440/0.23; the notifications below 1280px,
-# min(560px, 100vw - 340px - 32px), at 932; the dialogs,
-# min(520px | 560px, 100vw - 32px), at 552 and 592; the menu panel (340px,
-# at most 100vw - 16px) at 356. Heights: 700 (below it the notifications
-# take at most 30vh and scroll, and the panes keep 30vh + 48px below their
-# content; PR-7); otherwise the page is 100vh less the header and the
-# dialogs' max-height depends on their content.
+# 320/0.17, 340/0.23 and 440/0.23; the dialogs, min(520px, 100vw - 32px),
+# at 552; the menu panel (340px, at most 100vw - 16px) at 356. Since PR-7's
+# fix of 2026-10-29 the notifications are in a row of their own (no width
+# of the display area: the boundaries 592 and 932 of their former width are
+# gone). Heights: 700 (below it the notifications take at most 25vh instead
+# of 30vh; components.css); otherwise the page is 100vh less the header and
+# the dialogs' max-height depends on their content.
 LAYOUT_BOUNDARIES = {
-    "width": (356, 552, 592, 932, 1024, 1280, 240 / 0.17, 340 / 0.23, 320 / 0.17, 440 / 0.23),
+    "width": (356, 552, 1024, 1280, 240 / 0.17, 340 / 0.23, 320 / 0.17, 440 / 0.23),
     "height": (700,),
 }
 

@@ -44,7 +44,11 @@ def test_the_display_check_tool_runs_its_checks_and_records_them(tmp_path, pytes
     assert code == 0 and result["verdict"] == "OK", [r for r in result["results"] if not r["ok"]]
     assert [(lvl["zoom"], tuple(lvl["measured"]["client"]), lvl["measured"]["devicePixelRatio"]) for lvl in result["levels"]] \
         == [(100, (1920, 945), 1), (150, (1280, 630), 1.5)]
-    assert len(result["results"]) == 12 and all(r["operated_by"] == "自動" for r in result["results"])
+    assert len(result["results"]) == 14 and all(r["operated_by"] == "自動" for r in result["results"])
+    # The same checks as the E2E tests of PR-7's fix: 保存・取消 before any
+    # input, the focus with notifications shown (tests/e2e/test_pr7_focus.py).
+    focus = [r for r in result["results"] if r["item"].startswith("編集画面：通知の表示中のキーボード操作")]
+    assert len(focus) == 2 and all(r["ok"] for r in focus), focus
     assert "模した" in result["environment"]["注意"]  # never recorded as a real zoom
     assert "はい（実際の拡大ではない）" in text
     screens = [shot for lvl in result["levels"] for shot in lvl["screens"]]

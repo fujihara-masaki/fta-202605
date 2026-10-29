@@ -168,14 +168,17 @@ def main_controls(page, b) -> dict:
     }
 
 
+def editor_bar_as_shown(page, what: str) -> None:
+    """保存・取消 as the screen is, before any input (no focus, no scroll)."""
+    reach(factor_save(page), name=f"保存（{what}）", scroll=False)
+    reach(factor_cancel(page), name=f"取消（{what}）", scroll=False)
+
+
 def editor_bar(page, what: str) -> None:
     """保存・取消 while a field of the editor is in use: in view without any
-    further scrolling (sticky at the inspector's bottom). The focus brings the
-    field into view, as the user's click or Tab does. Before a field is in
-    use, at a low display area (1093×500) the editor (with its bar) starts
-    below the inspector's visible part: the other checks of 保存 reach it by
-    scrolling the inspector, and the record says so (plan 8.7 condition 2,
-    14.8)."""
+    further scrolling (at the inspector's bottom, outside its scroll area;
+    PR-7's fix of 2026-10-29). The focus brings the field into view, as the
+    user's click or Tab does. Before any input: editor_bar_as_shown()."""
     factor_field(page, "title").focus()
     reach(factor_save(page), name=f"保存（{what}）", scroll=False)
     reach(factor_cancel(page), name=f"取消（{what}）", scroll=False)
@@ -192,6 +195,7 @@ def test_E_V01_edit_layout_and_main_controls(page, e2e_server, display_case, req
     shown(page, request, display_case, "③・二次要因Bを選択")
     expect_layout(page, display_case)
     expect_scrolling(page, display_case, "③")
+    editor_bar_as_shown(page, "入力の前")
     for name, control in main_controls(page, b).items():
         reach(control, name=name)
     editor_bar(page, "要因の内容を入力中")
@@ -212,7 +216,7 @@ def test_E_V01_edit_layout_and_main_controls(page, e2e_server, display_case, req
         for node in (a, b, c, d):
             reach(select_button(page, "nav", node), name=f"構造ナビの要因 {node}")
         reach(toggle, name="構造を閉じる")
-        reach(factor_save(page), name="保存（構造ナビを開いた状態）")
+        reach(factor_save(page), name="保存（構造ナビを開いた状態）", scroll=False)
         expect_scrolling(page, display_case, "構造ナビを開いた状態")
         keep(page, request, "構造ナビを開いた状態")
         page.keyboard.press("Escape")
@@ -236,20 +240,25 @@ def test_E_V01_generation_status_log_notifications_and_a_failed_save(page, page_
     # The status line of a generation under way, above the work area.
     expect(gen_status(page)).to_be_visible()
     reach(gen_status(page).locator("[data-gen-status-text]").first, name="生成中の状態表示")
-    reach(factor_save(page), name="保存（生成中。押せないが見える）")
+    reach(factor_save(page), name="保存（生成中。押せないが見える）", scroll=False)
     expect_scrolling(page, display_case, "生成中")
     keep(page, request, "生成中")
     wait_phase(page, "idle", timeout=30)
 
-    # The generation log, below the operation bar; the notification of the
-    # result covers none of the controls.
+    # The generation log, below the operation bar; the notifications (the
+    # result's, and an error that stays, so that they are surely there while
+    # it is checked) cover none of the controls.
     log = gen_log(page)
     expect(log).to_be_visible()
+    page.evaluate("async () => (await import('/static/js/common/notify.js')).notify("
+                  "'閉じるまで残るエラー（生成の後の確認）', { type: 'error' })")
+    expect(toast(page, "件作成しました", "success").first).to_be_visible()
     reach(log.locator("#edit-genlog-title"), name="生成ログの見出し")
     reach(log.locator("[data-gen-log-close]"), name="生成ログを閉じる")
     reach(generate, name="操作バーの生成（生成後）")
-    expect(toast(page, "件作成しました", "success").first).to_be_visible()
     editor_bar(page, "生成の結果の通知が出ている間")
+    expect(toast(page, "閉じるまで残るエラー", "error")).to_be_visible()
+    assert page.locator("#ui-toasts .ui-toast").count() >= 2
     keep(page, request, "生成ログ")
 
     # A failed save: the reason in the inspector and an error that stays.
@@ -372,9 +381,13 @@ FAULTS = {
     "three-panes-below-1280": ("edge150-1275x609",
                                "@media (width < 1280px) { .edit-layout { grid-template-columns: 240px minmax(0, 1fr) 340px; }"
                                " .edit-nav { position: static; } .edit-nav:not([data-open]) { display: flex; } }", "layout"),
-    "notifications-over-the-inspector": ("1093x500", ".edit-body .ui-toast-stack { left: auto !important; right: 0; }",
+    # The notifications put over the inspector again (fixed at the bottom
+    # right, as an overlay; since PR-7's fix they have a row of their own).
+    "notifications-over-the-inspector": ("1093x500", ".edit-body .ui-toast-stack { position: fixed; right: 0; bottom: 0; "
+                                                     "z-index: var(--z-toast); width: 340px; max-height: none; }",
                                          "toast"),
-    "bar-not-sticky": ("1093x500", ".edit-editor__bar { position: static; }", "bar"),
+    # The 保存・取消 bar back in the inspector's scroll area (its place until PR-7's fix).
+    "bar-in-the-scroll-area": ("1093x500", ".edit-editor__bar { position: static; }", "bar"),
     "covered-control": ("900x600", "body::after { content: ''; position: fixed; inset: 0; z-index: 2147483647; }", "bar"),
     "inspector-out-of-view": ("900x600", "@media (width < 1024px) { .edit-layout { min-width: 1024px; } }", "bar"),
 }
@@ -415,7 +428,8 @@ def test_the_pr7_layout_checks_catch_what_they_must(page, e2e_server, display_ca
 @pytest.mark.parametrize("viewport", [CASE_BY_LABEL["1093x500"]], ids=["1093x500"], indirect=True)
 def test_reach_tells_as_shown_a_pane_scroll_and_a_notification_over_it_apart(page, e2e_server, display_case):
     """reach() keeps "not covered from the start" apart from "reached after
-    a scroll", and scroll=False (the main buttons) accepts neither."""
+    a scroll"; scroll=False (the main buttons) accepts no scroll, and a
+    notification over a control fails either way."""
     analysis_id, a, b, c, d = build(e2e_server, "到達の区別")
     open_edit(page, analysis_id, f"#sel={b}&step=3&view=work")
     expect_editor_ready(page, b)
@@ -428,26 +442,25 @@ def test_reach_tells_as_shown_a_pane_scroll_and_a_notification_over_it_apart(pag
         reach(generate, name="生成（スクロールした後）")
         assert seen[-1]["how"] == layout_checks.REACHED_AS_SHOWN
 
-        # 保存 before a field is in use: the editor starts below the
-        # inspector's visible part at this size (plan 14.8).
-        with pytest.raises(AssertionError, match="追加のスクロールなし"):
-            reach(factor_save(page), name="保存（スクロールなし）", scroll=False)
-        assert seen[-1]["how"] == layout_checks.NOT_REACHED
-        reach(factor_save(page), name="保存（インスペクタをスクロール）")
-        assert seen[-1]["how"] == layout_checks.REACHED_BY_PANE_SCROLL
+        # 保存 before a field is in use: in view at once since PR-7 (the bar
+        # at the bottom of the inspector, outside its scroll area).
+        reach(factor_save(page), name="保存（入力の前。スクロールなし）", scroll=False)
+        assert seen[-1]["how"] == layout_checks.REACHED_AS_SHOWN
 
-        # A notification over a control of the work area (moved there).
+        # A notification over a control of the work area (the stack put
+        # back over the page, as it was before PR-7's fix): a failure, with
+        # or without a scroll, and the record names the notification.
         page.evaluate("async () => (await import('/static/js/common/notify.js')).notify("
                       "'到達の区別の確認', { type: 'error' })")
         top = generate.evaluate("(el) => el.getBoundingClientRect().top")
-        page.add_style_tag(content=f".ui-toast-stack {{ top: {top - 8}px !important; bottom: auto !important; }}")
-        with pytest.raises(AssertionError, match="覆われている"):
-            reach(generate, name="生成（通知の下。スクロールなし）", scroll=False)
-        assert seen[-1]["how"] == layout_checks.NOT_REACHED and not seen[-1]["covered_by_notifications"]
-        reach(generate, name="生成（通知の下）")
-        entry = seen[-1]
-        assert entry["how"] == layout_checks.REACHED_ABOVE_NOTIFICATIONS
-        assert entry["first_misses"] and entry["covered_by_notifications"]
-        assert [t["text"] for t in entry["notifications"]] == ["到達の区別の確認"]
+        page.add_style_tag(content=f".ui-toast-stack {{ position: fixed !important; top: {top - 8}px !important; "
+                                   "left: 0; width: 560px; max-height: none !important; }}")
+        for scroll in (False, True):
+            with pytest.raises(AssertionError, match="通知に覆われている"):
+                reach(generate, name=f"生成（通知の下。{'ペインのスクロールあり' if scroll else 'スクロールなし'}）",
+                      scroll=scroll)
+            entry = seen[-1]
+            assert entry["how"] == layout_checks.NOT_REACHED and entry["covered_by_notifications"]
+            assert [t["text"] for t in entry["notifications"]] == ["到達の区別の確認"]
     finally:
         layout_checks.OBSERVERS.remove(seen.append)

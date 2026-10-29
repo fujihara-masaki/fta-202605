@@ -6,10 +6,22 @@
 // The stack stays short: the same notification again (e.g. a save that keeps
 // failing) updates the one already shown with a repeat count, and beyond
 // MAX_TOASTS the oldest notifications are closed — non-errors first, then
-// errors — so persistent errors cannot pile up and cover the page. The
-// newest notification is never the one closed. Where the stack is limited
-// in height and scrolls (low display areas of the edit screen, PR-7), the
-// newest is scrolled into view.
+// errors — so persistent errors cannot pile up. The newest notification is
+// never the one closed.
+//
+// The stack has a room of its own below the main area (on the edit screen
+// below the work area; css/base.css, css/edit.css), so it never covers the
+// screen (PR-7, plan 8.7 condition 4). It takes at most 30 % of the height
+// (25 % below 700px) and scrolls inside: the newest is scrolled into view.
+//
+// The control that has the focus stays in view with its focus outline
+// (plan 8.7 conditions 3 and 4): keepInView() scrolls the one area it
+// scrolls in by the pixels missing, when the stack grew (that area got
+// lower) and after a key that moved the focus (installFocusView, from
+// boot.js: the browser scrolls a control reached with Tab or an arrow key
+// only to the edge of its area, where the outline is cut). The focus, the
+// input and its selection are never touched; a focus the app gives with
+// preventScroll (after a partial update) keeps its scroll position.
 
 import { el } from './dom.js';
 
@@ -47,6 +59,72 @@ export function announce(message, { assertive = false } = {}) {
   window.setTimeout(() => {
     region.textContent = message;
   }, 50);
+}
+
+const MARGIN = 8; // the focus outline (3px, 2px apart) and a little air
+
+const MOVING_KEYS = new Set(['Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown']);
+
+// The nearest ancestor that scrolls on this axis (overflow auto/scroll with
+// more content than room), or null: a table that scrolls sideways is not
+// the area that scrolls the page down.
+function scrollParent(element, axis) {
+  for (let box = element.parentElement; box; box = box.parentElement) {
+    const style = getComputedStyle(box);
+    const vertical = axis === 'y';
+    if (/(auto|scroll)/.test(vertical ? style.overflowY : style.overflowX)
+        && (vertical ? box.scrollHeight > box.clientHeight : box.scrollWidth > box.clientWidth)) return box;
+  }
+  return null;
+}
+
+// How far to scroll one axis so that [start, end] (with the margin) is in
+// [low, high]; a span larger than the area shows its start.
+function shift(start, end, low, high) {
+  if (end - start + 2 * MARGIN > high - low) return start - MARGIN < low || start > high ? start - MARGIN - low : 0;
+  if (end + MARGIN > high) return end + MARGIN - high;
+  if (start - MARGIN < low) return start - MARGIN - low;
+  return 0;
+}
+
+export function keepInView(element) {
+  if (!element || element === document.body || !element.isConnected || element.closest('dialog')) return;
+  const r = element.getBoundingClientRect();
+  if (!r.width && !r.height) return;
+  const down = scrollParent(element, 'y');
+  if (down) {
+    const top = down.getBoundingClientRect().top + down.clientTop;
+    const dy = shift(r.top, r.bottom, top, top + down.clientHeight);
+    if (dy) down.scrollTop += dy;
+  }
+  const across = scrollParent(element, 'x');
+  if (across) {
+    const left = across.getBoundingClientRect().left + across.clientLeft;
+    const dx = shift(r.left, r.right, left, left + across.clientWidth);
+    if (dx) across.scrollLeft += dx;
+  }
+}
+
+// After the stack grew: the control with the focus (not one of the
+// notifications') is kept in view.
+function keepFocusInView(stack) {
+  const active = document.activeElement;
+  if (active && !stack.contains(active)) keepInView(active);
+}
+
+let keyMoving = false;
+
+export function installFocusView() {
+  document.addEventListener('keydown', (event) => {
+    if (!MOVING_KEYS.has(event.key)) return;
+    keyMoving = true;
+    window.setTimeout(() => {
+      keyMoving = false;
+    }, 0);
+  }, true);
+  document.addEventListener('focusin', (event) => {
+    if (keyMoving) keepInView(event.target);
+  }, true);
 }
 
 function enforceLimit(stack, newest) {
@@ -116,6 +194,7 @@ export function notify(message, { type = 'success' } = {}) {
       count.hidden = false;
       stack.append(toast); // move to the newest position
       stack.scrollTop = stack.scrollHeight;
+      keepFocusInView(stack);
       schedule();
     },
   });
@@ -130,6 +209,7 @@ export function notify(message, { type = 'success' } = {}) {
   stack.append(toast);
   enforceLimit(stack, toast);
   stack.scrollTop = stack.scrollHeight;
+  keepFocusInView(stack);
   announce(label, { assertive: kind === 'error' });
   schedule();
   return handle;

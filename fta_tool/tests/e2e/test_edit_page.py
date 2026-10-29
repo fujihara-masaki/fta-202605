@@ -69,7 +69,7 @@ from tests.e2e.edit_helpers import (
     top_button,
     update_requests,
 )
-from tests.e2e.support import VIEWPORT_REFUSED, expect, judge_viewport, measure_viewport
+from tests.e2e.support import VIEWPORT_REFUSED, expect, judge_viewport, measure_viewport, page_scroll_width
 
 pytestmark = pytest.mark.e2e
 
@@ -557,7 +557,7 @@ def check_layout(page, width: int, height: int, controls: list, timeout=None) ->
     """The three panes side by side within the display area width x height
     (CSS px), no horizontal scroll of the page, the panes scroll inside and
     every control is visible and not covered."""
-    assert page.evaluate("() => document.documentElement.scrollWidth") <= width
+    assert page_scroll_width(page) <= width
     nav = page.locator("#edit-nav").bounding_box()
     center = page.locator("#edit-work-area").bounding_box()
     side = page.locator("#edit-inspector").bounding_box()

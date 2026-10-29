@@ -379,23 +379,40 @@ textarea.ui-input {
   line-height: 1.5;
 }
 
-/* ----- Notifications (bottom centre, J-24) ----- */
+/* ----- Notifications (J-24) -----
+ * Below the main area, in a room of their own (base.css; on the edit screen
+ * below the work area, edit.css), never over the screen (plan 8.7 condition
+ * 4, PR-7). At most 30 % of the height (25 % below 700px); more scroll inside (the newest is
+ * kept in view, js/common/notify.js), each one and its 閉じる reached with
+ * Tab. Shown for as long as before (J-24: errors stay until closed). */
 .ui-toast-stack {
-  position: fixed;
-  bottom: var(--space-5);
-  left: 50%;
-  z-index: var(--z-toast);
   display: flex;
+  flex: none;
   flex-direction: column;
-  align-items: stretch;
+  align-items: center;
   gap: var(--space-2);
-  width: min(560px, calc(100vw - 32px));
-  transform: translateX(-50%);
-  pointer-events: none;
+  max-height: 30vh;
+  padding: var(--space-2) var(--space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+.ui-toast-stack:empty {
+  display: none;
+}
+/* Low display areas (e.g. 1366x768 at 125 %: 500px high): a quarter of the
+   height, so the area above keeps room for its content and controls. */
+@media (height < 700px) {
+  .ui-toast-stack {
+    max-height: 25vh;
+  }
 }
 .ui-toast {
   display: flex;
+  flex: none;
   align-items: flex-start;
+  width: min(560px, 100%);
   gap: var(--space-3);
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
   border: 1px solid var(--color-border);
@@ -407,7 +424,6 @@ textarea.ui-input {
   font-size: var(--font-size-sm);
   line-height: 1.5;
   box-shadow: var(--shadow-md);
-  pointer-events: auto;
 }
 .ui-toast__kind {
   flex: none;

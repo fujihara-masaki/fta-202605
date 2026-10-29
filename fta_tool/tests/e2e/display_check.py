@@ -68,8 +68,7 @@ import traceback
 from typing import Callable, Optional
 
 from tests.e2e.acceptance import DisplayCase
-from tests.e2e.layout_checks import (NOT_REACHED, OBSERVERS, REACHED_ABOVE_NOTIFICATIONS, REACHED_AS_SHOWN,
-                                     REACHED_BY_PANE_SCROLL, reach)
+from tests.e2e.layout_checks import NOT_REACHED, OBSERVERS, REACHED_AS_SHOWN, REACHED_BY_PANE_SCROLL, reach
 from tests.e2e.support import FTA_TOOL_DIR, free_port, save_screenshot, start_server
 
 # Below these the plan has no assumed size (plan 5.9.4: 1024px wide and
@@ -337,7 +336,8 @@ class DisplayCheck:
     def checks(self) -> list[tuple[str, Callable]]:
         return [("一覧：主要な操作と削除のダイアログ", self.check_list),
                 ("新規作成：主要な操作と確認のダイアログ", self.check_new),
-                ("編集画面：レイアウト・主要な操作・入力中の保存・取消", self.check_edit),
+                ("編集画面：レイアウト・主要な操作・入力の前と入力中の保存・取消", self.check_edit),
+                ("編集画面：通知の表示中のキーボード操作とフォーカスの後の通知", self.check_focus),
                 ("編集画面：構造ナビの開閉（1280px 未満）", self.check_drawer),
                 ("編集画面：未保存確認・削除・手動追加のダイアログ", self.check_dialogs),
                 ("編集画面：生成中の状態表示・生成ログ・通知・保存失敗", self.check_generation)]
@@ -388,17 +388,45 @@ class DisplayCheck:
         page.fill("#title", "")
 
     def check_edit(self, case, level, entry):
-        from tests.e2e.test_pr7_viewports import editor_bar, expect_layout, expect_scrolling, main_controls
+        from tests.e2e.test_pr7_viewports import (editor_bar, editor_bar_as_shown, expect_layout, expect_scrolling,
+                                                  main_controls)
 
         self.open_edit()
         expect_layout(self.page, case)
         expect_scrolling(self.page, case, level)
+        editor_bar_as_shown(self.page, f"{level}・入力の前")
         for name, control in main_controls(self.page, self.data["b"]).items():
             reach(control, name=name)
         editor_bar(self.page, level)
         entry.setdefault("fonts", self.fonts())
         self.keep(entry, "編集画面")
         return f"描画に使われたフォント：{entry['fonts']}"
+
+    def check_focus(self, case, level, entry):
+        """The same as tests/e2e/test_pr7_focus.py (E-K01): Tab and Shift+Tab
+        with notifications shown, the focus in view and on top after each
+        key (nothing scrolled by the tool); a notification shown while
+        typing in the inspector leaves the focus, the text and its
+        selection; the notifications closed with the keys."""
+        from tests.e2e.edit_helpers import factor_cancel, factor_field
+        from tests.e2e.layout_checks import focus_shown
+        from tests.e2e.test_pr7_focus import close_notifications_by_keyboard, notify, walk_with_notifications
+
+        self.open_edit()
+        page = self.page
+        seen = walk_with_notifications(page, presses=40, what=f"{level}・")
+        field = factor_field(page, "prevention_idea")
+        field.click()
+        page.keyboard.type("通知の確認の入力")
+        before = field.evaluate("(el) => [el.value, el.selectionStart, el.selectionEnd]")
+        notify(page, "入力中に出た注意（確認）", "warning")
+        focus_shown(page, f"{level}・入力中に通知が出た後")
+        assert field.evaluate("(el) => document.activeElement === el"), "入力中に通知が出た後、フォーカスが入力欄にない"
+        assert field.evaluate("(el) => [el.value, el.selectionStart, el.selectionEnd]") == before, "入力・選択が変わった"
+        self.keep(entry, "通知の表示中のフォーカス")
+        close_notifications_by_keyboard(page, f"{level}・")
+        factor_cancel(page).click()
+        return f"Tab・Shift+Tab {len(seen)} 回：フォーカスの表示は通知・保存・取消の帯に覆われず、見えている範囲の中"
 
     def check_drawer(self, case, level, entry):
         from tests.e2e.edit_helpers import select_button
@@ -802,19 +830,17 @@ class DisplayCheck:
     def reach_lines(self) -> list[str]:
         """Not covered from the start, or reached only after a scroll (plan 8.7 condition 4)."""
         lines = ["", "## 主要な操作への到達", "",
-                 "保存・取消（入力中）とダイアログのボタンは、スクロールなしで表示領域の中にあり、通知にも覆われないことを確かめます"
-                 "（そうでなければ NG）。ほかの操作は、ペインをスクロールして届けば OK で、下部の通知だけが重なる場合は通知の上まで"
-                 "ペインをスクロールして判定します。**「通知の上へスクロール」は、最初は通知に覆われていた操作です。**", "",
-                 "| 条件 | 確かめた数 | 表示のまま（うちスクロールなしが要件） | ペインのスクロールで到達 | 通知の上へスクロールして到達 "
-                 "| 届かない（NG） |",
-                 "|---|---|---|---|---|---|"]
+                 "保存・取消（入力の前・入力中）とダイアログのボタンは、スクロールなしで表示領域の中にあり、通知にも覆われないことを"
+                 "確かめます（そうでなければ NG）。ほかの操作は、ペイン（長い一覧など）をスクロールして届けば OK です。"
+                 "**通知に覆われていた操作は、スクロールの有無にかかわらず NG です。**", "",
+                 "| 条件 | 確かめた数 | 表示のまま（うちスクロールなしが要件） | ペインのスクロールで到達 | 届かない（NG） |",
+                 "|---|---|---|---|---|"]
         levels = list(dict.fromkeys(e["level"] for e in self.reaches))
         for level in levels:
             entries = [e for e in self.reaches if e["level"] == level]
             shown = [e for e in entries if e["how"] == REACHED_AS_SHOWN]
             lines.append(f"| {level} | {len(entries)} | {len(shown)}（{sum(e['no_scroll_required'] for e in shown)}） "
                          f"| {sum(e['how'] == REACHED_BY_PANE_SCROLL for e in entries)} "
-                         f"| {sum(e['how'] == REACHED_ABOVE_NOTIFICATIONS for e in entries)} "
                          f"| {sum(e['how'] == NOT_REACHED for e in entries)} |")
         other = [e for e in self.reaches if e["how"] != REACHED_AS_SHOWN]
         if other:

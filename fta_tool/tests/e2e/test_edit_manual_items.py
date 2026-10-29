@@ -55,7 +55,7 @@ from tests.e2e.edit_helpers import (
     top_button,
     wait_until,
 )
-from tests.e2e.support import PageWatcher, expect
+from tests.e2e.support import PageWatcher, expect, page_scroll_width
 from tests.e2e.test_edit_integrity import PARENT_REASON_INCONSISTENT, build_every_category
 from tests.e2e.test_edit_page import build_tree
 
@@ -275,7 +275,7 @@ def test_each_pane_scrolls_on_its_own(page, e2e_server, viewport):
 
     width = page.evaluate("() => document.documentElement.clientWidth")
     assert width == viewport["width"]
-    assert page.evaluate("() => document.documentElement.scrollWidth") <= width
+    assert page_scroll_width(page) <= width
     folded = nav_folded(page)
     open_nav(page)  # below 1280px the navigation is shown over the work area (PR-7)
     nav, center, side = (page.locator(selector).bounding_box()

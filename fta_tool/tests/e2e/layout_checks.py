@@ -10,15 +10,23 @@ element drawn on top. Screenshots only complement them (the visual review).
   - scroll=False, the main buttons (保存・取消 of the inspector, the
     buttons of a dialog): as shown, without any scrolling, and not covered
     (by a notification either);
-  - scroll=True, a control in a pane that scrolls: reached by scrolling
-    that pane as a user would. If then only the notifications at the
-    bottom are over it, the pane is scrolled above them (the panes keep
-    128px of room below their content, PR-4); it fails if the pane cannot
-    scroll that far.
+  - scroll=True, a control in a pane that scrolls (a long list): reached
+    by scrolling that pane as a user would. A notification over it is a
+    failure here too: since PR-7 the notifications have a room of their
+    own and never cover a control (plan 8.7 condition 4; until then this
+    check scrolled the pane above them, which hid the fault).
   Each call tells the observers (OBSERVERS) how the control was reached —
-  REACHED_AS_SHOWN, REACHED_BY_PANE_SCROLL, REACHED_ABOVE_NOTIFICATIONS or
-  NOT_REACHED (the check then fails), with what covered it at first — so that the record keeps "not covered
-  from the start" apart from "reached after a scroll" (acceptance.py);
+  REACHED_AS_SHOWN, REACHED_BY_PANE_SCROLL or NOT_REACHED (the check then
+  fails), with what covered it (a notification among them) — so that the
+  record keeps "not covered from the start" apart from "reached after a
+  scroll" (acceptance.py);
+* focus_shown(): the control that has the focus, as it is after the key
+  and the app's own handling (nothing is scrolled by the check): fully in
+  the display area and in every area it scrolls in, its focus outline too,
+  and on top (a notification or the 保存・取消 bar over it fails; plan 8.7
+  conditions 3 and 4, PR-7's fix of 2026-10-29);
+* tab_walk(): presses Tab (or Shift+Tab) and checks focus_shown() after
+  each press, with the notifications that must still be shown;
 * page_scroll(): the page's own scroll size against the display area;
 * pane_scroll(): the panes' sideways scrolling;
 * layout(): which layout the edit page has (three panes or the folded
@@ -37,7 +45,6 @@ EDGE = 0.5
 # How reach() got to a control (the record, plan 8.7 condition 4).
 REACHED_AS_SHOWN = "表示のまま（スクロールなし・覆われない）"
 REACHED_BY_PANE_SCROLL = "ペインのスクロールで到達"
-REACHED_ABOVE_NOTIFICATIONS = "通知に覆われていたため、通知の上へスクロールして到達"
 NOT_REACHED = "届かない（失敗）"
 
 # Called with one dict per reach() (tests/e2e/conftest.py, display_check.py).
@@ -66,28 +73,13 @@ HIT = """(el) => {
            scrollX: window.scrollX, scrollY: window.scrollY };
 }"""
 
-# Scroll the nearest scrolling ancestor of the element so that its bottom is
-# above the top of the notifications (plus a small gap); false if it cannot.
-ABOVE_NOTIFICATIONS = """(el) => {
-  const stack = document.getElementById('ui-toasts');
-  if (!stack || !stack.querySelector('.ui-toast')) return false;
-  const top = stack.getBoundingClientRect().top;  // the stack may scroll inside (low display areas)
-  let box = el.parentElement;
-  while (box && !(box.scrollHeight > box.clientHeight && /(auto|scroll)/.test(getComputedStyle(box).overflowY))) {
-    box = box.parentElement;
-  }
-  if (!box) return false;
-  const need = el.getBoundingClientRect().bottom - top + 8;
-  if (need <= 0) return true;
-  const before = box.scrollTop;
-  box.scrollTop = before + need;
-  return box.scrollTop - before >= need - 1;
-}"""
-
+# The page's own scroll: the root's, and since PR-7's fix of 2026-10-29 the
+# main area's (it scrolls, not the page; support.PAGE_WIDTH).
 PAGE_SCROLL = """() => {
-  const root = document.documentElement;
-  return { scroll: [root.scrollWidth, root.scrollHeight], client: [root.clientWidth, root.clientHeight],
-           at: [window.scrollX, window.scrollY] };
+  const root = document.documentElement, main = document.getElementById('main');
+  const inMain = main ? main.scrollWidth + (main.offsetWidth - main.clientWidth) : 0;
+  return { scroll: [Math.max(root.scrollWidth, inMain), root.scrollHeight], client: [root.clientWidth, root.clientHeight],
+           at: [Math.max(window.scrollX, main ? main.scrollLeft : 0), window.scrollY] };
 }"""
 
 PANE_SCROLL = """() => {
@@ -122,17 +114,14 @@ def reach(locator, *, timeout: Optional[float] = None, name: str = "", scroll: b
     expect(locator).to_be_visible(timeout=timeout)
     label = name or describe(locator)
     first = locator.evaluate(HIT)  # as shown, before any scroll
-    found, how, covered, notifications = first, REACHED_AS_SHOWN, [], []
+    found, how = first, REACHED_AS_SHOWN
     if not (_inside(first) and not first["misses"]):
         how = REACHED_BY_PANE_SCROLL
     if scroll and how != REACHED_AS_SHOWN:
         locator.scroll_into_view_if_needed(timeout=timeout)
         found = locator.evaluate(HIT)
-        if found["misses"] and all(miss["over"] and "ui-toast" in miss["over"] for miss in found["misses"]):
-            covered, notifications = found["misses"], locator.page.evaluate(NOTIFICATIONS)
-            if locator.evaluate(ABOVE_NOTIFICATIONS):
-                found = locator.evaluate(HIT)
-                how = REACHED_ABOVE_NOTIFICATIONS
+    covered = [miss for miss in found["misses"] if miss["over"] and "ui-toast" in miss["over"]]
+    notifications = locator.page.evaluate(NOTIFICATIONS) if covered else []
     if found["scrollX"] != 0 or not _inside(found) or found["misses"]:
         how = NOT_REACHED
     for observer in OBSERVERS:
@@ -145,6 +134,7 @@ def reach(locator, *, timeout: Optional[float] = None, name: str = "", scroll: b
     assert found["scrollX"] == 0, f"{label}：ページを横にスクロールしないと届かない（scrollX {found['scrollX']}）"
     assert _inside(found), (
         f"{label}：表示領域 {width}×{height} の外にはみ出す（{x:.1f}, {y:.1f}, {w:.1f}×{h:.1f}）{rule}")
+    assert not covered, f"{label}：通知に覆われている {covered}{rule}"
     assert not found["misses"], f"{label}：ほかの要素に覆われている {found['misses']}{rule}"
     return found
 
@@ -153,6 +143,125 @@ def _inside(found: dict) -> bool:
     x, y, w, h = found["box"]
     width, height = found["client"]
     return x >= -EDGE and y >= -EDGE and x + w <= width + EDGE and y + h <= height + EDGE
+
+
+# The focused element: its box, its focus outline (how far outline-width
+# and -offset reach outside the box: what the user sees), the areas it scrolls in (and the display
+# area), the part of it that is visible in all of them, and the elements
+# drawn at five points of that part. Read only: nothing is scrolled.
+FOCUS = """() => {
+  const el = document.activeElement;
+  if (!el || el === document.body || el === document.documentElement) return null;
+  const r = el.getBoundingClientRect();
+  const style = getComputedStyle(el);
+  // How far the outline reaches outside the box (an inset one: 0).
+  const ring = style.outlineStyle !== 'none' ? Math.max(0, (parseFloat(style.outlineWidth) || 0) + (parseFloat(style.outlineOffset) || 0)) : 0;
+  const w = document.documentElement.clientWidth, h = document.documentElement.clientHeight;
+  const clips = [{ name: '表示領域', rect: [0, 0, w, h] }];
+  // An element placed with position: absolute (fixed) is clipped only by the
+  // areas from its containing block up (the 保存・取消 bar: by the
+  // inspector pane, not by its scroll area).
+  const containingBlock = (node) => {
+    const position = getComputedStyle(node).position;
+    if (position === 'fixed') return document.documentElement;
+    if (position !== 'absolute') return null;
+    for (let up = node.parentElement; up; up = up.parentElement) {
+      if (getComputedStyle(up).position !== 'static') return up;
+    }
+    return document.documentElement;
+  };
+  let skipTo = containingBlock(el);
+  for (let box = el.parentElement; box && box !== document.documentElement; box = box.parentElement) {
+    const s = getComputedStyle(box);
+    if (skipTo && box !== skipTo) continue;
+    skipTo = null;
+    const next = containingBlock(box);
+    if (next) skipTo = next;
+    if (/(auto|scroll|hidden|clip)/.test(s.overflowX + s.overflowY)) {
+      const b = box.getBoundingClientRect();
+      const left = b.left + box.clientLeft, top = b.top + box.clientTop;
+      clips.push({ name: box.id || box.dataset.scroll || (typeof box.className === 'string' ? box.className : '') || box.tagName.toLowerCase(),
+                   rect: [left, top, left + box.clientWidth, top + box.clientHeight] });
+    }
+  }
+  const vis = [r.left, r.top, r.right, r.bottom];
+  for (const c of clips) {
+    vis[0] = Math.max(vis[0], c.rect[0]); vis[1] = Math.max(vis[1], c.rect[1]);
+    vis[2] = Math.min(vis[2], c.rect[2]); vis[3] = Math.min(vis[3], c.rect[3]);
+  }
+  const misses = [];
+  if (vis[2] > vis[0] && vis[3] > vis[1]) {
+    const points = [[0.5, 0.5], [0.15, 0.2], [0.85, 0.2], [0.15, 0.8], [0.85, 0.8]];
+    for (const [fx, fy] of points) {
+      const x = vis[0] + (vis[2] - vis[0]) * fx, y = vis[1] + (vis[3] - vis[1]) * fy;
+      const hit = document.elementFromPoint(x, y);
+      if (!(hit && (hit === el || el.contains(hit)))) {
+        misses.push({ x: Math.round(x), y: Math.round(y),
+                      over: hit ? (hit.id ? '#' + hit.id : hit.tagName.toLowerCase() + (typeof hit.className === 'string' && hit.className.trim() ? '.' + hit.className.trim().split(/\\s+/).join('.') : '')) : null });
+      }
+    }
+  }
+  const label = el.id || el.getAttribute('data-action') || el.getAttribute('aria-label') || (el.textContent || el.value || '').trim().slice(0, 30) || el.tagName.toLowerCase();
+  return { label, tag: el.tagName.toLowerCase(), box: [r.x, r.y, r.width, r.height], ring, client: [w, h], clips, visible: vis, misses,
+           inToasts: Boolean(el.closest('#ui-toasts')), inDialog: Boolean(el.closest('dialog')),
+           toasts: document.querySelectorAll('#ui-toasts .ui-toast').length };
+}"""
+
+
+def focus_shown(page, what: str = "") -> Optional[dict]:
+    """The focused control is shown as it is (see the module); its record,
+    or None when nothing has the focus. Never scrolls anything.
+
+    A control that fits in the areas it scrolls in must be wholly visible
+    with its focus outline. A larger one (a tab panel, a long text area)
+    must show at least half of the area that is smaller than it. Either
+    way the points of its visible part are on top (not under a
+    notification or the 保存・取消 bar)."""
+    found = page.evaluate(FOCUS)
+    if found is None:
+        return None
+    x, y, w, h = found["box"]
+    ring = found["ring"]
+    label = f"{what}：{found['label']}" if what else found["label"]
+    assert w > 0 and h > 0, f"{label}：フォーカスのある要素に大きさがない"
+    outer = (x - ring, y - ring, x + w + ring, y + h + ring)
+    vl, vt, vr, vb = found["visible"]
+    for axis in (0, 1):
+        start, end = (outer[0], outer[2]) if axis == 0 else (outer[1], outer[3])
+        spans = [(clip["name"], *((clip["rect"][0], clip["rect"][2]) if axis == 0 else (clip["rect"][1], clip["rect"][3])))
+                 for clip in found["clips"]]
+        smallest = min(high - low for _, low, high in spans)
+        if end - start <= smallest + EDGE:
+            for name, low, high in spans:
+                assert start >= low - EDGE and end <= high + EDGE, (
+                    f"{label}：フォーカスの表示が {name} の見えている範囲の外"
+                    f"（{'横' if axis == 0 else '縦'}：要素 {start:.1f}〜{end:.1f}、範囲 {low:.1f}〜{high:.1f}）")
+        else:
+            shown = (vr - vl) if axis == 0 else (vb - vt)
+            assert shown >= smallest / 2, (
+                f"{label}：見えている範囲より大きな要素の、見えている部分が半分未満"
+                f"（{'横' if axis == 0 else '縦'} {shown:.1f}px、範囲 {smallest:.1f}px）")
+    covered = [miss for miss in found["misses"] if miss["over"] and "ui-toast" in miss["over"]]
+    assert not covered, f"{label}：フォーカスのある要素が通知に覆われている {covered}"
+    assert not found["misses"], f"{label}：フォーカスのある要素がほかの要素に覆われている {found['misses']}"
+    return found
+
+
+def tab_walk(page, presses: int, *, key: str = "Tab", toasts: int = 0, what: str = "") -> list[dict]:
+    """Press `key` `presses` times; after each press (the browser's and the
+    app's handling done) the focused control is shown (focus_shown) and at
+    least `toasts` notifications are still there, so the check never passes
+    on a screen whose notifications have gone. The records of each press."""
+    seen = []
+    for press in range(1, presses + 1):
+        page.keyboard.press(key)
+        found = focus_shown(page, f"{what}{key} {press} 回目")
+        if found is None:
+            continue
+        assert found["toasts"] >= toasts, (
+            f"{what}{key} {press} 回目：通知が {found['toasts']} 件（{toasts} 件以上を表示したまま確かめる）")
+        seen.append(found)
+    return seen
 
 
 def page_scroll(page) -> dict:
