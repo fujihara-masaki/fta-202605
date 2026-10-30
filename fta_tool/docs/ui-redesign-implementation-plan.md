@@ -3206,14 +3206,44 @@ CI：リポジトリに CI の設定（`.github/workflows` など）はない。
 
 件数の増加：Full 544 → 579（+35：`test_pr7_focus.py` 35 件。保存・取消 14、キーボード 7、通知の後のフォーカス 7、一覧 7）。全寸法 2656 → 2691。`e2e-report-d2eb76e-full.md` の「主要な操作への到達」で通知に覆われていた操作は、検出力の確認の試験（通知をわざと重ねたもの）だけだった。修正後の代表画面 10 枚は `evidence/pr7/screens/d2eb76e-*.png`（`163b193-*.png` は修正前）。
 
+#### Windows 実機の確認（2026-10-30、候補 `d2eb76e`）：Full は不合格、試験の修正（候補 `795cf36`）
+
+利用者が 2026-10-30 に Windows 11 Home で、候補 `d2eb76e` の Chrome・Edge の準備確認と Full を行った。**準備確認は両方とも成功 9。Full は両方とも成功 573・失敗 8 で不合格。**この結果は元の結果として残す（[evidence/pr7/windows-2026-10-30-d2eb76e.md](evidence/pr7/windows-2026-10-30-d2eb76e.md)）。失敗は両ブラウザで同じ2系統で、どちらも**試験側の不具合**（アプリの不具合ではない）。原因・修正・修正前後の判定は [evidence/pr7/windows-full-fix-795cf36.md](evidence/pr7/windows-full-fix-795cf36.md)。
+
+| 系統 | 失敗 | 原因 | 修正（`795cf36`） |
+|---|---|---|---|
+| A（テスト側） | `test_E_K01_tab_shift_tab_and_arrows_show_the_focus_with_notifications` の7寸法：「Tab が通知の閉じるに届いていない」 | 試験は、ブラウザの「Tab の開始位置」がどこにあっても Tab を 60 回押した。開発環境（headless Chromium 153）では、読み込み直後の開始位置が作業エリアの末尾に残り、最初の Tab で通知に入っていた。ページの先頭からだと通知に届くのは 79〜93 回目で、60 回では届かない。通知の「閉じる」は Tab の順序の中（作業エリアの直後・インスペクタの直前）にあり、アプリは正しい。Windows（headed）での開始位置は未確認 | 巡回を、利用者がクリックした位置（絞り込み欄、Shift+Tab はインスペクタの見出し）から始める。回数の上限は「ページの Tab で止まる操作の数 + 2」（`layout_checks.tab_until()`）。通知の「閉じる」3つが作業エリアの直後・インスペクタの直前に並ぶことを、前後の両方向で確かめる。ページの上から届くことを確かめる試験を追加（`test_E_K01_the_notifications_are_reached_from_the_top_of_the_page`、2寸法）。テストから通知のボタンに `.focus()` はしない |
+| B（試験の道具側） | `test_the_display_check_tool_runs_its_checks_and_records_them`：終了後に `display-check/work` が残った | `support.start_server()` が `server.log`（サーバーの標準出力）をこのプロセスで開いたまま閉じていなかった。Windows では、開いているファイルは削除できない（Python の `open()` は削除の共有を許さない）。それを `shutil.rmtree(..., ignore_errors=True)` が隠していた。Linux では開いたファイルも削除できるため、開発環境では起きなかった。SQLite の接続は問い合わせごとに閉じており、関係しない。Windows のエラーそのもの（`WinError 32` など）は未確認 | `E2EServer.close()` が、サーバーの停止の後に `server.log` のハンドルを閉じる（kill した場合も終了を待つ）。`display_check.py` は記録フォルダの `work` だけを、最大 10 回（0.5 秒おき）試して削除し、消せなければ理由（例外と残ったファイル）を `result.md`・`result.json` に記録して「未完了」（終了コード 2）にする。`ignore_errors` は使わない。回帰試験：サーバーが閉じた後に自分のフォルダのファイルを開いていない（`/proc/self/fd`）、`ignore_errors` なしで削除できる、削除できないときは未完了と理由、記録フォルダの外は消さない |
+
+修正前後の判定（開発環境）：A は、修正前の巡回（`18e329b`）を、開始位置をページの上に置いた状態で動かすと2寸法とも「Tab が通知の閉じるに届いていない」で失敗し（Windows と同じ）、修正後は成功した。読み込み直後の開始位置では、修正前・修正後とも成功した。B は、修正前のコード（`18e329b`）に回帰試験の4件を当てるとすべて失敗し（サーバーを閉じた後も `work/server.log` を開いたまま、など）、修正後は成功した。
+
+変更したのは試験のコード（`tests/e2e/test_pr7_focus.py`・`layout_checks.py`・`support.py`・`display_check.py`・`test_display_check.py`・`README.md`）だけで、アプリ・スクリプトは `d2eb76e` と同じ（`git diff --name-only d2eb76e 795cf36 -- fta_tool/app fta_tool/scripts` は空）。同じ型の `ignore_errors=True` は W-02 の道具（`cache_manual_check.py` の `clean()`）にも残っているが、今回の範囲外として変えていない（`start_server()` の修正で、そのハンドルの原因はなくなる）。
+
+##### 受入候補 `795cf36` での確認結果（開発環境、2026-10-30）
+
+対象 `795cf36b85b7c114df950b255bfe2a726ef6ab88`（クリーンな worktree、未コミットの変更なし、`.env` なし）。環境は上と同じ（Linux、Python 3.12.3、playwright 1.56.0 / pytest-playwright 0.7.1、Chromium 153.0.8010.12 headless を明示、実LLMなし）。**Linux での成功は、Windows の Chrome・Edge の成功ではない。**
+
+| 試験 | 結果 |
+|---|---|
+| 修正に対応した回帰試験（`test_pr7_focus.py`・`test_display_check.py` の 14 件。手順書 第3.0節と同じ選択。コミット前の作業ツリーで実行し、内容は `795cf36` と同じ。同じ 14 件は下の Full にも含まれる） | 成功 14 |
+| 通常の pytest（E2E を除く、`-m "not e2e"`） | **466 passed / 20 skipped / 0 failed**。スキップ 20件はすべて PowerShell がないため |
+| 累積の全必須 E2E（`-m e2e --e2e-required`） | **合格**：成功 585・失敗 0・スキップ 0・未実施 0、必須 75 項目すべて成功、18分43秒（04:07:44〜04:26:27 UTC） |
+| 通常の pytest（E2E を含む、`pytest`） | **1051 passed / 20 skipped / 0 failed**、18分19秒。スキップ 20件はすべて PowerShell がないため |
+| 全テストを PR-7 の全寸法で | **未実施**（`795cf36` では行っていない）。変更は試験のコードだけで、全寸法の実行で増えるのは「寸法を自分で選ばない」テストの寸法だが、変えたテストは寸法を自分で選ぶ（`test_pr7_focus.py`）か、ページを使わない（`test_display_check.py` の追加分）。`support.E2EServer.close()` の変更は、テスト用サーバーの終了の時だけ。アプリは `d2eb76e` と同じで、`d2eb76e` の全寸法の実行は合格（その SHA の結果） |
+
+件数：Full 579 → 585（+6：ページの上からの Tab 2、道具の一時フォルダの削除 4）。
+
+Windows の確認の方針（2026-10-30、利用者）：候補 `795cf36` で、まず修正対象の試験だけを Chrome・Edge で行い（[manual-check-pr7.md](manual-check-pr7.md) 第3.0節）、成功してから同じ SHA で準備確認・Full。そのあと表示倍率・IME の補助確認と目視。Windows の FullSizes は今回は行わない（未実施）。
+
 #### 未実施・未確認
 
-- Windows 11 の Chrome・Edge での準備確認・Full・FullSizes、表示倍率 100・125・150% とブラウザの拡大 100・125・150% の確認、Microsoft IME、NVDA：すべて**未実施**。
+- Windows 11 の Chrome・Edge：候補 `d2eb76e` の準備確認（成功）と Full（**不合格**）だけを行った（上の記録）。受入候補 `795cf36` の確認（個別の回帰試験・準備確認・Full）、表示倍率 100・125・150% とブラウザの拡大 100・125・150% の確認、Microsoft IME、NVDA、目視：すべて**未実施**。
 - `display_check.py` の Windows での通常の実行（ブラウザの起動、拡大の検出、各確認、IME の判定、記録の作成）は未確認。準備確認は `run_display_check.ps1` の構文解析と誤った SHA での中止だけを確かめる。開発環境では、模擬の拡大での実行と、合成したイベントでの IME の判定ロジックの試験だけを行った（Microsoft IME の確認ではない）。
 - 利用者の PC の Windows の表示倍率は再確認していない（2026-10-28 の実測は表示倍率を記録していない）。100% とは扱わず、Windows の確認で設定の値を記録する。
-- Windows での FullSizes：2026-10-30 の利用者の方針で、候補 `d2eb76e` の Windows の確認では行わない（**未実施**として記録。開発環境の FullSizes の合格を Windows の結果に読み替えない）。Windows の確認は Chrome・Edge の Preflight → Full → 表示倍率・IME の補助確認 → 目視。
+- Windows での FullSizes：2026-10-30 の利用者の方針で、候補 `d2eb76e`・`795cf36` の Windows の確認では行わない（**未実施**として記録。開発環境の FullSizes の合格を Windows の結果に読み替えない）。Windows の確認は Chrome・Edge の個別の回帰試験（`795cf36` から）→ Preflight → Full → 表示倍率・IME の補助確認 → 目視。
 - 高さ 500px 前後で通知が多いときの作業エリアの狭さ（約 50px）：重なりの自動検査は成功、Windows 実機での読みやすさ・操作感は**未確認**。
-- CI：リポジトリに CI の設定はなく、`193f740` に CI の結果はない。Codex の `d2eb76e` へのレビューは未完了（2026-10-30 00:15 UTC の時点で Running）。
+- CI：リポジトリに CI の設定はなく、PR の HEAD に CI の結果はない。Codex の `d2eb76e` へのレビューは未完了（2026-10-30 04:00 UTC 頃の再取得でも Running）。新しい試験コードの HEAD（`795cf36` 以降）へのレビューも、受入・マージの前に必要（下の記録のコミットの後に1回依頼）。
+- Windows の Chrome・Edge での、候補 `795cf36` の個別の回帰試験・準備確認・Full・表示倍率と IME の補助確認・目視：**未実施**。2026-10-30 の候補 `d2eb76e` の Full は不合格（記録として残す）。
 - 上の「受入条件の読み方で利用者の判断が必要な点」の2点：2026-10-29 に利用者が (b) アプリを直す、と判断。修正は「条件2・条件4の修正」。修正後の Windows での確認は未実施。
 - PowerShell のスクリプトの実行の試験（`tests/test_run_browser_e2e_script.py` などの PowerShell が必要な試験）は、この開発環境に PowerShell がないためスキップ（PR-3〜PR-C と同じ）。Windows の準備確認で `test_windows_tools.py` が構文解析と実行前の中止を確かめる。
 - Chromium 141（固定版の Playwright のブラウザ）での自動試験は未実施（PR-C と同じく、環境の Chromium 153 を `--e2e-browser-executable` で明示）。

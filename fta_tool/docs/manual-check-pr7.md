@@ -2,7 +2,9 @@
 
 計画書（[ui-redesign-implementation-plan.md](ui-redesign-implementation-plan.md)）第8.7節（PR-7 仕上げ）の確認を、Windows 11 のインストール済みの **Google Chrome と Microsoft Edge の両方**で行うための手順です。対象は PR-7 の作業ブランチ `claude/pr7-ui-finish` の**受入候補の SHA（40桁。PR 本文と計画書 第14.8節に書いたもの）**です。ブランチの先頭を受入候補とみなさないでください（候補の後に記録だけのコミットが続くことがあります。第1節）。
 
-**受入候補：`d2eb76e4db15876ee2a9e9054839d4262dee2069`**（2026-10-29。条件2・条件4のアプリの修正を含む。開発環境で通常の pytest・全必須 E2E・全寸法の実行が合格。その後のコミットは、この手順書・計画書・`docs/evidence/pr7/` の記録だけ）。以前の候補 `a572c39`・`163b193` は確認に使いません。
+**受入候補：`795cf36b85b7c114df950b255bfe2a726ef6ab88`**（2026-10-30。2026-10-30 の Windows の Full で失敗した2系統の試験の修正。アプリ・スクリプトは `d2eb76e` と同じで、変えたのは試験のコード（`tests/e2e/`）だけ。その後のコミットは、この手順書・計画書・`docs/evidence/pr7/` の記録だけ）。以前の候補 `d2eb76e`・`a572c39`・`163b193` は確認に使いません。
+
+**2026-10-30 の Windows の結果（候補 `d2eb76e`、Windows 11 Home）は不合格として残します**：Chrome・Edge とも準備確認は成功 9、Full は成功 573・失敗 8（同じ2系統。[evidence/pr7/windows-2026-10-30-d2eb76e.md](evidence/pr7/windows-2026-10-30-d2eb76e.md)）。新しい候補では、**まず第3.0節の個別の回帰試験**を Chrome・Edge で行い、成功してから同じ SHA で準備確認・Full（第3・4節）に進みます。
 
 この手順書は確認の進め方をまとめたもので、受入の合否を決めるものではありません。合否と `feature/ui-redesign` へのマージは、利用者が判断します。**開発環境（Linux）での自動試験の成功は、Windows 実機での確認や PR-7 の受入の判断の代わりではありません。**
 
@@ -81,6 +83,32 @@ $disp = "$src\scripts\run_display_check.ps1"  # PR-7 で追加した表示倍率
 
 ## 3. Google Chrome での自動確認
 
+### 3.0 個別の回帰試験（2026-10-30 の Full の失敗の修正。Chrome・Edge、Full の前に）
+
+2026-10-30 の Full で失敗した試験と、その修正の回帰試験（14 件）だけを、Chrome と Edge で実行します。第1・2節で、`$sha` を上の受入候補にした worktree と変数を用意してから行います。
+
+```powershell
+Set-Location $src
+git rev-parse HEAD        # $sha と一致すること
+git status --short        # 何も出ないこと
+$tests = "tab_shift_tab or from_the_top or runs_its_checks or releases_its_folder or removes_its_work or cannot_be_removed or only_the_record"
+foreach ($ch in "chrome", "msedge") {
+  $run = Join-Path $out ("{0}-{1}-{2}-individual" -f $sha.Substring(0,7), (Get-Date -Format "yyyyMMdd-HHmmss"), $ch)
+  New-Item -ItemType Directory -Path $run | Out-Null
+  & "$venv\Scripts\python.exe" -m pytest tests\e2e\test_pr7_focus.py tests\e2e\test_display_check.py -m e2e -k $tests `
+      --browser chromium --browser-channel $ch --headed `
+      --e2e-env "利用者環境（Windows 11、$ch、headed。個別の回帰試験）" --e2e-report "$run\e2e-report.md" `
+      --basetemp "$run\pytest-tmp" --output "$run\failures" --screenshot only-on-failure --tracing retain-on-failure `
+      -p no:cacheprovider -v -rfE 2>&1 | Tee-Object -FilePath "$run\pytest-output.log"
+  "終了コード：$LASTEXITCODE" | Tee-Object -FilePath "$run\exit-code.txt" -Append
+}
+```
+
+- 対象（Chrome・Edge それぞれ 14 件）：`test_E_K01_tab_shift_tab_and_arrows_show_the_focus_with_notifications`（7寸法）、`test_E_K01_the_notifications_are_reached_from_the_top_of_the_page`（2寸法）、`test_display_check.py` の道具の自己確認（`…runs_its_checks_and_records_them`）と一時フォルダの削除の4件。
+- 期待：`14 passed`、終了コード 0。`e2e-report.md` の「必須受入検証として実行」は「いいえ」で、ほかの受入項目は「未実施」と出ます（個別の確認のため。Full の代わりではありません）。
+- 道具の自己確認の一時フォルダ（`pytest-tmp\…\display-check\work`）が残らないこと。削除できなかったときは、試験が失敗し、`display-check\result.md` の「理由」に削除できなかったファイルと Windows のエラー（例：`WinError 32`）が出ます。その記録フォルダを渡してください。
+- 失敗したら Full に進まず、記録フォルダ（`pytest-output.log`・`e2e-report.md`・`failures`）を渡してください。
+
 ### 3.1 準備確認
 
 ```powershell
@@ -99,20 +127,20 @@ $disp = "$src\scripts\run_display_check.ps1"  # PR-7 で追加した表示倍率
 ```
 
 - 記録フォルダ `<SHA7桁>-<日時>-chrome-full`。判定「合格」、終了コード 0、「結果（テスト単位）」が失敗 0・スキップ 0・未実施 0、受入項目 75 件すべて「成功」であること。
-- テストの件数は 581 件の見込み（受入候補 `d2eb76e` の開発環境の 579 件に、Windows だけの PowerShell の確認2件。PowerShell 7 もあれば 583 件）。
+- テストの件数は 587 件の見込み（受入候補 `795cf36` の開発環境の 585 件に、Windows だけの PowerShell の確認2件。PowerShell 7 もあれば 589 件）。`d2eb76e` の 579 件から、2026-10-30 の修正の回帰試験 6 件（E-K01 のページの先頭からの確認2件と、道具の後片付けの確認4件）が増えています。
 - 内容：PR-6・PR-C までの累積の 68 項目に、PR-7 の E-K01〜E-K03・E-V01〜E-V03・E-F01 を加えた 75 項目。E-V01〜E-V03・E-F01 は、想定寸法（1920×1080・1536×730・1280×620・1366×650・1093×500・1024×683・900×600）と **2026-10-28 の実測値の寸法**（Chrome 1920×945・1536×756（DPR 1.25）・1280×630（DPR 1.5）、Edge 1530×731（DPR 1.25）・1275×609（DPR 1.5））と基本寸法で実行します。**これは寸法と devicePixelRatio を指定した確認で、ブラウザの拡大の確認ではありません。**
 - 実行中は Chrome のウィンドウが開いたり閉じたりします。テストのウィンドウを操作しないでください。PC がスリープすると止まります。所要の目安は報告（PR 本文）に書きます（開発環境の値。Windows で画面を表示する実行は、それより長くかかる見込み）。
 - 記録フォルダの `screens` に、PR-7 の表示のテストが撮った画面（png）が残ります（目視のレビュー用。判定には含めません。第6.2節）。
 
 ### 3.3 全テストを PR-7 のすべての寸法で（FullSizes。今回は行わない）
 
-計画 第8.7節の「すべての実ブラウザのテストを 1280×800・1440×900 と PR-7 で追加したサイズで実行する」を満たす実行です。**開発環境では実施し、結果を PR 本文に記録しています**（Chromium、headless）。**今回の Windows の確認（候補 `d2eb76e`）では行わず、Windows での FullSizes は「未実施」と記録します**（2026-10-30 の利用者の方針。合格に読み替えません）。後で行う場合のコマンドと見方だけを残します。
+計画 第8.7節の「すべての実ブラウザのテストを 1280×800・1440×900 と PR-7 で追加したサイズで実行する」を満たす実行です。**開発環境では実施し、結果を PR 本文に記録しています**（Chromium、headless）。**今回の Windows の確認（候補 `795cf36`。前の候補 `d2eb76e` でも）では行わず、Windows での FullSizes は「未実施」と記録します**（2026-10-30 の利用者の方針。合格に読み替えません）。後で行う場合のコマンドと見方だけを残します。
 
 ```powershell
 & $ps1 -Mode FullSizes -Channel chrome -Venv $venv -OutRoot $out -ExpectedSha $sha
 ```
 
-- 記録フォルダ `<SHA7桁>-<日時>-chrome-fullsizes`。判定の見方は Full と同じ。`e2e-report.md` の「寸法の組」が `pr7：…` であること。テストの件数は 2693 件の見込み（`d2eb76e` の開発環境の 2691 件に Windows だけの2件）。
+- 記録フォルダ `<SHA7桁>-<日時>-chrome-fullsizes`。判定の見方は Full と同じ。`e2e-report.md` の「寸法の組」が `pr7：…` であること。テストの件数は 2699 件の見込み（`795cf36` の開発環境の 2697 件に Windows だけの2件）。
 - 行わなかった場合、Windows での全寸法の実行は「未実施」として記録します（合格に読み替えません）。
 
 ## 4. Microsoft Edge での自動確認（Chrome の後に）
@@ -120,6 +148,7 @@ $disp = "$src\scripts\run_display_check.ps1"  # PR-7 で追加した表示倍率
 第3節と同じ手順を `-Channel msedge` で行います。
 
 ```powershell
+# 第3.0節の個別の回帰試験（msedge）が成功してから
 & $ps1 -Mode Preflight -Channel msedge -Venv $venv -OutRoot $out -ExpectedSha $sha
 # 準備確認が成功したら
 & $ps1 -Mode Full -Channel msedge -Venv $venv -OutRoot $out -ExpectedSha $sha
@@ -221,7 +250,7 @@ E-K03 は読み上げ領域（`role="status"`・`role="alert"`）に文が書か
 次の画像を見て、文字が読めること・欠けや重なりがないこと・不自然な配置がないことを確かめます（判定の主体は自動確認。ここは補完）。
 
 - 第5節の道具の `screens`（実際の拡大・表示倍率。最優先）。`…--通知の表示中のフォーカス.png`（通知3件以上が出ている間の作業エリアの高さとフォーカスの枠）を含みます。
-- 第3.2節の Full の `screens`（寸法を指定した確認。BIZ UDPGothic を除いた代替フォント（E-F01）の画面を含む）。画面の名前「部分失敗の生成ログ（終了の直後。通知が重なる）」は修正前に付けた名前のままです。`d2eb76e` では通知は作業エリアの下の行に出て、重なりません（重なって見えたら、その画面を渡してください）。
+- 第3.2節の Full の `screens`（寸法を指定した確認。BIZ UDPGothic を除いた代替フォント（E-F01）の画面を含む）。画面の名前「部分失敗の生成ログ（終了の直後。通知が重なる）」は修正前に付けた名前のままです。`d2eb76e` 以降では通知は作業エリアの下の行に出て、重なりません（重なって見えたら、その画面を渡してください）。
 
 BIZ UDPGothic の有無は、道具の `result.md` の「描画に使われたフォント」で分かります。BIZ UDPGothic がない PC では、E-F01 の代替フォントの結果と、その PC の画面を見ます。
 
@@ -297,11 +326,12 @@ Windows では、自動の判定（Full と道具）に加えて、第6.2節の�
 次をまとめて渡してください（フォルダごと zip にするか、`e2e-report.md`・`result.md` の本文を貼り付け）。
 
 1. 確認した SHA（40桁）と、`git -C $wt status --short` が空だったこと。ブランチの先頭と違った場合は、第1節の `git diff --name-only` の出力。
-2. Chrome・Edge の準備確認と Full の記録フォルダ（FullSizes は今回は行わない）：`e2e-report.md`、`run-info.md`、`pytest-output.log`、失敗があれば `failures`。
-3. 道具の記録フォルダ（表示倍率ごと・ブラウザごと）：`result.md`、`result.json`、`display-output.log`、`screens`。実行したときの Windows の表示倍率の設定の値（`-OsScale` に入れた値）。
-4. 第6.1節（NVDA）を行った場合は、項目ごとの結果（読まれた文）と NVDA・Edge の版。行わなかった場合は「未実施」。
-5. 第6.2節の目視の結果（気になった画面のファイル名と内容）。
-6. 第8節の確認表の記入。
+2. Chrome・Edge の第3.0節の個別の回帰試験の記録フォルダ（`<SHA7桁>-<日時>-<chrome|msedge>-individual`：`e2e-report.md`、`pytest-output.log`、`exit-code.txt`、失敗があれば `failures`）。
+3. Chrome・Edge の準備確認と Full の記録フォルダ（FullSizes は今回は行わない）：`e2e-report.md`、`run-info.md`、`pytest-output.log`、失敗があれば `failures`。
+4. 道具の記録フォルダ（表示倍率ごと・ブラウザごと）：`result.md`、`result.json`、`display-output.log`、`screens`。実行したときの Windows の表示倍率の設定の値（`-OsScale` に入れた値）。
+5. 第6.1節（NVDA）を行った場合は、項目ごとの結果（読まれた文）と NVDA・Edge の版。行わなかった場合は「未実施」。
+6. 第6.2節の目視の結果（気になった画面のファイル名と内容）。
+7. 第8節の確認表の記入。
 
 渡された記録から、計画書の第14.8節（PR-7 の確認結果）を更新します。受入の判断（合格・条件付き・不合格）は利用者が行います。
 
