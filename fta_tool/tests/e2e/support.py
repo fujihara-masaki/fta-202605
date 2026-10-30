@@ -430,7 +430,7 @@ def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str,
     env.update(extra_env or {})
     # What a server started before in this folder left (the W-02 tool starts
     # it again in the same folder): never read as this start's.
-    for name in ("server.pid", "server-stages.jsonl"):
+    for name in ("server.pid", "server-stages.jsonl", "launcher.pid", "launcher-stages.jsonl"):
         (workdir / name).unlink(missing_ok=True)
     log_path = workdir / "server.log"
     log = log_path.open("wb")
@@ -447,6 +447,9 @@ def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str,
         server_pid = read_server_pid(workdir)
         if server_pid is not None and server_pid != process.pid and process_gone(server_pid, 0):
             start_failure(process, workdir, port, log, f"アプリのプロセス（PID {server_pid}）が起動の途中で終了した")
+        ended = [s for s in launcher_stages(workdir) if s.get("stage") in ("child exited", "child not started")]
+        if server_pid is None and ended:  # a stand-in launcher (the tests) says its child is gone
+            start_failure(process, workdir, port, log, f"起動したプロセスの子が、アプリの起動の前に終わった（{ended[0]['stage']}）")
         try:
             if httpx.get(url + "/", timeout=2, trust_env=False).status_code == 200:
                 break
@@ -466,6 +469,23 @@ def read_server_pid(workdir: pathlib.Path) -> Optional[int]:
         return None
 
 
+def launcher_stages(workdir: pathlib.Path) -> list[dict]:
+    """What a stand-in launcher of the tests recorded (launcher-stages.jsonl,
+    tests/e2e/launcher_probe.py): none for the usual start."""
+    path = workdir / "launcher-stages.jsonl"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    stages = []
+    for line in lines:
+        try:
+            stages.append(json.loads(line))
+        except ValueError:
+            pass  # a line being written
+    return stages
+
+
 def start_failure(process: subprocess.Popen, workdir: pathlib.Path, port: int, log, reason: str):
     """Raise for a server that did not start, with what is known of it
     (gathered before anything is stopped), then stop what it started: the
@@ -474,13 +494,22 @@ def start_failure(process: subprocess.Popen, workdir: pathlib.Path, port: int, l
     app's own process (server.pid) if it still runs. What could not be
     stopped is said."""
     server_pid = read_server_pid(workdir)
+    stand_in = launcher_stages(workdir)
+    child_pids = [s["child_pid"] for s in stand_in if s.get("stage") == "child started"]
     lines = [f"E2E server did not start: {reason}",
              f"- 起動したプロセス（PID {process.pid}）：" + ("動作中" if process.poll() is None
                                                           else f"終了（終了コード {process.returncode}）")]
     if server_pid is None:
-        lines.append("- アプリのプロセス：server.pid がない（stub_server.py が始まっていない）")
+        lines.append("- アプリのプロセス：server.pid がない（stub_server.py の main() に達していない。"
+                     "起動の途中か、その前に止まった。子のプロセスがないとは限らない）")
     else:
         lines.append(f"- アプリのプロセス（PID {server_pid}）：" + ("終了" if process_gone(server_pid, 0) else "動作中"))
+    if (workdir / "launcher.pid").exists() or stand_in:
+        launcher = (workdir / "launcher.pid").read_text(encoding="utf-8").strip() if (workdir / "launcher.pid").exists() else "なし"
+        lines.append(f"- スタンドインのランチャー：launcher.pid {launcher}、記録（launcher-stages.jsonl）："
+                     + ("\n" + "\n".join(json.dumps(s, ensure_ascii=False) for s in stand_in) if stand_in else "なし"))
+        for pid in child_pids:
+            lines.append(f"- スタンドインの子（PID {pid}）：" + ("終了" if process_gone(pid, 0) else "動作中"))
     stages = workdir / "server-stages.jsonl"
     lines.append("- stub_server.py の記録（server-stages.jsonl）：" + (
         "\n" + stages.read_text(encoding="utf-8", errors="replace").rstrip() if stages.exists() else "なし"))
@@ -489,7 +518,7 @@ def start_failure(process: subprocess.Popen, workdir: pathlib.Path, port: int, l
             lines.append(f"- ポート {port}：開いている（接続できる）")
     except OSError as error:
         lines.append(f"- ポート {port}：開いていない（{type(error).__name__}: {error}）")
-    left = stop_started(process, server_pid)
+    left = stop_started(process, server_pid, child_pids)
     lines.append("- 後片付け：" + (f"止められなかったプロセス {left}" if left else "起動したプロセスとアプリのプロセスは終了した"))
     log.close()
     text = (workdir / "server.log").read_text(encoding="utf-8", errors="replace")
@@ -497,9 +526,10 @@ def start_failure(process: subprocess.Popen, workdir: pathlib.Path, port: int, l
     raise RuntimeError("\n".join(lines))
 
 
-def stop_started(process: subprocess.Popen, server_pid: Optional[int]) -> list[int]:
-    """Stop the process started for the server with its descendants, and the
-    app's own process; returns the ids of those still running after that."""
+def stop_started(process: subprocess.Popen, server_pid: Optional[int], others: tuple = ()) -> list[int]:
+    """Stop the process started for the server with its descendants, the
+    app's own process and `others` (the children a stand-in launcher
+    recorded): only these recorded processes. Returns those still running."""
     if process.poll() is None:
         if sys.platform == "win32":
             subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=30)
@@ -509,17 +539,18 @@ def stop_started(process: subprocess.Popen, server_pid: Optional[int]) -> list[i
         process.wait(timeout=10)
     except subprocess.TimeoutExpired:
         pass
-    if server_pid is not None and server_pid != process.pid and not process_gone(server_pid, 0):
-        if sys.platform == "win32":
-            subprocess.run(["taskkill", "/PID", str(server_pid), "/T", "/F"], capture_output=True, timeout=30)
-        else:
-            try:
-                os.kill(server_pid, 9)
-            except OSError:
-                pass
+    recorded = [pid for pid in (server_pid, *others) if pid is not None and pid != process.pid]
+    for pid in recorded:
+        if not process_gone(pid, 0):
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=30)
+            else:
+                try:
+                    os.kill(pid, 9)
+                except OSError:
+                    pass
     left = [] if process.poll() is not None else [process.pid]
-    if server_pid is not None and server_pid != process.pid and not process_gone(server_pid, 10):
-        left.append(server_pid)
+    left += [pid for pid in recorded if not process_gone(pid, 10)]
     return left
 
 

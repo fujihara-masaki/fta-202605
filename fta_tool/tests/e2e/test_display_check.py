@@ -22,7 +22,7 @@ from typing import Optional
 
 import pytest
 
-from tests.e2e import acceptance, display_check, layout_checks
+from tests.e2e import acceptance, display_check, launcher_probe, layout_checks
 from tests.e2e.support import (FTA_TOOL_DIR, free_port, process_gone, python_env, read_server_pid, remove_folder,
                               start_server)
 
@@ -130,42 +130,47 @@ def test_the_test_server_releases_its_folder_when_closed(tmp_path, record_proper
 REMOVE_TRIES = display_check.DisplayCheck.REMOVE_TRIES
 REMOVE_WAIT = display_check.DisplayCheck.REMOVE_WAIT
 
-# A stand-in for a venv's launcher on Windows (CPython PC/launcher.c,
-# run_child): it runs the app as its child with its own standard handles,
-# passed explicitly as launcher.c does (DuplicateHandle, STARTF_USESTDHANDLES):
-# on Windows a child of subprocess.Popen inherits no handle unless passed
-# (close_fds). Unlike launcher.c it ends first, as soon as its stdin is
-# closed, while the app is still ending. "no-std-handles" starts the child
-# as this stand-in did until 32730b8 (Popen without them): on Windows the
-# app then had no stdout, uvicorn's logging failed, nothing could be written
-# and the start waited 60 s for nothing (the Windows run of 2026-10-30).
-LAUNCHER = """import os, pathlib, subprocess, sys
-pathlib.Path("launcher.pid").write_text(str(os.getpid()))
-mode, command = sys.argv[1], sys.argv[2:]
-if mode == "no-std-handles" and os.name == "nt":
-    subprocess.Popen(command)
-elif mode == "no-std-handles":
-    subprocess.Popen(command, preexec_fn=lambda: [os.close(fd) for fd in (0, 1, 2)])
-else:
-    subprocess.Popen(command, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr)
-sys.stdin.buffer.read()
-"""
-
+# A stand-in for a venv's launcher on Windows (tests/e2e/launcher_probe.py
+# LAUNCHER): it runs the app as its child and, unlike launcher.c, ends first,
+# as soon as its stdin is closed, while the app is still ending. It records
+# what it did in launcher-stages.jsonl (start_server() reports it).
+# "own-stdin" gives the app a stdin pipe of its own: the stand-ins of
+# 32730b8 and 5773c84 gave it none (Popen without handles) or their own
+# stdin, which they were reading, and on Windows the app's Python never
+# reached stub_server.py's main() (the Windows runs of 2026-10-30: launcher.pid
+# written, no server.pid; launcher_probe.py tells the ways apart).
+# "null-handles" starts the app with no standard handle at all, explicitly.
 
 def launcher_command(tmp_path, mode: str) -> list[str]:
     launcher = tmp_path / "launcher.py"
-    launcher.write_text(LAUNCHER, encoding="utf-8")
-    return [sys.executable, str(launcher), mode, sys.executable]
+    launcher.write_text(launcher_probe.LAUNCHER, encoding="utf-8")
+    return [sys.executable, str(launcher), mode, "read", sys.executable]
 
 
 def launcher_pid(work) -> int:
     return int((work / "launcher.pid").read_text(encoding="utf-8"))
 
 
+def launcher_stages(work) -> list[str]:
+    return [stage["stage"] for stage in launcher_probe.read_stages(work)]
+
+
+@pytest.mark.parametrize("scenario", launcher_probe.MUST_START)
+def test_a_python_child_starts_under_the_stand_in_launcher(tmp_path, scenario, record_property):
+    # No FTA app: the child's first statement writes a file (launcher_probe.py).
+    result = launcher_probe.run_scenario(scenario, tmp_path / scenario)
+    record_property(acceptance.NOTE_PROPERTY, launcher_probe.verdict(result))
+    assert result["reached_before_stdin_closed"], json.dumps(result, ensure_ascii=False, indent=1)
+    assert result["left_running"] == [], result["left_running"]
+    if scenario != "direct":
+        assert [s["stage"] for s in result["launcher_stages"]][:3] == ["launcher started", "starting child",
+                                                                     "child started"], result["launcher_stages"]
+
+
 def test_close_waits_for_the_apps_own_process(tmp_path, record_property):
     work = tmp_path / "work"
     work.mkdir()
-    server = start_server(work, free_port(), {"FTA_E2E_EXIT_DELAY": "2"}, python=launcher_command(tmp_path, "pass"))
+    server = start_server(work, free_port(), {"FTA_E2E_EXIT_DELAY": "2"}, python=launcher_command(tmp_path, "own-stdin"))
     assert server.server_pid != server.process.pid
     try:
         assert server.query("SELECT COUNT(*) FROM analyses") == [(0,)]
@@ -177,6 +182,8 @@ def test_close_waits_for_the_apps_own_process(tmp_path, record_property):
     assert server.app_outlived_process is True, server.stopped
     assert process_gone(server.server_pid, 0) and process_gone(launcher_pid(work), 0), server.stopped
     assert "の終了を確認" in server.stopped, server.stopped
+    stages = launcher_stages(work)
+    assert stages.index("stdin closed") < stages.index("launcher ends"), stages
     removed, errors = remove_folder(work, REMOVE_TRIES, REMOVE_WAIT)
     assert removed, errors
 
@@ -203,21 +210,40 @@ def test_an_app_started_without_standard_handles_is_reported_at_once(tmp_path):
     work.mkdir()
     started = time.monotonic()
     with pytest.raises(RuntimeError) as failure:
-        start_server(work, free_port(), python=launcher_command(tmp_path, "no-std-handles"))
+        start_server(work, free_port(), python=launcher_command(tmp_path, "null-handles"))
     message = str(failure.value)
     # Said at once (the app's process ended), with the app's own reason.
     assert time.monotonic() - started < 30, message
     assert "起動の途中で終了" in message and "標準の入出力がない" in message, message
     assert '"stage": "python"' in message and '"stage": "listening"' not in message, message
+    assert '"stage": "child started"' in message, message  # the stand-in's own record, in the report
     assert "起動したプロセスとアプリのプロセスは終了した" in message, message
     assert process_gone(read_server_pid(work), 0) and process_gone(launcher_pid(work), 0), message
+
+
+def test_a_child_that_ends_before_the_app_starts_is_reported_at_once(tmp_path):
+    # As on Windows with the stand-ins of 32730b8 and 5773c84: launcher.pid,
+    # no server.pid. Here the child is a Python that ends (code 7) before
+    # stub_server.py's main(); the stand-in's record says so at once.
+    work = tmp_path / "work"
+    work.mkdir()
+    python = [*launcher_command(tmp_path, "own-stdin"), "-c", "raise SystemExit(7)"]
+    started = time.monotonic()
+    with pytest.raises(RuntimeError) as failure:
+        start_server(work, free_port(), python=python)
+    message = str(failure.value)
+    assert time.monotonic() - started < 30, message
+    assert "起動したプロセスの子が、アプリの起動の前に終わった（child exited）" in message, message
+    assert "server.pid がない" in message and '"exit_code": 7' in message, message
+    assert not (work / "server.pid").exists() and process_gone(launcher_pid(work), 0), message
+    assert "起動したプロセスとアプリのプロセスは終了した" in message, message
 
 
 def test_a_server_that_does_not_answer_is_reported_then_stopped(tmp_path):
     work = tmp_path / "work"
     work.mkdir()
     with pytest.raises(RuntimeError) as failure:
-        start_server(work, free_port(), {"FTA_E2E_START_DELAY": "60"}, python=launcher_command(tmp_path, "pass"),
+        start_server(work, free_port(), {"FTA_E2E_START_DELAY": "60"}, python=launcher_command(tmp_path, "own-stdin"),
                      start_seconds=5)
     message = str(failure.value)
     # What is known is gathered first (both processes still running, the
