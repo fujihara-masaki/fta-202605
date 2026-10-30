@@ -17,11 +17,12 @@ import shutil
 import subprocess
 import sys
 import types
+from typing import Optional
 
 import pytest
 
 from tests.e2e import acceptance, display_check, layout_checks
-from tests.e2e.support import FTA_TOOL_DIR, free_port, start_server
+from tests.e2e.support import FTA_TOOL_DIR, free_port, process_gone, python_env, remove_folder, start_server
 
 pytestmark = pytest.mark.e2e
 
@@ -32,7 +33,8 @@ def run_tool(tmp_path, pytestconfig, *args) -> tuple[int, dict, str]:
     channel = pytestconfig.getoption("--browser-channel") or ""
     browser = ["--executable", executable] if executable else (["--channel", channel] if channel else ["--bundled"])
     # In a process of its own: this one may run pytest-playwright's Playwright.
-    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [str(FTA_TOOL_DIR), os.environ.get("PYTHONPATH")]))}
+    # Its output in UTF-8, as read here (python_env; the Windows run of 2026-10-30).
+    env = python_env()
     done = subprocess.run([sys.executable, "-m", "tests.e2e.display_check", "--out", str(out), *browser,
                            "--simulate-zoom", "--no-input", *args], cwd=FTA_TOOL_DIR, env=env,
                           capture_output=True, text=True, encoding="utf-8", timeout=600)
@@ -72,19 +74,23 @@ def test_a_display_area_below_the_plan_is_flagged_for_the_users_decision(tmp_pat
     assert code in (0, 2) and "想定を下回る：参考（判定に含めない）。利用者の判断が必要" in text
 
 
-# ----- the test database's folder is removed (the Windows Full of 2026-10-30) ---------
+# ----- the test database's folder is removed (the Windows runs of 2026-10-30) --------
 # On Windows the run above left display-check/work: this process kept its
 # handle of server.log open (tests/e2e/support.py start_server), a file open
 # without FILE_SHARE_DELETE cannot be removed there, and the removal ignored
 # its error. The server now releases its folder when closed, and a folder
 # that cannot be removed makes the run 未完了 with the reason.
+# In the individual run on Edge (795cf36) work/fta_tool.db was still in use
+# right after close(): a venv's python.exe on Windows is a launcher, and
+# close() waited for the launcher, not for the app it runs (support.py
+# E2EServer). close() now asks the app to end and waits for its own process.
 
-def open_handles_in(folder) -> list[str]:
-    """The files under `folder` this process has open (Linux: /proc/self/fd;
-    elsewhere none can be listed and the removal below is the check)."""
+def open_handles_in(folder) -> Optional[list[str]]:
+    """The files under `folder` this process has open (Linux: /proc/self/fd).
+    None where they cannot be listed (Windows): no proof either way."""
     fds = pathlib.Path("/proc/self/fd")
     if not fds.exists():
-        return []
+        return None
     found = []
     for fd in fds.iterdir():
         try:
@@ -96,7 +102,7 @@ def open_handles_in(folder) -> list[str]:
     return found
 
 
-def test_the_test_server_releases_its_folder_when_closed(tmp_path):
+def test_the_test_server_releases_its_folder_when_closed(tmp_path, record_property):
     work = tmp_path / "work"
     work.mkdir()
     server = start_server(work, free_port())
@@ -105,9 +111,62 @@ def test_the_test_server_releases_its_folder_when_closed(tmp_path):
         assert server.query("SELECT COUNT(*) FROM analyses") == [(0,)]
     finally:
         server.close()
-    assert open_handles_in(work) == [], open_handles_in(work)
-    shutil.rmtree(work)  # no ignore_errors: on Windows an open handle fails here
-    assert not work.exists()
+    # The app ended by itself (not stopped), and its own process is gone.
+    assert server.stopped.startswith("自分で終了（終了コード 0）"), server.stopped
+    assert process_gone(server.server_pid, 0), server.stopped
+    handles = open_handles_in(work)
+    if handles is not None:
+        assert handles == [], handles
+    # No ignore_errors; a file still in use after the tries fails the test.
+    removed, errors = remove_folder(work, REMOVE_TRIES, REMOVE_WAIT)
+    record_property(acceptance.NOTE_PROPERTY, f"停止：{server.stopped}／一時フォルダの削除：{len(errors) + 1} 回目"
+                    + (f"（それまでの失敗：{errors[-1]}）" if removed and errors else ""))
+    assert removed and not work.exists(), errors
+
+
+# The same tries as the tool (display_check.py REMOVE_TRIES, REMOVE_WAIT).
+REMOVE_TRIES = display_check.DisplayCheck.REMOVE_TRIES
+REMOVE_WAIT = display_check.DisplayCheck.REMOVE_WAIT
+
+LAUNCHER = """import subprocess, sys
+# Like a venv's launcher on Windows, the app runs as a child with this
+# process's stdin and output; unlike it, this one ends first, as soon as
+# stdin is closed, while the app is still ending.
+subprocess.Popen(sys.argv[1:])
+sys.stdin.buffer.read()
+"""
+
+
+def test_close_waits_for_the_apps_own_process(tmp_path, record_property):
+    work = tmp_path / "work"
+    work.mkdir()
+    launcher = tmp_path / "launcher.py"
+    launcher.write_text(LAUNCHER, encoding="utf-8")
+    server = start_server(work, free_port(), {"FTA_E2E_EXIT_DELAY": "2"},
+                          python=[sys.executable, str(launcher), sys.executable])
+    assert server.server_pid != server.process.pid
+    try:
+        assert server.query("SELECT COUNT(*) FROM analyses") == [(0,)]
+    finally:
+        server.close()
+    record_property(acceptance.NOTE_PROPERTY, f"停止：{server.stopped}")
+    # The launcher ended about 2 s before the app; close() waited for the app.
+    assert process_gone(server.server_pid, 0), server.stopped
+    assert "の終了を確認" in server.stopped, server.stopped
+    removed, errors = remove_folder(work, REMOVE_TRIES, REMOVE_WAIT)
+    assert removed, errors
+
+
+# What a test reads of a Python process's output is its Japanese text, also
+# on Windows (where a pipe is written in the locale's encoding unless
+# PYTHONIOENCODING says otherwise: cp932 here stands for it). An undecodable
+# output is an error of this test, not a warning (subprocess's reader thread).
+@pytest.mark.filterwarnings("error::pytest.PytestUnhandledThreadExceptionWarning")
+def test_a_python_process_s_output_is_read_in_utf8(tmp_path):
+    script = "import sys; print('未完了：表示倍率 150%'); print('エラー：削除できません', file=sys.stderr)"
+    done = subprocess.run([sys.executable, "-c", script], cwd=tmp_path, env=python_env({**os.environ, "PYTHONIOENCODING": "cp932"}),
+                          capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert (done.returncode, done.stdout, done.stderr) == (0, "未完了：表示倍率 150%\n", "エラー：削除できません\n")
 
 
 def tool(tmp_path) -> "display_check.DisplayCheck":
@@ -136,7 +195,7 @@ def test_a_work_folder_that_cannot_be_removed_is_not_ok(tmp_path, monkeypatch):
         raise PermissionError(32, "The process cannot access the file because it is being used by another process",
                               str(path / "server.log"))
 
-    monkeypatch.setattr(display_check.shutil, "rmtree", held)
+    monkeypatch.setattr(shutil, "rmtree", held)
     assert check.remove_work() is False
     assert len(calls) == check.REMOVE_TRIES and all(not kw.get("ignore_errors") for _, _, kw in calls)
     code = check.write_result()
@@ -152,7 +211,7 @@ def test_only_the_record_folders_work_is_removed(tmp_path, monkeypatch):
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     check.work = elsewhere
-    monkeypatch.setattr(display_check.shutil, "rmtree", lambda *a, **kw: pytest.fail("removed a folder outside the record"))
+    monkeypatch.setattr(shutil, "rmtree", lambda *a, **kw: pytest.fail("removed a folder outside the record"))
     assert check.remove_work() is False and elsewhere.exists()
     assert "削除していません" in check.cleanup_error
 

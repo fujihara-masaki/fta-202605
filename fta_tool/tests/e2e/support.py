@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
 import re
 import socket
@@ -34,11 +35,20 @@ class E2EServer:
     """The app under test, started by tests/e2e/stub_server.py."""
 
     def __init__(self, url: str, workdir: pathlib.Path, process: subprocess.Popen, log_path: pathlib.Path,
-                 log_file=None):
+                 log_file=None, server_pid: Optional[int] = None):
         self.url = url
         self.workdir = workdir
         self.process = process
         self.log_path = log_path
+        # The process that runs the app (stub_server.py writes it to
+        # server.pid). On Windows it is not `process`: a venv's
+        # Scripts\python.exe is a launcher that runs the real python.exe as
+        # its child, in a job that kills the child when the launcher ends
+        # (CPython PC/launcher.c, run_child). Ending the launcher therefore
+        # only starts the end of the app, which still holds fta_tool.db and
+        # server.log for a moment: close() waits for this process itself.
+        self.server_pid = server_pid
+        self.stopped = ""  # how close() stopped the app (the tests record it)
         # This process's handle of server.log (the server's stdout): closed in
         # close(). Left open (until PR-7's fix of 2026-10-30) it kept Windows
         # from deleting the work folder (a file open without FILE_SHARE_DELETE
@@ -63,19 +73,49 @@ class E2EServer:
         for name in ("stub_control.json", "stub_calls.jsonl", "violations.jsonl"):
             (self.workdir / name).unlink(missing_ok=True)
 
+    # How long the app may take to end by itself once asked (its open
+    # requests are given SHUTDOWN_SECONDS by uvicorn, stub_server.py), and
+    # how long a stopped process may take to be gone.
+    STOP_SECONDS = 20
+    GONE_SECONDS = 10
+
     def close(self) -> None:
         """Stop the server and release what this process holds of its
         folder (the HTTP client, the handle of server.log), so that the
-        folder can be removed, also on Windows."""
+        folder can be removed, also on Windows.
+
+        The app is asked to end by closing its stdin (stub_server.py
+        --stop-on-stdin-eof): it ends by itself, and a venv's launcher ends
+        only after it. Only if it does not end in time is it stopped
+        (terminate, then kill). Either way this returns only when the app's
+        own process (server_pid) is gone; if it is not, it raises (a server
+        left running is never let through)."""
         self.http.close()
-        self.process.terminate()
+        how = ""
         try:
-            self.process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait(timeout=10)
-        if self.log_file is not None and not self.log_file.closed:
-            self.log_file.close()
+            if self.process.stdin is not None and not self.process.stdin.closed:
+                self.process.stdin.close()
+            try:
+                self.process.wait(timeout=self.STOP_SECONDS)
+                how = f"自分で終了（終了コード {self.process.returncode}）"
+            except subprocess.TimeoutExpired:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=self.GONE_SECONDS)
+                    how = f"{self.STOP_SECONDS} 秒で終わらず、止めた（terminate）"
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=self.GONE_SECONDS)
+                    how = f"{self.STOP_SECONDS} 秒で終わらず、強制終了した（kill）"
+            if self.server_pid is not None and self.server_pid != self.process.pid:
+                if not process_gone(self.server_pid, self.GONE_SECONDS):
+                    how += f"。アプリのプロセス（PID {self.server_pid}）が {self.GONE_SECONDS} 秒後も残っている"
+                    raise RuntimeError(f"E2E server not stopped: {how}")
+                how += f"。アプリのプロセス（PID {self.server_pid}）の終了を確認"
+        finally:
+            self.stopped = how
+            if self.log_file is not None and not self.log_file.closed:
+                self.log_file.close()
 
     # ----- stub control --------------------------------------------------
     def set_stub_mode(self, mode: str, delay_seconds: Optional[float] = None) -> None:
@@ -295,21 +335,93 @@ def free_port() -> int:
             return port
 
 
-def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str, str]] = None) -> E2EServer:
-    """Start the app for the tests; `extra_env` changes its settings (e.g.
-    FTA_SAMPLE_SCENARIOS_FILE for a server without sample scenarios)."""
-    import os
-
-    env = os.environ.copy()
+def python_env(base: Optional[dict[str, str]] = None) -> dict[str, str]:
+    """The environment of a Python process the tests start (the app, the
+    display check tool): fta_tool on its path, and its stdout and stderr in
+    UTF-8. Without PYTHONIOENCODING, Python writes a pipe or a file in the
+    locale's encoding on Windows (cp932 for Japanese), while the tests read
+    it as UTF-8: the Japanese messages were lost (UnicodeDecodeError in
+    subprocess's reader thread, PytestUnhandledThreadExceptionWarning, the
+    Windows run of 2026-10-30). Only the standard streams change (not
+    PYTHONUTF8, which would also change how the process opens files)."""
+    env = dict(os.environ if base is None else base)
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(FTA_TOOL_DIR), env.get("PYTHONPATH", "")]))
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def process_gone(pid: int, timeout: float) -> bool:
+    """True once the process `pid` has ended (waits up to `timeout` s)."""
+    if sys.platform == "win32":
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        synchronize = 0x00100000
+        handle = kernel32.OpenProcess(synchronize, False, pid)
+        if not handle:
+            return ctypes.get_last_error() == 87  # ERROR_INVALID_PARAMETER: no such process
+        try:
+            return kernel32.WaitForSingleObject(handle, int(timeout * 1000)) == 0  # WAIT_OBJECT_0
+        finally:
+            kernel32.CloseHandle(handle)
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            pass
+        status = pathlib.Path(f"/proc/{pid}/status")
+        try:
+            if "\nState:\tZ" in status.read_text():  # ended, not yet reaped: holds no file
+                return True
+        except OSError:
+            pass
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.05)
+
+
+def remove_folder(path: pathlib.Path, tries: int, wait: float) -> tuple[bool, list[str]]:
+    """Remove a folder of the tests (never ignoring an error), trying up to
+    `tries` times `wait` s apart: on Windows a file can stay in use a moment
+    after the process that had it ended (an antivirus or the indexer may
+    open it). Returns whether it is gone and the error of each failed try."""
+    import shutil
+
+    errors: list[str] = []
+    for attempt in range(tries):
+        try:
+            shutil.rmtree(path)
+            return True, errors
+        except OSError as error:
+            if not path.exists():  # gone after all (removed meanwhile): this try did it
+                return True, errors
+            errors.append(f"{type(error).__name__}: {error}")
+            if attempt + 1 < tries:
+                time.sleep(wait)
+    return False, errors
+
+
+def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str, str]] = None, *,
+                 python: Optional[list[str]] = None) -> E2EServer:
+    """Start the app for the tests; `extra_env` changes its settings (e.g.
+    FTA_SAMPLE_SCENARIOS_FILE for a server without sample scenarios).
+    `python` replaces the interpreter's command (the tests of close())."""
+    env = python_env()
     env["FTA_E2E_WORKDIR"] = str(workdir)
     env["FTA_E2E_STUB_MODE"] = "create"
     env.update(extra_env or {})
     log_path = workdir / "server.log"
     log = log_path.open("wb")
+    # stdin is how close() asks the app to end (stub_server.py --stop-on-stdin-eof).
     process = subprocess.Popen(
-        [sys.executable, "-m", "tests.e2e.stub_server", "--port", str(port)],
-        cwd=workdir, env=env, stdout=log, stderr=subprocess.STDOUT,
+        [*(python or [sys.executable]), "-m", "tests.e2e.stub_server", "--port", str(port), "--stop-on-stdin-eof"],
+        cwd=workdir, env=env, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
     )
     url = f"http://127.0.0.1:{port}"
     deadline = time.monotonic() + 60
@@ -327,7 +439,8 @@ def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str,
             log.close()
             raise RuntimeError(f"E2E server did not start:\n{log_path.read_text(encoding='utf-8', errors='replace')}")
         time.sleep(0.2)
-    return E2EServer(url, workdir, process, log_path, log)
+    server_pid = int((workdir / "server.pid").read_text(encoding="utf-8"))  # written before the app serves
+    return E2EServer(url, workdir, process, log_path, log, server_pid)
 
 
 # No console error is let through. Until PR-7 the browser's own 404 for

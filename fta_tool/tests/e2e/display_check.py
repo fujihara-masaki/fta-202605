@@ -61,7 +61,6 @@ import datetime as _dt
 import json
 import pathlib
 import platform
-import shutil
 import subprocess
 import sys
 import time
@@ -70,7 +69,7 @@ from typing import Callable, Optional
 
 from tests.e2e.acceptance import DisplayCase
 from tests.e2e.layout_checks import NOT_REACHED, OBSERVERS, REACHED_AS_SHOWN, REACHED_BY_PANE_SCROLL, reach
-from tests.e2e.support import FTA_TOOL_DIR, free_port, save_screenshot, start_server
+from tests.e2e.support import FTA_TOOL_DIR, free_port, remove_folder, save_screenshot, start_server
 
 # Below these the plan has no assumed size (plan 5.9.4: 1024px wide and
 # 500px high are its assumption; the tests go down to 900x600): a zoom level
@@ -149,7 +148,8 @@ class DisplayCheck:
         self.page = None
         self.base_dpr: Optional[float] = None
         self.data: dict = {}
-        self.cleanup_error = ""  # why <out>/work could not be removed (remove_work)
+        self.cleanup_error = ""  # why the server could not be stopped or <out>/work removed (close)
+        self.cleanup = ""  # how the server stopped and the work folder was removed (result.md)
         self.console_errors: list[str] = []
         # Every request of the page (method, path and the Playwright request,
         # for its response), in order. Playwright's sync API runs the
@@ -779,8 +779,14 @@ class DisplayCheck:
         if self.playwright is not None:
             self.playwright.stop()
         if self.server is not None:
-            self.server.close()  # the server stopped, its log's handle closed (tests/e2e/support.py)
-        self.remove_work()
+            try:  # the app's own process gone, the log's handle closed (tests/e2e/support.py)
+                self.server.close()
+            except Exception as error:  # noqa: BLE001 - the run is then not OK, with the reason
+                self.cleanup_error = f"テスト用サーバーを止められませんでした：{error}"
+                self.say(f"未完了：{self.cleanup_error}")
+            self.cleanup = f"テスト用サーバー：{self.server.stopped or '不明'}"
+        if not self.cleanup_error:
+            self.remove_work()
 
     # The test database's folder is removed after the server stopped; on
     # Windows a file is released a moment after the process that held it
@@ -798,19 +804,16 @@ class DisplayCheck:
         if work.resolve().parent != self.out.resolve() or work.name != "work":
             self.cleanup_error = f"削除の対象が記録フォルダの work ではないため削除していません：{work}"
             return False
-        error = None
-        for _ in range(self.REMOVE_TRIES):
-            try:
-                shutil.rmtree(work)
-                return True
-            except OSError as caught:
-                error = caught
-                if not work.exists():
-                    return True
-                time.sleep(self.REMOVE_WAIT)  # Playwright is stopped here: nothing to pump
+        # Playwright is stopped here: nothing to pump while waiting.
+        removed, errors = remove_folder(work, self.REMOVE_TRIES, self.REMOVE_WAIT)
+        if removed:
+            self.cleanup = "；".join(filter(None, [
+                self.cleanup, f"一時フォルダの削除：{len(errors) + 1} 回目で削除"
+                + (f"（それまでの失敗：{errors[-1]}）" if errors else "")]))
+            return True
         left = sorted(str(path.relative_to(work)) for path in work.rglob("*"))[:10] if work.exists() else []
         self.cleanup_error = (f"一時フォルダ {work} を削除できませんでした（{self.REMOVE_TRIES} 回試行）："
-                              f"{type(error).__name__}: {error}。残ったもの：{left or 'なし'}")
+                              f"{errors[-1]}。残ったもの：{left or 'なし'}")
         self.say(f"未完了：{self.cleanup_error}")
         return False
 
@@ -824,6 +827,7 @@ class DisplayCheck:
         verdict = {0: "OK", 1: "NG", 2: "未完了"}[code]
         self.reason = "；".join(filter(None, [self.reason, self.cleanup_error]))
         payload = {"verdict": verdict, "exit_code": code, "reason": self.reason, "cleanup_error": self.cleanup_error,
+                   "cleanup": self.cleanup,
                    "environment": self.environment,
                    "levels": self.levels, "results": self.results, "reaches": self.reaches,
                    "written": _dt.datetime.now().astimezone().isoformat(timespec="seconds")}
@@ -831,6 +835,7 @@ class DisplayCheck:
         lines = ["# PR-7 表示倍率・ブラウザの拡大・日本語入力の確認（display_check）", "",
                  f"- 判定：**{verdict}**（終了コード {code}）" + (f"。理由：{self.reason}" if self.reason else ""),
                  f"- 記録した日時：{payload['written']}",
+                 f"- 後片付け：{self.cleanup or 'なし'}",
                  "- 自動で判定した項目は、実際のブラウザのウィンドウ（Playwright は表示領域を指定しない）での DOM の位置・寸法・"
                  "最前面の要素によるものです。画面の読みやすさは screens の画像で目視してください（判定に含めません）。",
                  "", "## 実行環境", "", "| 項目 | 値 |", "|---|---|"]

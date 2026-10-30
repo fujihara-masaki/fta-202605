@@ -5,7 +5,10 @@ Started by tests/e2e/conftest.py as a subprocess:
     python -m tests.e2e.stub_server --port 8765
 
 with the working directory set to a temporary directory given in
-FTA_E2E_WORKDIR. The app opens ./fta_tool.db relative to the working
+FTA_E2E_WORKDIR. It writes its process id to server.pid there, and with
+--stop-on-stdin-eof (tests/e2e/support.py) it ends by itself when its stdin
+is closed (FTA_E2E_EXIT_DELAY seconds later than it would, for the tests of
+that stop only). The app opens ./fta_tool.db relative to the working
 directory, so the database is created there and the user's database is never
 used (the launcher refuses to start inside the repository).
 
@@ -90,6 +93,7 @@ import itertools
 import json
 import os
 import pathlib
+import sys
 import threading
 import time
 
@@ -528,9 +532,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--stop-on-stdin-eof", action="store_true",
+                        help="end when stdin is closed (tests/e2e/support.py E2EServer.close)")
     args = parser.parse_args()
 
     workdir = _check_working_directory()
+    # This process, which holds the database: the tests wait for it to be
+    # gone (on Windows the process they started is a venv's launcher).
+    (workdir / "server.pid").write_text(str(os.getpid()), encoding="utf-8")
 
     import app.main as main_module  # loads fta_tool/.env (override=True)
 
@@ -554,7 +563,33 @@ def main() -> None:
     access_log = os.environ.get("FTA_E2E_ACCESS_LOG")
     if access_log:  # the diagnosis only
         app = AccessLog(app, pathlib.Path(access_log))
-    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+    server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, log_level="warning",
+                                           timeout_graceful_shutdown=SHUTDOWN_SECONDS))
+    if args.stop_on_stdin_eof:
+        threading.Thread(target=_stop_on_stdin_eof, args=(server,), daemon=True).start()
+    server.run()
+    from app.database import engine
+
+    engine.dispose()  # the pooled connections of fta_tool.db, closed before the process ends
+    delay = float(os.environ.get("FTA_E2E_EXIT_DELAY", "0"))  # the tests of close() only: a slow end
+    if delay:
+        time.sleep(delay)
+
+
+# Open requests are given this long when the app is asked to end.
+SHUTDOWN_SECONDS = 5
+
+
+def _stop_on_stdin_eof(server) -> None:
+    """End the app (as uvicorn does on Ctrl+C) when stdin is closed: the
+    tests close it to stop the server (E2EServer.close), also when their
+    process ends without closing it."""
+    try:
+        while sys.stdin.buffer.read(4096):
+            pass
+    except (OSError, ValueError):
+        pass
+    server.should_exit = True
 
 
 if __name__ == "__main__":
