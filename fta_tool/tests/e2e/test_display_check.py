@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
+import shutil
 import subprocess
 import sys
 import types
@@ -19,7 +21,7 @@ import types
 import pytest
 
 from tests.e2e import acceptance, display_check, layout_checks
-from tests.e2e.support import FTA_TOOL_DIR
+from tests.e2e.support import FTA_TOOL_DIR, free_port, start_server
 
 pytestmark = pytest.mark.e2e
 
@@ -68,6 +70,91 @@ def test_a_display_area_below_the_plan_is_flagged_for_the_users_decision(tmp_pat
     assert level["below_plan"] and level["reference"]
     assert all("参考" in r["level"] for r in result["results"])
     assert code in (0, 2) and "想定を下回る：参考（判定に含めない）。利用者の判断が必要" in text
+
+
+# ----- the test database's folder is removed (the Windows Full of 2026-10-30) ---------
+# On Windows the run above left display-check/work: this process kept its
+# handle of server.log open (tests/e2e/support.py start_server), a file open
+# without FILE_SHARE_DELETE cannot be removed there, and the removal ignored
+# its error. The server now releases its folder when closed, and a folder
+# that cannot be removed makes the run 未完了 with the reason.
+
+def open_handles_in(folder) -> list[str]:
+    """The files under `folder` this process has open (Linux: /proc/self/fd;
+    elsewhere none can be listed and the removal below is the check)."""
+    fds = pathlib.Path("/proc/self/fd")
+    if not fds.exists():
+        return []
+    found = []
+    for fd in fds.iterdir():
+        try:
+            target = os.readlink(fd)
+        except OSError:
+            continue
+        if target.startswith(str(folder)):
+            found.append(target)
+    return found
+
+
+def test_the_test_server_releases_its_folder_when_closed(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    server = start_server(work, free_port())
+    try:
+        assert server.http.get("/").status_code == 200
+        assert server.query("SELECT COUNT(*) FROM analyses") == [(0,)]
+    finally:
+        server.close()
+    assert open_handles_in(work) == [], open_handles_in(work)
+    shutil.rmtree(work)  # no ignore_errors: on Windows an open handle fails here
+    assert not work.exists()
+
+
+def tool(tmp_path) -> "display_check.DisplayCheck":
+    out = tmp_path / "display-check"
+    out.mkdir()
+    args = types.SimpleNamespace(out=out, zooms=[], simulate_zoom=True, no_input=True)
+    check = display_check.DisplayCheck(args)
+    check.work.mkdir()
+    (check.work / "server.log").write_text("log", encoding="utf-8")
+    check.REMOVE_WAIT = 0
+    return check
+
+
+def test_the_tool_removes_its_work_folder(tmp_path):
+    check = tool(tmp_path)
+    assert check.remove_work() and not check.work.exists()
+    assert check.write_result() == 0
+
+
+def test_a_work_folder_that_cannot_be_removed_is_not_ok(tmp_path, monkeypatch):
+    check = tool(tmp_path)
+    calls = []
+
+    def held(path, *a, **kw):
+        calls.append((path, a, kw))
+        raise PermissionError(32, "The process cannot access the file because it is being used by another process",
+                              str(path / "server.log"))
+
+    monkeypatch.setattr(display_check.shutil, "rmtree", held)
+    assert check.remove_work() is False
+    assert len(calls) == check.REMOVE_TRIES and all(not kw.get("ignore_errors") for _, _, kw in calls)
+    code = check.write_result()
+    result = json.loads((check.out / "result.json").read_text(encoding="utf-8"))
+    text = (check.out / "result.md").read_text(encoding="utf-8")
+    assert code == 2 and result["verdict"] == "未完了"
+    assert "削除できませんでした" in result["cleanup_error"] and "being used by another process" in result["cleanup_error"]
+    assert "server.log" in result["cleanup_error"] and result["cleanup_error"] in text
+
+
+def test_only_the_record_folders_work_is_removed(tmp_path, monkeypatch):
+    check = tool(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    check.work = elsewhere
+    monkeypatch.setattr(display_check.shutil, "rmtree", lambda *a, **kw: pytest.fail("removed a folder outside the record"))
+    assert check.remove_work() is False and elsewhere.exists()
+    assert "削除していません" in check.cleanup_error
 
 
 # ----- the IME judgement (judge_ime), with composed events ------------------------

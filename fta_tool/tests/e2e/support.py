@@ -33,11 +33,17 @@ FTA_TOOL_DIR = pathlib.Path(__file__).resolve().parents[2]
 class E2EServer:
     """The app under test, started by tests/e2e/stub_server.py."""
 
-    def __init__(self, url: str, workdir: pathlib.Path, process: subprocess.Popen, log_path: pathlib.Path):
+    def __init__(self, url: str, workdir: pathlib.Path, process: subprocess.Popen, log_path: pathlib.Path,
+                 log_file=None):
         self.url = url
         self.workdir = workdir
         self.process = process
         self.log_path = log_path
+        # This process's handle of server.log (the server's stdout): closed in
+        # close(). Left open (until PR-7's fix of 2026-10-30) it kept Windows
+        # from deleting the work folder (a file open without FILE_SHARE_DELETE
+        # cannot be removed there; display_check.py's work stayed).
+        self.log_file = log_file
         self.db_path = workdir / "fta_tool.db"
         # The test server is on this PC: never through a proxy of the
         # environment or (on Windows) the system settings (trust_env=False).
@@ -58,12 +64,18 @@ class E2EServer:
             (self.workdir / name).unlink(missing_ok=True)
 
     def close(self) -> None:
+        """Stop the server and release what this process holds of its
+        folder (the HTTP client, the handle of server.log), so that the
+        folder can be removed, also on Windows."""
         self.http.close()
         self.process.terminate()
         try:
             self.process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             self.process.kill()
+            self.process.wait(timeout=10)
+        if self.log_file is not None and not self.log_file.closed:
+            self.log_file.close()
 
     # ----- stub control --------------------------------------------------
     def set_stub_mode(self, mode: str, delay_seconds: Optional[float] = None) -> None:
@@ -315,7 +327,7 @@ def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str,
             log.close()
             raise RuntimeError(f"E2E server did not start:\n{log_path.read_text(encoding='utf-8', errors='replace')}")
         time.sleep(0.2)
-    return E2EServer(url, workdir, process, log_path)
+    return E2EServer(url, workdir, process, log_path, log)
 
 
 # No console error is let through. Until PR-7 the browser's own 404 for

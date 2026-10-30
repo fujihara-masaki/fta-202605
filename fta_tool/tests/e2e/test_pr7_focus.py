@@ -39,7 +39,7 @@ from tests.e2e.edit_helpers import (
     select_button,
     toast,
 )
-from tests.e2e.layout_checks import focus_shown, reach, tab_walk
+from tests.e2e.layout_checks import focus_shown, reach, tab_until, tab_walk
 from tests.e2e.support import expect
 from tests.e2e.test_pr7_viewports import CASE_BY_LABEL, build, cases, shown
 from tests.e2e.test_pr7_viewports import editor_bar_as_shown as bar_as_shown
@@ -80,33 +80,62 @@ def many_factors(server, title: str, count: int = 14) -> tuple[int, list[int]]:
     return analysis_id, [server.add_level1(analysis_id, f"一次要因{n:02d}：確認のための長めの要因名") for n in range(count)]
 
 
-def walk_with_notifications(page, *, presses: int = 60, what: str = "") -> list[dict]:
+def start_at(page, selector: str) -> None:
+    """The walk starts where the user clicked: the browser's sequential focus
+    navigation then starts there, whatever it was before (after the page
+    loaded, headless Chromium had it at the end of the work area, so a first
+    Tab went straight to a notification added below it; another browser can
+    have it at the top of the page)."""
+    page.locator(selector).click()
+
+
+def walk_with_notifications(page, *, what: str = "") -> list[dict]:
     """Tab and Shift+Tab with notifications shown (focus_shown after each
-    key): first while a success, an お知らせ and a 注意 are still there,
-    then with three errors that stay."""
+    key, the test scrolls nothing): first while a success, an お知らせ and a
+    注意 are still there; then with three errors that stay, forward from the
+    filter box (clicked) through the work area to each notification's 閉じる
+    and on into the inspector, and backward from the inspector's title
+    through them into the work area. The 閉じる are in the Tab order right
+    after the work area and before the inspector (their place on the page),
+    reached from a known start within one round of the page's controls."""
     for kind in ("success", "info", "warning"):
         notify(page, f"フォーカスの確認（{kind}）", kind)
+    start_at(page, "#edit-filter-text")
     seen = tab_walk(page, 6, toasts=3, what=f"{what}短い通知の間・")
     page.evaluate("() => document.querySelectorAll('#ui-toasts .ui-toast__close').forEach((b) => b.click())")
     for n in range(3):
         notify(page, f"フォーカスの確認：閉じるまで残るエラー {n + 1}")
-    seen += tab_walk(page, presses, toasts=3, what=f"{what}エラーの通知3件・")
-    seen += tab_walk(page, presses // 2, key="Shift+Tab", toasts=3, what=f"{what}エラーの通知3件・")
-    return seen
+
+    # Forward.
+    start_at(page, "#edit-filter-text")
+    forward = tab_until(page, lambda f: f["region"] == "toasts", toasts=3,
+                        what=f"{what}エラーの通知3件・絞り込みから Tab ", target="通知の閉じる")
+    assert len(forward) >= 2 and forward[-2]["region"] == "work", (
+        f"通知の閉じるの直前が作業エリアの操作でない：{[f['label'] for f in forward[-3:]]}")
+    forward += tab_walk(page, 2, toasts=3, what=f"{what}エラーの通知3件・通知の中の Tab ")
+    assert [f["region"] for f in forward[-3:]] == ["toasts"] * 3 and all(f["label"] == "閉じる" for f in forward[-3:]), (
+        [f["label"] for f in forward[-3:]])
+    forward += tab_walk(page, 1, toasts=3, what=f"{what}エラーの通知3件・通知の後の Tab ")
+    assert forward[-1]["region"] == "inspector", f"通知の閉じるの次がインスペクタでない：{forward[-1]['label']}"
+
+    # Backward.
+    start_at(page, "[data-inspector-title]")
+    backward = tab_until(page, lambda f: f["region"] == "toasts", key="Shift+Tab", toasts=3,
+                         what=f"{what}エラーの通知3件・インスペクタから Shift+Tab ", target="通知の閉じる")
+    backward += tab_walk(page, 3, key="Shift+Tab", toasts=3, what=f"{what}エラーの通知3件・通知から Shift+Tab ")
+    assert [f["region"] for f in backward[-4:]] == ["toasts", "toasts", "toasts", "work"], (
+        [(f["region"], f["label"]) for f in backward[-4:]])
+    return seen + forward + backward
 
 
 def close_notifications_by_keyboard(page, what: str = "") -> None:
     """Each notification's 閉じる is reached with Tab (in view, its stack
-    scrolls to it) and closes it with Enter."""
+    scrolls to it; at most one round of the page's controls) and closes it
+    with Enter."""
     while toasts(page):
         before = toasts(page)
-        for _ in range(200):
-            page.keyboard.press("Tab")
-            found = focus_shown(page, f"{what}通知の閉じる")
-            if found and found["inToasts"] and found["label"] == "閉じる":
-                break
-        else:
-            raise AssertionError(f"{what}Tab で通知の閉じるに届かない")
+        tab_until(page, lambda f: f["inToasts"] and f["label"] == "閉じる",
+                  what=f"{what}通知の閉じるまで Tab ", target="通知の閉じる")
         page.keyboard.press("Enter")
         expect(page.locator("#ui-toasts .ui-toast")).to_have_count(before - 1)
 
@@ -170,9 +199,9 @@ def test_E_K01_tab_shift_tab_and_arrows_show_the_focus_with_notifications(page, 
     open_edit(page, analysis_id, f"#sel={ids[-1]}&step=2&view=work")
     expect_editor_ready(page, ids[-1])
     seen = walk_with_notifications(page)
-    places = {("toasts" if f["inToasts"] else f["label"]) for f in seen}
-    assert "toasts" in places, "Tab が通知の閉じるに届いていない"
-    assert len(places) >= 20, places
+    assert any(f["inToasts"] for f in seen), "Tab が通知の閉じるに届いていない"
+    # The walk went through the work area (each factor's controls), not only round the notifications.
+    assert sum(f["region"] == "work" for f in seen) >= len(ids), [f["label"] for f in seen if f["region"] == "work"]
 
     # The arrow keys: the view tabs (roving focus).
     page.locator("#edit-tab-work").focus()
@@ -183,6 +212,27 @@ def test_E_K01_tab_shift_tab_and_arrows_show_the_focus_with_notifications(page, 
         focus_shown(page, f"{key}（表示タブ）")
     assert toasts(page) == 3
     close_notifications_by_keyboard(page)
+
+
+@pytest.mark.acceptance("E-K01")
+@pytest.mark.parametrize("viewport", [pytest.param(acceptance.BASE_CASES[0], id=acceptance.BASE_CASES[0].label),
+                                      pytest.param(CASE_BY_LABEL["1093x500"], id="1093x500")], indirect=True)
+def test_E_K01_the_notifications_are_reached_from_the_top_of_the_page(page, e2e_server, display_case):
+    """The Windows Full of 2026-10-30 (Chrome, Edge): Tab began near the top
+    of the page, and 60 presses did not get through the work area (79〜93
+    presses are needed here) to the notifications. With the start put at the
+    top (a click on the work steps' margin, not on a control), Tab reaches
+    each 閉じる within one round of the page's controls, right after the work
+    area."""
+    analysis_id, ids = many_factors(e2e_server, "ページの上からの Tab")
+    open_edit(page, analysis_id, f"#sel={ids[-1]}&step=2&view=work")
+    expect_editor_ready(page, ids[-1])
+    for n in range(3):
+        notify(page, f"上からの確認：閉じるまで残るエラー {n + 1}")
+    page.locator(".edit-steps").click(position={"x": 2, "y": 2})
+    seen = tab_until(page, lambda f: f["region"] == "toasts", toasts=3, what="ページの上から Tab ", target="通知の閉じる")
+    assert len(seen) > 60, len(seen)  # more than the fixed 60 presses of the walk until the fix
+    assert seen[0]["region"] != "work" and seen[-2]["region"] == "work", [(f["region"], f["label"]) for f in seen[:3] + seen[-3:]]
 
 
 @pytest.mark.acceptance("E-K01")

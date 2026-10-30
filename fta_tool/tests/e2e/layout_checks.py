@@ -26,7 +26,10 @@ element drawn on top. Screenshots only complement them (the visual review).
   and on top (a notification or the 保存・取消 bar over it fails; plan 8.7
   conditions 3 and 4, PR-7's fix of 2026-10-29);
 * tab_walk(): presses Tab (or Shift+Tab) and checks focus_shown() after
-  each press, with the notifications that must still be shown;
+  each press, with the notifications that must still be shown; tab_until():
+  the same until a condition holds, at most as many presses as the page has
+  controls that Tab stops at (tabbable_count()), so a target that is in the
+  Tab order is reached from wherever the walk starts;
 * page_scroll(): the page's own scroll size against the display area;
 * pane_scroll(): the panes' sideways scrolling;
 * layout(): which layout the edit page has (three panes or the folded
@@ -204,6 +207,8 @@ FOCUS = """() => {
   const label = el.id || el.getAttribute('data-action') || el.getAttribute('aria-label') || (el.textContent || el.value || '').trim().slice(0, 30) || el.tagName.toLowerCase();
   return { label, tag: el.tagName.toLowerCase(), box: [r.x, r.y, r.width, r.height], ring, client: [w, h], clips, visible: vis, misses,
            inToasts: Boolean(el.closest('#ui-toasts')), inDialog: Boolean(el.closest('dialog')),
+           region: el.closest('#ui-toasts') ? 'toasts' : el.closest('#edit-inspector') ? 'inspector'
+             : el.closest('#edit-work-area') ? 'work' : el.closest('#edit-nav') ? 'nav' : 'other',
            toasts: document.querySelectorAll('#ui-toasts .ui-toast').length };
 }"""
 
@@ -262,6 +267,33 @@ def tab_walk(page, presses: int, *, key: str = "Tab", toasts: int = 0, what: str
             f"{what}{key} {press} 回目：通知が {found['toasts']} 件（{toasts} 件以上を表示したまま確かめる）")
         seen.append(found)
     return seen
+
+
+# The controls Tab stops at (shown, enabled, tabindex >= 0): an upper bound
+# of the presses that go once round the page.
+TABBABLE = """() => [...document.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')]
+  .filter((el) => !el.disabled && el.tabIndex >= 0 && el.offsetParent !== null
+    && getComputedStyle(el).visibility !== 'hidden').length"""
+
+
+def tabbable_count(page) -> int:
+    return page.evaluate(TABBABLE)
+
+
+def tab_until(page, until, *, key: str = "Tab", toasts: int = 0, what: str = "", target: str = "") -> list[dict]:
+    """Press `key` (focus_shown and the notifications checked after each
+    press, as tab_walk()) until `until(record)` holds for the focused
+    control; at most once round the page (tabbable_count() + 2 presses), so
+    the walk does not depend on where the browser's sequential focus
+    navigation starts. The records of each press."""
+    limit = tabbable_count(page) + 2
+    seen = []
+    for press in range(1, limit + 1):
+        seen += tab_walk(page, 1, key=key, toasts=toasts, what=f"{what}{press} 回目の")
+        if seen and until(seen[-1]):
+            return seen
+    raise AssertionError(f"{what}{key} を {limit} 回（ページの Tab で止まる操作の数 + 2）押しても{target or '目的の操作'}に届かない："
+                         f"最後のフォーカス {seen[-1]['label'] if seen else 'なし'}")
 
 
 def page_scroll(page) -> dict:

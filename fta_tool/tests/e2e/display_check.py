@@ -35,7 +35,8 @@ and does the rest:
   composition in the page and judges that the Enter that confirmed it sent
   nothing, and that the Enter after it saved (the filter: nothing is sent);
 * writes result.md and result.json (and display-output.log) and removes
-  the test database.
+  the test database (<out>/work; if it cannot, the run is 未完了 and the
+  reason is in result.md).
 
 The Windows display scale is never changed here (nor any setting, policy or
 profile of the user): it is the one of the PC when the tool runs; its value
@@ -49,8 +50,8 @@ The record says so; it is never a check of a real zoom.
 
 Exit code: 0 every check OK at every zoom level checked (and the IME
 checks, with --ime); 1 a check NG; 2 not completed (a zoom level was not
-set in time, the browser did not start, interrupted: the reason is in
-result.md).
+set in time, the browser did not start, interrupted, the test database's
+folder could not be removed: the reason is in result.md).
 """
 
 from __future__ import annotations
@@ -148,6 +149,7 @@ class DisplayCheck:
         self.page = None
         self.base_dpr: Optional[float] = None
         self.data: dict = {}
+        self.cleanup_error = ""  # why <out>/work could not be removed (remove_work)
         self.console_errors: list[str] = []
         # Every request of the page (method, path and the Playwright request,
         # for its response), in order. Playwright's sync API runs the
@@ -414,7 +416,7 @@ class DisplayCheck:
 
         self.open_edit()
         page = self.page
-        seen = walk_with_notifications(page, presses=40, what=f"{level}・")
+        seen = walk_with_notifications(page, what=f"{level}・")
         field = factor_field(page, "prevention_idea")
         field.click()
         page.keyboard.type("通知の確認の入力")
@@ -777,17 +779,52 @@ class DisplayCheck:
         if self.playwright is not None:
             self.playwright.stop()
         if self.server is not None:
-            self.server.close()
-        shutil.rmtree(self.work, ignore_errors=True)
+            self.server.close()  # the server stopped, its log's handle closed (tests/e2e/support.py)
+        self.remove_work()
+
+    # The test database's folder is removed after the server stopped; on
+    # Windows a file is released a moment after the process that held it
+    # ended (and an indexer or antivirus may hold it briefly): a few tries.
+    REMOVE_TRIES = 10
+    REMOVE_WAIT = 0.5
+
+    def remove_work(self) -> bool:
+        """Remove <out>/work (the test database and the server's files;
+        nothing else). A failure is never let through: its reason goes to
+        the record and the run is not OK (未完了)."""
+        work = self.work
+        if not work.exists():
+            return True
+        if work.resolve().parent != self.out.resolve() or work.name != "work":
+            self.cleanup_error = f"削除の対象が記録フォルダの work ではないため削除していません：{work}"
+            return False
+        error = None
+        for _ in range(self.REMOVE_TRIES):
+            try:
+                shutil.rmtree(work)
+                return True
+            except OSError as caught:
+                error = caught
+                if not work.exists():
+                    return True
+                time.sleep(self.REMOVE_WAIT)  # Playwright is stopped here: nothing to pump
+        left = sorted(str(path.relative_to(work)) for path in work.rglob("*"))[:10] if work.exists() else []
+        self.cleanup_error = (f"一時フォルダ {work} を削除できませんでした（{self.REMOVE_TRIES} 回試行）："
+                              f"{type(error).__name__}: {error}。残ったもの：{left or 'なし'}")
+        self.say(f"未完了：{self.cleanup_error}")
+        return False
 
     def write_result(self) -> int:
         # NG: a check failed; 未完了: nothing failed but a zoom level (or the
         # whole run) was not done; OK: every zoom level done and every check OK.
+        # The test database not removed is not OK either (remove_work).
         failed = [r for r in self.results if not r["ok"] and r["item"] != "拡大の設定" and "参考" not in r["level"]]
-        incomplete = bool(self.reason) or len(self.levels) != len(self.args.zooms)
+        incomplete = bool(self.reason) or bool(self.cleanup_error) or len(self.levels) != len(self.args.zooms)
         code = 1 if failed else (2 if incomplete else 0)
         verdict = {0: "OK", 1: "NG", 2: "未完了"}[code]
-        payload = {"verdict": verdict, "exit_code": code, "reason": self.reason, "environment": self.environment,
+        self.reason = "；".join(filter(None, [self.reason, self.cleanup_error]))
+        payload = {"verdict": verdict, "exit_code": code, "reason": self.reason, "cleanup_error": self.cleanup_error,
+                   "environment": self.environment,
                    "levels": self.levels, "results": self.results, "reaches": self.reaches,
                    "written": _dt.datetime.now().astimezone().isoformat(timespec="seconds")}
         (self.out / "result.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
