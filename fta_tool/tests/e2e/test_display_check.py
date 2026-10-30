@@ -181,6 +181,23 @@ def test_close_waits_for_the_apps_own_process(tmp_path, record_property):
     assert removed, errors
 
 
+def test_the_server_starts_again_in_the_same_folder(tmp_path):
+    # As the W-02 tool does (cache_manual_check.py): what the first server
+    # left (server.pid of a process now gone) is not taken for the second's.
+    work = tmp_path / "work"
+    work.mkdir()
+    port = free_port()
+    first = start_server(work, port)
+    first.close()
+    second = start_server(work, port)
+    try:
+        assert second.server_pid not in (None, first.server_pid)
+        assert second.query("SELECT COUNT(*) FROM analyses") == [(0,)]
+    finally:
+        second.close()
+    assert second.stopped.startswith("自分で終了（終了コード 0）"), second.stopped
+
+
 def test_an_app_started_without_standard_handles_is_reported_at_once(tmp_path):
     work = tmp_path / "work"
     work.mkdir()

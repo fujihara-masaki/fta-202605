@@ -428,6 +428,10 @@ def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str,
     env["FTA_E2E_WORKDIR"] = str(workdir)
     env["FTA_E2E_STUB_MODE"] = "create"
     env.update(extra_env or {})
+    # What a server started before in this folder left (the W-02 tool starts
+    # it again in the same folder): never read as this start's.
+    for name in ("server.pid", "server-stages.jsonl"):
+        (workdir / name).unlink(missing_ok=True)
     log_path = workdir / "server.log"
     log = log_path.open("wb")
     # stdin is how close() asks the app to end (stub_server.py --stop-on-stdin-eof).
