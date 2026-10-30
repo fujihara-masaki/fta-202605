@@ -28,7 +28,9 @@ and does the rest:
   main control visible and not covered, 保存・取消 while a field is in use,
   the folded navigation, the status line and log of a generation, a failed
   save, the dialogs, the list and the new-analysis form) and keeps the
-  screens in <out>/screens for the visual review;
+  screens in <out>/screens for the visual review: the whole display area
+  in device px (save_window: Playwright's own screenshot keeps only its
+  top-left part while the browser is zoomed);
 * --ime: the user types Japanese with the IME in five fields (the list's
   rename, the new-analysis title, the edit screen's title, the manual add,
   the filter) and confirms the conversion with Enter; the tool sees the
@@ -48,6 +50,15 @@ changing it in Windows' settings to check another one.
 page is shown again with the size and devicePixelRatio of the zoom level.
 The record says so; it is never a check of a real zoom.
 
+--device-scale, --window-size, --zoom-in-profile (development and the
+tool's own tests; tests/e2e/test_display_check.py): a headless Chromium
+with that display scale (--force-device-scale-factor) and window, so the
+display area is fractional as at a Windows display scale with a browser
+zoom; with --zoom-in-profile each zoom level is the browser's own zoom, set
+in the temporary profile (in <out>/work) of a browser started for it
+instead of by the user's keys. The record says so; it is not the check on
+the user's PC.
+
 Exit code: 0 every check OK at every zoom level checked (and the IME
 checks, with --ime); 1 a check NG; 2 not completed (a zoom level was not
 set in time, the browser did not start, interrupted, the test database's
@@ -57,8 +68,10 @@ folder could not be removed: the reason is in result.md).
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as _dt
 import json
+import math
 import pathlib
 import platform
 import subprocess
@@ -68,7 +81,7 @@ import traceback
 from typing import Callable, Optional
 
 from tests.e2e.acceptance import DisplayCase
-from tests.e2e.layout_checks import NOT_REACHED, OBSERVERS, REACHED_AS_SHOWN, REACHED_BY_PANE_SCROLL, reach
+from tests.e2e.layout_checks import AREA, NOT_REACHED, OBSERVERS, REACHED_AS_SHOWN, REACHED_BY_PANE_SCROLL, layout, reach
 from tests.e2e.support import FTA_TOOL_DIR, free_port, remove_folder, save_screenshot, start_server
 
 # Below these the plan has no assumed size (plan 5.9.4: 1024px wide and
@@ -83,7 +96,7 @@ DPR_TOLERANCE = 0.02
 
 MEASURE = """() => {
   const root = document.documentElement;
-  return { client: [root.clientWidth, root.clientHeight], inner: [window.innerWidth, window.innerHeight],
+  return { client: [root.clientWidth, root.clientHeight], area: """ + AREA + """, inner: [window.innerWidth, window.innerHeight],
            outer: [window.outerWidth, window.outerHeight], devicePixelRatio: window.devicePixelRatio,
            screen: [screen.width, screen.height, screen.availWidth, screen.availHeight] };
 }"""
@@ -102,6 +115,39 @@ for (const type of ['compositionstart', 'compositionend']) {
 
 class Incomplete(Exception):
     """The run cannot go on; the reason goes to result.md."""
+
+
+# How a screen was kept (result.md).
+WHOLE_WINDOW = "表示領域の全体（Chromium の Page.captureScreenshot、デバイスの px）"
+PLAYWRIGHT_ONLY = "Playwright の page.screenshot（ブラウザの拡大中は表示領域の左上の一部だけ）"
+
+
+def save_window(page, path: pathlib.Path) -> dict:
+    """The whole display area as the window shows it, in device px:
+    {"file", "bytes", "how"}, or {"file": None, "reason", "how"}.
+    Playwright's page.screenshot cuts the display area at its CSS size taken
+    as unzoomed px, so while the browser is zoomed it keeps only the top-left
+    part (Windows 125 % with a zoom of 125 %: 1528x731 of 1910x915, without
+    保存・取消; the Windows check of b35504f). Chromium's own capture without
+    a clip takes all of it; if that fails, Playwright's (the record says so)."""
+    try:
+        session = page.context.new_cdp_session(page)
+        try:
+            data = session.send("Page.captureScreenshot", {"format": "png"})["data"]
+        finally:
+            session.detach()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(base64.b64decode(data))
+        return {"file": path.name, "bytes": path.stat().st_size, "how": WHOLE_WINDOW}
+    except Exception as error:  # noqa: BLE001 - the fallback and its reason are recorded
+        reason = f"{type(error).__name__}: {str(error).strip().splitlines()[0][:200] if str(error).strip() else ''}"
+        return {**save_screenshot(page, path), "how": f"{PLAYWRIGHT_ONLY}。全体を取れなかった：{reason}"}
+
+
+def png_size(path: pathlib.Path) -> tuple[int, int]:
+    """The width and height of a PNG file (its IHDR chunk)."""
+    head = path.read_bytes()[:24]
+    return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
 
 
 def git_head() -> tuple[str, bool]:
@@ -193,6 +239,16 @@ class DisplayCheck:
         from playwright.sync_api import sync_playwright
 
         self.playwright = sync_playwright().start()
+        if self.args.zoom_in_profile:
+            self.zoomed_browser(100)
+            return
+        try:
+            self.browser = self.playwright.chromium.launch(**self.launch_options())
+        except Exception as error:  # noqa: BLE001 - the reason goes to the record
+            raise Incomplete(f"ブラウザを起動できませんでした（{self.args.channel}）：{str(error).splitlines()[0]}")
+        self.new_context(None)
+
+    def launch_options(self) -> dict:
         options = {"headless": False, "args": ["--start-maximized"]}
         if self.args.executable:
             options["executable_path"] = self.args.executable
@@ -201,24 +257,53 @@ class DisplayCheck:
         if self.args.simulate_zoom:
             options["headless"] = True
             options["args"] = []
+        if self.args.device_scale:  # development and the tool's tests (see the module)
+            options["headless"] = True
+            options["args"] = [f"--force-device-scale-factor={self.args.device_scale}",
+                               f"--window-size={self.args.window_size.replace('x', ',')}"]
+        return options
+
+    def zoomed_browser(self, zoom: int) -> None:
+        """--zoom-in-profile: a browser whose own zoom is `zoom` %, the
+        default zoom of its temporary profile (in <out>/work), as Ctrl and +
+        set it (Chromium's zoom levels: log base 1.2 of the factor)."""
+        for thing in (self.context, self.browser):
+            try:
+                if thing is not None:
+                    thing.close()
+            except Exception:  # noqa: BLE001 - closed with its context
+                pass
+        self.context = self.browser = None
+        profile = self.work / f"profile-zoom{zoom}"
+        (profile / "Default").mkdir(parents=True, exist_ok=True)
+        (profile / "Default" / "Preferences").write_text(
+            json.dumps({"partition": {"default_zoom_level": {"x": math.log(zoom / 100) / math.log(1.2)}}}), encoding="utf-8")
         try:
-            self.browser = self.playwright.chromium.launch(**options)
+            self.context = self.playwright.chromium.launch_persistent_context(
+                str(profile), **self.launch_options(), no_viewport=True, **self.context_options())
         except Exception as error:  # noqa: BLE001 - the reason goes to the record
             raise Incomplete(f"ブラウザを起動できませんでした（{self.args.channel}）：{str(error).splitlines()[0]}")
-        self.new_context(None)
+        self.browser = self.context.browser
+        self.watch_page(self.context.pages[0] if self.context.pages else self.context.new_page())
+
+    def context_options(self) -> dict:
+        return {"locale": "ja-JP", "timezone_id": "Asia/Tokyo", "base_url": self.server.url}
 
     def new_context(self, simulated: Optional[DisplayCase]) -> None:
         if self.context is not None:
             self.context.close()
-        options = {"locale": "ja-JP", "timezone_id": "Asia/Tokyo", "base_url": self.server.url}
+        options = self.context_options()
         if simulated is None:
             options["no_viewport"] = True  # the window's real size, display scale and zoom
         else:
             options["viewport"] = {"width": simulated.width, "height": simulated.height}
             options["device_scale_factor"] = simulated.dpr
         self.context = self.browser.new_context(**options)
+        self.watch_page(self.context.new_page())
+
+    def watch_page(self, page) -> None:
         self.context.add_init_script(COMPOSITION)
-        self.page = self.context.new_page()
+        self.page = page
         self.page.set_default_timeout(10000)
         self.page.on("console", lambda m: self.console_errors.append(m.text) if m.type == "error" else None)
         self.page.on("pageerror", lambda e: self.console_errors.append(f"例外：{e}"))
@@ -235,7 +320,7 @@ class DisplayCheck:
         info = {"対象 SHA": f"{head}（{'追跡中のファイルに未コミットの変更あり' if dirty else '未コミットの変更なし'}）",
                 "OS": platform.platform(), "Python": platform.python_version(),
                 "ブラウザ（channel）": self.args.executable or ("Playwright 同梱の Chromium" if self.args.bundled else self.args.channel),
-                "ブラウザの版（Playwright）": self.browser.version,
+                "ブラウザの版（Playwright）": self.browser.version if self.browser else "-",
                 "テスト用サーバー": f"{self.server.url}（一時 DB：{self.work}。AI: e2e-stub、実LLMなし）",
                 "プロフィール": "一時プロフィール（Playwright が作る。普段のプロフィール・拡大の設定・キャッシュは使わない）"}
         page = self.context.new_page()
@@ -252,6 +337,10 @@ class DisplayCheck:
             info["Windows の表示倍率（利用者の入力）"] = f"{self.args.os_scale}%"
         if self.args.simulate_zoom:
             info["注意"] = "--simulate-zoom：拡大を寸法と devicePixelRatio で模したもの。実際の拡大の確認ではない（開発用）"
+        if self.args.device_scale:
+            info["注意"] = (f"--device-scale {self.args.device_scale}・--window-size {self.args.window_size}"
+                          + ("・--zoom-in-profile（拡大は一時プロフィールの既定の拡大）" if self.args.zoom_in_profile else "")
+                          + "：ヘッドレスの Chromium。利用者の PC での確認ではない（開発用・ツールの試験用）")
         self.environment = info
 
     def fonts(self) -> str:
@@ -281,6 +370,12 @@ class DisplayCheck:
             self.new_context(case)
             self.page.goto("/")
             return self.measure()
+        if self.args.zoom_in_profile:
+            if zoom != current:
+                self.zoomed_browser(zoom)
+            self.page.goto("/")
+            measured = self.measure()
+            return measured if abs(measured["devicePixelRatio"] - round(self.base_dpr * zoom / 100, 4)) <= DPR_TOLERANCE else None
         if zoom != current:
             steps = ZOOM_STEPS.index(zoom) - ZOOM_STEPS.index(current) if zoom in ZOOM_STEPS and current in ZOOM_STEPS else None
             how = (f"Ctrl と + を {steps} 回" if steps and steps > 0 else f"Ctrl と - を {-steps} 回" if steps
@@ -309,7 +404,8 @@ class DisplayCheck:
                  "simulated": bool(self.args.simulate_zoom), "screens": [],
                  "below_plan": below, "reference": reference}
         self.levels.append(entry)
-        self.say(f"  実測：{width}×{height}、devicePixelRatio {measured['devicePixelRatio']}（{entry['layout']}）")
+        area = "×".join(f"{v:g}" for v in measured["area"])
+        self.say(f"  実測：{width}×{height}（表示領域 {area}）、devicePixelRatio {measured['devicePixelRatio']}（{entry['layout']}）")
         if below:
             self.say(f"  注意：計画の想定（幅 {PLAN_WIDTH}px・高さ {PLAN_HEIGHT}px）を下回ります。"
                      + ("結果は参考で、判定に含めません。" if reference else "") + "影響を利用者に示して判断を受けます（第5.9.4節）。")
@@ -331,7 +427,9 @@ class DisplayCheck:
 
     def keep(self, entry: dict, name: str) -> None:
         file = self.screens / f"zoom{entry['zoom']}--{name}.png"
-        result = save_screenshot(self.page, file)
+        result = save_window(self.page, file)
+        if result["file"]:
+            result["size"] = png_size(file)
         entry["screens"].append({"name": name, **result})
 
     # ----- the checks on the live page (E-V01〜E-V03) ---------------------------------
@@ -394,7 +492,7 @@ class DisplayCheck:
                                                   main_controls)
 
         self.open_edit()
-        expect_layout(self.page, case)
+        entry["panes"] = expect_layout(self.page, case)
         expect_scrolling(self.page, case, level)
         editor_bar_as_shown(self.page, f"{level}・入力の前")
         for name, control in main_controls(self.page, self.data["b"]).items():
@@ -462,8 +560,9 @@ class DisplayCheck:
         def fits(dialog, buttons, name):
             expect(dialog).to_be_visible()
             box = dialog.bounding_box()
-            assert box["x"] >= 0 and box["y"] >= 0 and box["x"] + box["width"] <= case.width + 0.5 \
-                and box["y"] + box["height"] <= case.height + 0.5, (name, box)
+            width, height = layout(page)["area"]  # fractional (layout_checks.AREA)
+            assert box["x"] >= 0 and box["y"] >= 0 and box["x"] + box["width"] <= width + 0.5 \
+                and box["y"] + box["height"] <= height + 0.5, (name, box, [width, height])
             for label in buttons:
                 reach(dialog.get_by_role("button", name=label, exact=True), name=f"{name}：{label}", scroll=False)
             self.keep(entry, name)
@@ -840,13 +939,17 @@ class DisplayCheck:
                  "最前面の要素によるものです。画面の読みやすさは screens の画像で目視してください（判定に含めません）。",
                  "", "## 実行環境", "", "| 項目 | 値 |", "|---|---|"]
         lines += [f"| {key} | {value} |" for key, value in self.environment.items()]
-        lines += ["", "## 拡大ごとの実測", "", "| ブラウザの拡大 | clientWidth×clientHeight | innerWidth×innerHeight | devicePixelRatio | レイアウト | 計画の想定との関係 | 模擬 |",
-                  "|---|---|---|---|---|---|---|"]
+        lines += ["", "## 拡大ごとの実測", "",
+                  "表示領域は、ページが配置される領域（visualViewport、端数のある CSS px）です。clientWidth×clientHeight は"
+                  "それを整数にしたもの（切り捨て・切り上げのどちらもある）で、ペインが表示領域の中にあるかは表示領域で確かめます。", "",
+                  "| ブラウザの拡大 | clientWidth×clientHeight | 表示領域（CSS px） | innerWidth×innerHeight | devicePixelRatio | レイアウト | 計画の想定との関係 | 模擬 |",
+                  "|---|---|---|---|---|---|---|---|"]
         for entry in self.levels:
             m = entry["measured"]
             relation = ("想定を下回る：参考（判定に含めない）。利用者の判断が必要" if entry["reference"]
                         else "想定を下回る：判定に含める。利用者の判断が必要" if entry["below_plan"] else "想定の範囲")
-            lines.append(f"| {entry['zoom']}% | {m['client'][0]}×{m['client'][1]} | {m['inner'][0]}×{m['inner'][1]} "
+            area = "×".join(f"{v:.2f}".rstrip("0").rstrip(".") for v in m["area"]) if m.get("area") else "-"
+            lines.append(f"| {entry['zoom']}% | {m['client'][0]}×{m['client'][1]} | {area} | {m['inner'][0]}×{m['inner'][1]} "
                          f"| {m['devicePixelRatio']} | {entry['layout']} | {relation} "
                          f"| {'はい（実際の拡大ではない）' if entry['simulated'] else 'いいえ'} |")
         lines += ["", "## 確認の結果", "", "| 条件 | 項目 | 結果 | 操作 | 詳細 |", "|---|---|---|---|---|"]
@@ -854,11 +957,15 @@ class DisplayCheck:
             detail = str(r["detail"]).replace("|", "／").replace("\n", " ")
             lines.append(f"| {r['level']} | {r['item']} | {'OK' if r['ok'] else 'NG'} | {r['operated_by']} | {detail} |")
         lines += self.reach_lines()
-        lines += ["", "## 目視のレビュー用の画面（screens）", ""]
+        lines += ["", "## 目視のレビュー用の画面（screens）", "",
+                  "表示領域の全体を、デバイスの px で保存しています（Chromium の Page.captureScreenshot）。"
+                  "そうでない画面には、その方法と理由を書いています。", ""]
         for entry in self.levels:
             for shot in entry["screens"]:
+                size = f"（{shot['size'][0]}×{shot['size'][1]} px）" if shot.get("size") else ""
                 lines.append(f"- 拡大 {entry['zoom']}%：{shot['name']} → "
-                             + (f"screens/{shot['file']}" if shot.get("file") else f"保存できなかった（{shot.get('reason')}）"))
+                             + (f"screens/{shot['file']}{size}" if shot.get("file") else f"保存できなかった（{shot.get('reason')}）")
+                             + (f"。{shot['how']}" if shot.get("how") and shot["how"] != WHOLE_WINDOW else ""))
         lines += ["", "## このツールが確認しないこと", "",
                   "- Windows の表示倍率の変更（このツールは変えない。設定を変えてから、もう一度実行する）",
                   "- スクリーンリーダー（NVDA など）の実際の読み上げ（manual-check-pr7.md の手動確認）",
@@ -907,12 +1014,18 @@ def main(argv=None) -> int:
     parser.add_argument("--simulate-zoom", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--simulate-base", default="1920x945", help=argparse.SUPPRESS)
     parser.add_argument("--no-input", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--device-scale", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--window-size", default="1280x800", help=argparse.SUPPRESS)
+    parser.add_argument("--zoom-in-profile", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     args.out = args.out.resolve()
     try:
         args.zooms = [int(z) for z in args.zooms.split(",") if z.strip()]
     except ValueError:
         print(f"未完了：--zooms は 100,125,150 のように指定してください（{args.zooms}）")
+        return 2
+    if args.zoom_in_profile and not args.device_scale:
+        print("未完了：--zoom-in-profile は --device-scale と一緒に指定してください（ヘッドレスの開発用）")
         return 2
     if args.out == FTA_TOOL_DIR or FTA_TOOL_DIR in args.out.parents:
         print(f"未完了：記録フォルダはコードの外に指定してください：{args.out}")

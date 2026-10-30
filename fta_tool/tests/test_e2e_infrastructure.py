@@ -37,7 +37,7 @@ import types
 
 import pytest
 
-from tests.e2e import acceptance, support
+from tests.e2e import acceptance, layout_checks, support
 from tests.e2e.conftest import launch_failure_message
 
 
@@ -543,6 +543,48 @@ def test_a_boundary_of_the_height_is_not_crossed_either():
     assert result["verdict"] == "許容しない差" and "（高さ 945.5 px）" in result["reason"]
     assert support.judge_viewport((1905, 945), WINDOWS_CHROME, WINDOWS_CHROME, 1,
                                   {"width": (1907,), "height": (944.9,)})["verdict"] == "許容した差"
+
+
+# The panes against a fractional display area (tests/e2e/layout_checks.py
+# AREA): the Windows check of b35504f, Edge on Windows 125 % with a zoom of
+# 125 %, as its record has them. The panes end at the edge of the display
+# area, 1222.4x585.6 CSS px, whose clientWidth x clientHeight are 1222x585;
+# the former bound, clientHeight + 0.5, took them for 0.09px outside.
+WINDOWS_125_AT_125 = {"nav": None, "center": [0, 164.55999755859375, 882.3999633789062, 421.0299987792969],
+                      "inspector": [882.3999633789062, 164.55999755859375, 340, 421.0299987792969],
+                      "toggle": "false", "folded": True,
+                      "area": [1222.4000244140625, 585.5999755859375], "client": [1222, 585]}
+
+
+class FakeLayoutPage:
+    def __init__(self, found):
+        self.found = found
+
+    def evaluate(self, script):
+        assert script == layout_checks.LAYOUT
+        return self.found
+
+
+def test_the_panes_are_checked_against_the_display_area_with_its_fraction():
+    from tests.e2e.test_pr7_viewports import expect_layout
+
+    case = acceptance.DisplayCase("zoom125", 1222, 585, 1.5625)
+    center = WINDOWS_125_AT_125["center"]
+    assert center[1] + center[3] > case.height + 0.5  # NG with the former bound
+    expect_layout(FakeLayoutPage(WINDOWS_125_AT_125), case)  # at the edge: inside
+    # Past the edge by more than Chromium's unit of layout (1/64 px): outside.
+    for past in ({"center": [0, 164.56, 882.4, 421.06]}, {"inspector": [882.4, 164.56, 340.05, 421.03]}):
+        with pytest.raises(AssertionError):
+            expect_layout(FakeLayoutPage({**WINDOWS_125_AT_125, **past}), case)
+    # A whole-number display area: no longer half a px past it (the former
+    # bound let that through), and the area must be that of the client size.
+    whole = {**WINDOWS_125_AT_125, "area": [1222, 585], "center": [0, 164.56, 882, 420.8],
+             "inspector": [882, 164.56, 340, 420.8]}
+    with pytest.raises(AssertionError):
+        expect_layout(FakeLayoutPage(whole), case)
+    expect_layout(FakeLayoutPage({**whole, "center": [0, 164.56, 882, 420.44], "inspector": [882, 164.56, 340, 420.44]}), case)
+    with pytest.raises(AssertionError):
+        expect_layout(FakeLayoutPage({**WINDOWS_125_AT_125, "client": [1222, 584]}), case)
 
 
 # The edit page's stylesheets (base.html and analysis_detail.html) and their

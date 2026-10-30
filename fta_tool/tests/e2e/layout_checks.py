@@ -34,6 +34,15 @@ element drawn on top. Screenshots only complement them (the visual review).
 * pane_scroll(): the panes' sideways scrolling;
 * layout(): which layout the edit page has (three panes or the folded
   navigation) and where its panes are.
+
+The display area of these checks is the one the page is laid out in
+(AREA), in fractional CSS px, not the root's clientWidth x clientHeight:
+those are whole numbers, rounded down or up (Edge on Windows' display scale
+125 % with a zoom of 125 %: 1222.4x585.6 as 1222x585; Chromium at a display
+scale of 1.25 on about:blank: 1905.6x945.6 as 1906x946). A pane that ends at
+the edge of that display area (585.59) was taken for one 0.59px past 585,
+more than the half px allowed (PR-7, the Windows check of b35504f). Both
+are recorded.
 """
 
 from __future__ import annotations
@@ -44,6 +53,16 @@ from tests.e2e.support import expect
 
 # Fully inside: up to half a CSS px out (fractional boxes at a DPR of 1.25).
 EDGE = 0.5
+# Chromium places boxes in units of 1/64 CSS px (LayoutUnit): a pane that
+# ends at the edge of the display area ends there to within one.
+LAYOUT_UNIT = 1 / 64
+
+# The display area the page is laid out in, [width, height] in CSS px: the
+# visual viewport while it is not pinch-zoomed (the layout viewport less a
+# scrollbar, as clientWidth x clientHeight, but not rounded); otherwise the
+# root's client size. See the module.
+AREA = """(() => { const vv = window.visualViewport, root = document.documentElement;
+  return vv && vv.scale === 1 ? [vv.width, vv.height] : [root.clientWidth, root.clientHeight]; })()"""
 
 # How reach() got to a control (the record, plan 8.7 condition 4).
 REACHED_AS_SHOWN = "表示のまま（スクロールなし・覆われない）"
@@ -61,7 +80,7 @@ NOTIFICATIONS = """() => [...document.querySelectorAll('#ui-toasts .ui-toast')].
 
 HIT = """(el) => {
   const r = el.getBoundingClientRect();
-  const w = document.documentElement.clientWidth, h = document.documentElement.clientHeight;
+  const [w, h] = """ + AREA + """;
   const points = [[0.5, 0.5], [0.15, 0.2], [0.85, 0.2], [0.15, 0.8], [0.85, 0.8]];
   const misses = [];
   for (const [fx, fy] of points) {
@@ -72,7 +91,8 @@ HIT = """(el) => {
                     over: hit ? (hit.id ? '#' + hit.id : hit.tagName.toLowerCase() + (hit.className && typeof hit.className === 'string' ? '.' + hit.className.trim().split(/\\s+/).join('.') : '')) : null });
     }
   }
-  return { box: [r.x, r.y, r.width, r.height], client: [w, h], misses,
+  return { box: [r.x, r.y, r.width, r.height], area: [w, h], misses,
+           client: [document.documentElement.clientWidth, document.documentElement.clientHeight],
            scrollX: window.scrollX, scrollY: window.scrollY };
 }"""
 
@@ -100,7 +120,8 @@ LAYOUT = """() => {
   const toggle = document.querySelector('[data-nav-toggle]');
   return { nav: box('#edit-nav'), center: box('#edit-work-area'), inspector: box('#edit-inspector'),
            toggle: toggle && toggle.offsetParent !== null ? toggle.getAttribute('aria-expanded') : null,
-           folded: window.matchMedia('(width < 1280px)').matches };
+           folded: window.matchMedia('(width < 1280px)').matches, area: """ + AREA + """,
+           client: [document.documentElement.clientWidth, document.documentElement.clientHeight] };
 }"""
 
 
@@ -129,14 +150,15 @@ def reach(locator, *, timeout: Optional[float] = None, name: str = "", scroll: b
         how = NOT_REACHED
     for observer in OBSERVERS:
         observer({"name": label, "how": how, "no_scroll_required": not scroll, "client": found["client"],
+                  "area": [round(v, 2) for v in found["area"]],
                   "box": [round(v, 1) for v in found["box"]], "first_misses": first["misses"],
                   "covered_by_notifications": covered, "notifications": notifications})
     x, y, w, h = found["box"]
-    width, height = found["client"]
+    width, height = found["area"]
     rule = "（追加のスクロールなしで届く必要がある主要なボタン）" if not scroll else ""
     assert found["scrollX"] == 0, f"{label}：ページを横にスクロールしないと届かない（scrollX {found['scrollX']}）"
     assert _inside(found), (
-        f"{label}：表示領域 {width}×{height} の外にはみ出す（{x:.1f}, {y:.1f}, {w:.1f}×{h:.1f}）{rule}")
+        f"{label}：表示領域 {width:g}×{height:g} の外にはみ出す（{x:.1f}, {y:.1f}, {w:.1f}×{h:.1f}）{rule}")
     assert not covered, f"{label}：通知に覆われている {covered}{rule}"
     assert not found["misses"], f"{label}：ほかの要素に覆われている {found['misses']}{rule}"
     return found
@@ -144,7 +166,7 @@ def reach(locator, *, timeout: Optional[float] = None, name: str = "", scroll: b
 
 def _inside(found: dict) -> bool:
     x, y, w, h = found["box"]
-    width, height = found["client"]
+    width, height = found["area"]
     return x >= -EDGE and y >= -EDGE and x + w <= width + EDGE and y + h <= height + EDGE
 
 
@@ -159,7 +181,7 @@ FOCUS = """() => {
   const style = getComputedStyle(el);
   // How far the outline reaches outside the box (an inset one: 0).
   const ring = style.outlineStyle !== 'none' ? Math.max(0, (parseFloat(style.outlineWidth) || 0) + (parseFloat(style.outlineOffset) || 0)) : 0;
-  const w = document.documentElement.clientWidth, h = document.documentElement.clientHeight;
+  const [w, h] = """ + AREA + """;
   const clips = [{ name: '表示領域', rect: [0, 0, w, h] }];
   // An element placed with position: absolute (fixed) is clipped only by the
   // areas from its containing block up (the 保存・取消 bar: by the
@@ -205,7 +227,7 @@ FOCUS = """() => {
     }
   }
   const label = el.id || el.getAttribute('data-action') || el.getAttribute('aria-label') || (el.textContent || el.value || '').trim().slice(0, 30) || el.tagName.toLowerCase();
-  return { label, tag: el.tagName.toLowerCase(), box: [r.x, r.y, r.width, r.height], ring, client: [w, h], clips, visible: vis, misses,
+  return { label, tag: el.tagName.toLowerCase(), box: [r.x, r.y, r.width, r.height], ring, area: [w, h], clips, visible: vis, misses,
            inToasts: Boolean(el.closest('#ui-toasts')), inDialog: Boolean(el.closest('dialog')),
            region: el.closest('#ui-toasts') ? 'toasts' : el.closest('#edit-inspector') ? 'inspector'
              : el.closest('#edit-work-area') ? 'work' : el.closest('#edit-nav') ? 'nav' : 'other',

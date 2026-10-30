@@ -29,7 +29,7 @@ from tests.e2e.support import (FTA_TOOL_DIR, free_port, process_gone, python_env
 pytestmark = pytest.mark.e2e
 
 
-def run_tool(tmp_path, pytestconfig, *args) -> tuple[int, dict, str]:
+def run_tool(tmp_path, pytestconfig, *args, simulate: bool = True) -> tuple[int, dict, str]:
     out = tmp_path / "display-check"
     executable = acceptance.browser_executable(pytestconfig) or ""
     channel = pytestconfig.getoption("--browser-channel") or ""
@@ -38,7 +38,7 @@ def run_tool(tmp_path, pytestconfig, *args) -> tuple[int, dict, str]:
     # Its output in UTF-8, as read here (python_env; the Windows run of 2026-10-30).
     env = python_env()
     done = subprocess.run([sys.executable, "-m", "tests.e2e.display_check", "--out", str(out), *browser,
-                           "--simulate-zoom", "--no-input", *args], cwd=FTA_TOOL_DIR, env=env,
+                           *(["--simulate-zoom"] if simulate else []), "--no-input", *args], cwd=FTA_TOOL_DIR, env=env,
                           capture_output=True, text=True, encoding="utf-8", timeout=600)
     code = done.returncode
     assert (out / "result.json").exists(), done.stdout[-2000:] + done.stderr[-2000:]
@@ -74,6 +74,42 @@ def test_a_display_area_below_the_plan_is_flagged_for_the_users_decision(tmp_pat
     assert level["below_plan"] and level["reference"]
     assert all("参考" in r["level"] for r in result["results"])
     assert code in (0, 2) and "想定を下回る：参考（判定に含めない）。利用者の判断が必要" in text
+
+
+# ----- a fractional display area (the Windows check of b35504f) ---------------------
+# Windows 125 % with Edge's zoom of 125 %: the display area was 1910x915
+# device px / 1.5625 = 1222.4x585.6 CSS px, clientWidth x clientHeight
+# 1222x585. The panes end at its edge (585.59), which the check took for
+# 0.59px past 585 (its bound was 585.5): 編集画面：レイアウト NG, and the
+# checks after it (保存・取消 before and while typing) never ran. The screens
+# kept only the top-left 1528x731 px of 1910x915, without 保存・取消.
+# Here the browser's own zoom (set in its temporary profile) on a display
+# scale of 1.25, headless: the same kind of display area.
+
+def test_the_panes_reach_the_edge_of_a_fractional_display_area(tmp_path, pytestconfig, record_property):
+    code, result, text = run_tool(tmp_path, pytestconfig, "--device-scale", "1.25", "--window-size", "1528x874",
+                                  "--zoom-in-profile", "--zooms", "100,125", simulate=False)
+    levels = {lvl["zoom"]: lvl for lvl in result["levels"]}
+    zoomed = levels[125]
+    measured, panes = zoomed["measured"], zoomed["panes"]
+    record_property(acceptance.NOTE_PROPERTY, f"拡大 125%：client {measured['client']}、表示領域 {measured['area']}、"
+                                              f"devicePixelRatio {measured['devicePixelRatio']}")
+    assert code == 0 and result["verdict"] == "OK", [r for r in result["results"] if not r["ok"]]
+    assert measured["devicePixelRatio"] == pytest.approx(1.5625)
+    assert measured["area"][1] != measured["client"][1], measured  # fractional: the case of Windows
+    for name in ("center", "inspector"):
+        x, y, w, h = panes[name]
+        assert y + h == pytest.approx(measured["area"][1], abs=layout_checks.LAYOUT_UNIT), (name, panes)
+    # 保存・取消 (before and while typing, with the notifications) as shown.
+    bar = [e for e in result["reaches"] if "拡大 125%" in e["name"] and e["name"].startswith(("保存（", "取消（"))]
+    assert len(bar) >= 4 and all(e["how"] == layout_checks.REACHED_AS_SHOWN for e in bar), bar
+    # Each screen is the whole display area in device px, not its top-left part.
+    for lvl in levels.values():
+        dpr, (width, height) = lvl["measured"]["devicePixelRatio"], lvl["measured"]["area"]
+        for shot in lvl["screens"]:
+            assert shot["how"] == display_check.WHOLE_WINDOW, shot
+            assert abs(shot["size"][0] - width * dpr) <= 1 and abs(shot["size"][1] - height * dpr) <= 1, (shot, width, height, dpr)
+    assert "表示領域（CSS px）" in text
 
 
 # ----- the test database's folder is removed (the Windows runs of 2026-10-30) --------

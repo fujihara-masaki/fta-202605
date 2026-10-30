@@ -116,9 +116,16 @@ def keep(page, request, name: str) -> None:
 
 
 def expect_layout(page, display_case) -> dict:
-    """The layout of the width (plan 5.9.4) and the panes inside the display area."""
+    """The layout of the width (plan 5.9.4) and the panes inside the display
+    area: the one the page is laid out in (layout_checks.AREA, fractional
+    CSS px; display_case is its clientWidth x clientHeight, whole numbers
+    rounded either way), to within Chromium's unit of layout (the panes end
+    at its edge). A pane that ends 0.6px past the whole number at Windows'
+    125 % and a browser zoom of 125 % ends at the edge (1222.4x585.6)."""
     found = layout(page)
-    width = display_case.width
+    width, height = found["area"]
+    assert all(abs(area - client) < 1 for area, client in zip(found["area"], found["client"])), found
+    edge = layout_checks.LAYOUT_UNIT
     center, side = found["center"], found["inspector"]
     assert center and side
     if width >= 1280:
@@ -128,9 +135,9 @@ def expect_layout(page, display_case) -> dict:
     else:
         assert found["folded"] and found["nav"] is None and found["toggle"] == "false", found
         assert center[0] >= 0
-    assert center[0] + center[2] <= side[0] + 1 and side[0] + side[2] <= width + 0.5, found
+    assert center[0] + center[2] <= side[0] + 1 and side[0] + side[2] <= width + edge, found
     for box in (center, side):
-        assert box[3] > 150 and box[1] + box[3] <= display_case.height + 0.5, found
+        assert box[3] > 150 and box[1] + box[3] <= height + edge, found
     return found
 
 
