@@ -5,7 +5,10 @@ Started by tests/e2e/conftest.py as a subprocess:
     python -m tests.e2e.stub_server --port 8765
 
 with the working directory set to a temporary directory given in
-FTA_E2E_WORKDIR. It writes its process id to server.pid there, and with
+FTA_E2E_WORKDIR. It writes its process id to server.pid there, how far it got to
+server-stages.jsonl (Python started with which standard streams, app
+imported, listening, stopped, or the error; FTA_E2E_START_DELAY seconds
+before it listens, for the tests of a server that does not start), and with
 --stop-on-stdin-eof (tests/e2e/support.py) it ends by itself when its stdin
 is closed (FTA_E2E_EXIT_DELAY seconds later than it would, for the tests of
 that stop only). The app opens ./fta_tool.db relative to the working
@@ -96,6 +99,7 @@ import pathlib
 import sys
 import threading
 import time
+import traceback
 
 PINNED_ENV = {
     "AI_PROVIDER": "e2e-stub",
@@ -540,6 +544,31 @@ def main() -> None:
     # This process, which holds the database: the tests wait for it to be
     # gone (on Windows the process they started is a venv's launcher).
     (workdir / "server.pid").write_text(str(os.getpid()), encoding="utf-8")
+    try:
+        _serve(args, workdir)
+    except BaseException as error:  # also SystemExit: recorded where the tests read it
+        if not isinstance(error, SystemExit) or error.code not in (0, None):
+            _stage(workdir, "error", error=f"{type(error).__name__}: {error}", traceback=traceback.format_exc())
+        raise
+    _stage(workdir, "stopped")
+
+
+def _stage(workdir: pathlib.Path, stage: str, **fields) -> None:
+    """How far the server got, for start_server()'s error when it does not
+    answer (server-stages.jsonl; a file, since its stdout and stderr may be
+    missing: a child started on Windows without its standard handles)."""
+    _append_jsonl(workdir / "server-stages.jsonl", {"time": time.time(), "stage": stage, "pid": os.getpid(), **fields})
+
+
+def _serve(args, workdir: pathlib.Path) -> None:
+    streams = {name: getattr(sys, name) is not None for name in ("stdin", "stdout", "stderr")}
+    _stage(workdir, "python", ppid=os.getppid(), executable=sys.executable, version=sys.version.split()[0],
+           streams=streams)
+    # uvicorn's logging needs stdout and stderr (sys.stdout.isatty()), and
+    # --stop-on-stdin-eof stdin: without them it fails with no word anywhere.
+    missing = [name for name, there in streams.items() if not there and (name != "stdin" or args.stop_on_stdin_eof)]
+    if missing:
+        raise SystemExit(f"標準の入出力がない（起動した側が渡していない）：{', '.join(missing)}")
 
     import app.main as main_module  # loads fta_tool/.env (override=True)
 
@@ -563,10 +592,15 @@ def main() -> None:
     access_log = os.environ.get("FTA_E2E_ACCESS_LOG")
     if access_log:  # the diagnosis only
         app = AccessLog(app, pathlib.Path(access_log))
+    _stage(workdir, "app imported")
+    delay = float(os.environ.get("FTA_E2E_START_DELAY", "0"))  # the tests of start_server() only: no answer
+    if delay:
+        time.sleep(delay)
     server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, log_level="warning",
                                            timeout_graceful_shutdown=SHUTDOWN_SECONDS))
     if args.stop_on_stdin_eof:
         threading.Thread(target=_stop_on_stdin_eof, args=(server,), daemon=True).start()
+    threading.Thread(target=_record_listening, args=(server, workdir, args.port), daemon=True).start()
     server.run()
     from app.database import engine
 
@@ -574,6 +608,13 @@ def main() -> None:
     delay = float(os.environ.get("FTA_E2E_EXIT_DELAY", "0"))  # the tests of close() only: a slow end
     if delay:
         time.sleep(delay)
+
+
+def _record_listening(server, workdir: pathlib.Path, port: int) -> None:
+    while not server.started and not server.should_exit:
+        time.sleep(0.05)
+    if server.started:
+        _stage(workdir, "listening", port=port)
 
 
 # Open requests are given this long when the app is asked to end.

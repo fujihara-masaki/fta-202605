@@ -49,6 +49,9 @@ class E2EServer:
         # server.log for a moment: close() waits for this process itself.
         self.server_pid = server_pid
         self.stopped = ""  # how close() stopped the app (the tests record it)
+        # Whether the app still ran when the process started for it had
+        # ended (a launcher that ends before its child): close() then waited.
+        self.app_outlived_process: Optional[bool] = None
         # This process's handle of server.log (the server's stdout): closed in
         # close(). Left open (until PR-7's fix of 2026-10-30) it kept Windows
         # from deleting the work folder (a file open without FILE_SHARE_DELETE
@@ -108,6 +111,9 @@ class E2EServer:
                     self.process.wait(timeout=self.GONE_SECONDS)
                     how = f"{self.STOP_SECONDS} 秒で終わらず、強制終了した（kill）"
             if self.server_pid is not None and self.server_pid != self.process.pid:
+                self.app_outlived_process = not process_gone(self.server_pid, 0)
+                if self.app_outlived_process:
+                    how += "。起動したプロセスの終了時にアプリはまだ動作中"
                 if not process_gone(self.server_pid, self.GONE_SECONDS):
                     how += f"。アプリのプロセス（PID {self.server_pid}）が {self.GONE_SECONDS} 秒後も残っている"
                     raise RuntimeError(f"E2E server not stopped: {how}")
@@ -408,10 +414,16 @@ def remove_folder(path: pathlib.Path, tries: int, wait: float) -> tuple[bool, li
 
 
 def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str, str]] = None, *,
-                 python: Optional[list[str]] = None) -> E2EServer:
+                 python: Optional[list[str]] = None, start_seconds: float = 60) -> E2EServer:
     """Start the app for the tests; `extra_env` changes its settings (e.g.
     FTA_SAMPLE_SCENARIOS_FILE for a server without sample scenarios).
-    `python` replaces the interpreter's command (the tests of close())."""
+    `python` replaces the interpreter's command and `start_seconds` the time
+    it is given (the tests of the server's start and stop).
+
+    If the app does not answer, the error says how far it got (what
+    stub_server.py recorded in server-stages.jsonl, whether its port is open,
+    which processes still run) and only then are the processes it started
+    stopped (start_failure)."""
     env = python_env()
     env["FTA_E2E_WORKDIR"] = str(workdir)
     env["FTA_E2E_STUB_MODE"] = "create"
@@ -424,23 +436,87 @@ def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str,
         cwd=workdir, env=env, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
     )
     url = f"http://127.0.0.1:{port}"
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + start_seconds
     while True:
         if process.poll() is not None:
-            log.close()
-            raise RuntimeError(f"E2E server exited early:\n{log_path.read_text(encoding='utf-8', errors='replace')}")
+            start_failure(process, workdir, port, log, f"起動したプロセスが終了した（終了コード {process.returncode}）")
+        server_pid = read_server_pid(workdir)
+        if server_pid is not None and server_pid != process.pid and process_gone(server_pid, 0):
+            start_failure(process, workdir, port, log, f"アプリのプロセス（PID {server_pid}）が起動の途中で終了した")
         try:
             if httpx.get(url + "/", timeout=2, trust_env=False).status_code == 200:
                 break
         except httpx.HTTPError:
             pass
         if time.monotonic() > deadline:
-            process.kill()
-            log.close()
-            raise RuntimeError(f"E2E server did not start:\n{log_path.read_text(encoding='utf-8', errors='replace')}")
+            start_failure(process, workdir, port, log, f"{start_seconds:g} 秒たっても HTTP の応答がない")
         time.sleep(0.2)
-    server_pid = int((workdir / "server.pid").read_text(encoding="utf-8"))  # written before the app serves
-    return E2EServer(url, workdir, process, log_path, log, server_pid)
+    return E2EServer(url, workdir, process, log_path, log, read_server_pid(workdir))
+
+
+def read_server_pid(workdir: pathlib.Path) -> Optional[int]:
+    """The app's process id (stub_server.py writes it first), None before."""
+    try:
+        return int((workdir / "server.pid").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def start_failure(process: subprocess.Popen, workdir: pathlib.Path, port: int, log, reason: str):
+    """Raise for a server that did not start, with what is known of it
+    (gathered before anything is stopped), then stop what it started: the
+    process started here and its descendants (Windows: taskkill /T, which
+    follows the parent links of a venv's launcher and its child), and the
+    app's own process (server.pid) if it still runs. What could not be
+    stopped is said."""
+    server_pid = read_server_pid(workdir)
+    lines = [f"E2E server did not start: {reason}",
+             f"- 起動したプロセス（PID {process.pid}）：" + ("動作中" if process.poll() is None
+                                                          else f"終了（終了コード {process.returncode}）")]
+    if server_pid is None:
+        lines.append("- アプリのプロセス：server.pid がない（stub_server.py が始まっていない）")
+    else:
+        lines.append(f"- アプリのプロセス（PID {server_pid}）：" + ("終了" if process_gone(server_pid, 0) else "動作中"))
+    stages = workdir / "server-stages.jsonl"
+    lines.append("- stub_server.py の記録（server-stages.jsonl）：" + (
+        "\n" + stages.read_text(encoding="utf-8", errors="replace").rstrip() if stages.exists() else "なし"))
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            lines.append(f"- ポート {port}：開いている（接続できる）")
+    except OSError as error:
+        lines.append(f"- ポート {port}：開いていない（{type(error).__name__}: {error}）")
+    left = stop_started(process, server_pid)
+    lines.append("- 後片付け：" + (f"止められなかったプロセス {left}" if left else "起動したプロセスとアプリのプロセスは終了した"))
+    log.close()
+    text = (workdir / "server.log").read_text(encoding="utf-8", errors="replace")
+    lines.append("- server.log：" + ("\n" + text.rstrip() if text.strip() else "空"))
+    raise RuntimeError("\n".join(lines))
+
+
+def stop_started(process: subprocess.Popen, server_pid: Optional[int]) -> list[int]:
+    """Stop the process started for the server with its descendants, and the
+    app's own process; returns the ids of those still running after that."""
+    if process.poll() is None:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=30)
+        else:
+            process.kill()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+    if server_pid is not None and server_pid != process.pid and not process_gone(server_pid, 0):
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/PID", str(server_pid), "/T", "/F"], capture_output=True, timeout=30)
+        else:
+            try:
+                os.kill(server_pid, 9)
+            except OSError:
+                pass
+    left = [] if process.poll() is not None else [process.pid]
+    if server_pid is not None and server_pid != process.pid and not process_gone(server_pid, 10):
+        left.append(server_pid)
+    return left
 
 
 # No console error is let through. Until PR-7 the browser's own 404 for

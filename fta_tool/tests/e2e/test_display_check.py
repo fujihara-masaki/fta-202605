@@ -16,13 +16,15 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import time
 import types
 from typing import Optional
 
 import pytest
 
 from tests.e2e import acceptance, display_check, layout_checks
-from tests.e2e.support import FTA_TOOL_DIR, free_port, process_gone, python_env, remove_folder, start_server
+from tests.e2e.support import (FTA_TOOL_DIR, free_port, process_gone, python_env, read_server_pid, remove_folder,
+                              start_server)
 
 pytestmark = pytest.mark.e2e
 
@@ -128,33 +130,87 @@ def test_the_test_server_releases_its_folder_when_closed(tmp_path, record_proper
 REMOVE_TRIES = display_check.DisplayCheck.REMOVE_TRIES
 REMOVE_WAIT = display_check.DisplayCheck.REMOVE_WAIT
 
-LAUNCHER = """import subprocess, sys
-# Like a venv's launcher on Windows, the app runs as a child with this
-# process's stdin and output; unlike it, this one ends first, as soon as
-# stdin is closed, while the app is still ending.
-subprocess.Popen(sys.argv[1:])
+# A stand-in for a venv's launcher on Windows (CPython PC/launcher.c,
+# run_child): it runs the app as its child with its own standard handles,
+# passed explicitly as launcher.c does (DuplicateHandle, STARTF_USESTDHANDLES):
+# on Windows a child of subprocess.Popen inherits no handle unless passed
+# (close_fds). Unlike launcher.c it ends first, as soon as its stdin is
+# closed, while the app is still ending. "no-std-handles" starts the child
+# as this stand-in did until 32730b8 (Popen without them): on Windows the
+# app then had no stdout, uvicorn's logging failed, nothing could be written
+# and the start waited 60 s for nothing (the Windows run of 2026-10-30).
+LAUNCHER = """import os, pathlib, subprocess, sys
+pathlib.Path("launcher.pid").write_text(str(os.getpid()))
+mode, command = sys.argv[1], sys.argv[2:]
+if mode == "no-std-handles" and os.name == "nt":
+    subprocess.Popen(command)
+elif mode == "no-std-handles":
+    subprocess.Popen(command, preexec_fn=lambda: [os.close(fd) for fd in (0, 1, 2)])
+else:
+    subprocess.Popen(command, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr)
 sys.stdin.buffer.read()
 """
+
+
+def launcher_command(tmp_path, mode: str) -> list[str]:
+    launcher = tmp_path / "launcher.py"
+    launcher.write_text(LAUNCHER, encoding="utf-8")
+    return [sys.executable, str(launcher), mode, sys.executable]
+
+
+def launcher_pid(work) -> int:
+    return int((work / "launcher.pid").read_text(encoding="utf-8"))
 
 
 def test_close_waits_for_the_apps_own_process(tmp_path, record_property):
     work = tmp_path / "work"
     work.mkdir()
-    launcher = tmp_path / "launcher.py"
-    launcher.write_text(LAUNCHER, encoding="utf-8")
-    server = start_server(work, free_port(), {"FTA_E2E_EXIT_DELAY": "2"},
-                          python=[sys.executable, str(launcher), sys.executable])
+    server = start_server(work, free_port(), {"FTA_E2E_EXIT_DELAY": "2"}, python=launcher_command(tmp_path, "pass"))
     assert server.server_pid != server.process.pid
     try:
         assert server.query("SELECT COUNT(*) FROM analyses") == [(0,)]
     finally:
         server.close()
     record_property(acceptance.NOTE_PROPERTY, f"停止：{server.stopped}")
-    # The launcher ended about 2 s before the app; close() waited for the app.
-    assert process_gone(server.server_pid, 0), server.stopped
+    # The stand-in ended about 2 s before the app (checked when it ended),
+    # and close() waited for the app's own process.
+    assert server.app_outlived_process is True, server.stopped
+    assert process_gone(server.server_pid, 0) and process_gone(launcher_pid(work), 0), server.stopped
     assert "の終了を確認" in server.stopped, server.stopped
     removed, errors = remove_folder(work, REMOVE_TRIES, REMOVE_WAIT)
     assert removed, errors
+
+
+def test_an_app_started_without_standard_handles_is_reported_at_once(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    started = time.monotonic()
+    with pytest.raises(RuntimeError) as failure:
+        start_server(work, free_port(), python=launcher_command(tmp_path, "no-std-handles"))
+    message = str(failure.value)
+    # Said at once (the app's process ended), with the app's own reason.
+    assert time.monotonic() - started < 30, message
+    assert "起動の途中で終了" in message and "標準の入出力がない" in message, message
+    assert '"stage": "python"' in message and '"stage": "listening"' not in message, message
+    assert "起動したプロセスとアプリのプロセスは終了した" in message, message
+    assert process_gone(read_server_pid(work), 0) and process_gone(launcher_pid(work), 0), message
+
+
+def test_a_server_that_does_not_answer_is_reported_then_stopped(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    with pytest.raises(RuntimeError) as failure:
+        start_server(work, free_port(), {"FTA_E2E_START_DELAY": "60"}, python=launcher_command(tmp_path, "pass"),
+                     start_seconds=5)
+    message = str(failure.value)
+    # What is known is gathered first (both processes still running, the
+    # app imported but not listening, its port closed), then they are stopped.
+    assert "5 秒たっても HTTP の応答がない" in message, message
+    assert f"アプリのプロセス（PID {read_server_pid(work)}）：動作中" in message, message
+    assert '"stage": "app imported"' in message and '"stage": "listening"' not in message, message
+    assert "：開いていない" in message, message
+    assert "起動したプロセスとアプリのプロセスは終了した" in message, message
+    assert process_gone(read_server_pid(work), 0) and process_gone(launcher_pid(work), 0), message
 
 
 # What a test reads of a Python process's output is its Japanese text, also
