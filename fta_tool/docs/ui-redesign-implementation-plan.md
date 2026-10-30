@@ -3235,15 +3235,46 @@ CI：リポジトリに CI の設定（`.github/workflows` など）はない。
 
 Windows の確認の方針（2026-10-30、利用者）：候補 `795cf36` で、まず修正対象の試験だけを Chrome・Edge で行い（[manual-check-pr7.md](manual-check-pr7.md) 第3.0節）、成功してから同じ SHA で準備確認・Full。そのあと表示倍率・IME の補助確認と目視。Windows の FullSizes は今回は行わない（未実施）。
 
+#### Windows 実機の個別の回帰試験（2026-10-30、候補 `795cf36`）：Edge で失敗 1、試験の修正（候補 `32730b8`）
+
+利用者が 2026-10-30 に Windows 11 Home で、候補 `795cf36` の個別の回帰試験（手順書 第3.0節、14 件）を行った。**Chrome は成功 14（終了コード 0）、Edge は成功 13・失敗 1（終了コード 1）。**この結果はその SHA の結果として残す（[evidence/pr7/windows-2026-10-30-795cf36-individual.md](evidence/pr7/windows-2026-10-30-795cf36-individual.md)）。E-K01 のキーボード操作は両ブラウザで 9 件すべて成功し、前の Full の失敗は再発していない。準備確認・Full は行っていない。原因・修正・修正前後の判定は [evidence/pr7/windows-individual-fix-32730b8.md](evidence/pr7/windows-individual-fix-32730b8.md)。どちらも**試験側の不具合**で、アプリは変えていない。
+
+| 系統 | 失敗 | 原因 | 修正（`32730b8`） |
+|---|---|---|---|
+| C（試験の道具側） | Edge：`test_the_test_server_releases_its_folder_when_closed` で `PermissionError: [WinError 32]`、`work/fta_tool.db` が削除できない | テストのプロセスの SQLite の接続は1回ごとに閉じており、残っていない。Windows の venv の `Scripts\python.exe` はランチャーで、本物の `python.exe`（アプリ）を子として起動し、ランチャーが閉じると子を終わらせるジョブに入れる（CPython 3.12.3 `PC/launcher.c` の `run_child`）。`E2EServer.close()` はランチャーを `terminate()` してその終了だけを待っていたため、アプリの終了を待たずに戻り、アプリがまだ開いている `fta_tool.db` の削除が失敗した（タイミングによるため Chrome では成功）。利用者の venv がこのランチャーであることと、Windows での再現は**未確認** | `close()` はサーバーの標準入力を閉じてアプリに自分で終わらせ（`stub_server.py --stop-on-stdin-eof`。SQLAlchemy の接続を閉じて終わる）、20 秒で終わらなければ `terminate`・`kill`。どちらでも、アプリ自身のプロセス（`server.pid`）の終了を待ち、10 秒後も残っていれば例外にする。削除は `remove_folder()`（`ignore_errors` なし、10 回・0.5 秒おき）で、何回目で消せたかを記録し、消せなければ失敗。`open_handles_in()` は Windows では `None`（空の一覧を解放の根拠にしない）。試験を追加：アプリより先に終わる代わりのランチャーで、`close()` がアプリの終了まで待つこと |
+| D（試験側） | 両ブラウザ：子プロセスの出力の読み取りで `UnicodeDecodeError`、`PytestUnhandledThreadExceptionWarning` | Windows の Python は、パイプ・ファイルへの出力をロケールの文字コード（cp932）で書く。試験は UTF-8 で読んでいた。読み取りのスレッドで失敗し、出力（道具の失敗の理由を含む）が失われていた。`server.log` も同じ | 子の Python の環境（`python_env()`）に `PYTHONIOENCODING=utf-8`（標準出力・標準エラーだけ）。道具とテスト用サーバーの両方。エラーの無視・文字の置き換えはしない。試験を追加：cp932 の環境から作った子の日本語の出力が UTF-8 で読めること（読み取りのスレッドの例外はエラーにする） |
+
+修正前後の判定（開発環境）：C は、代わりのランチャー（止められると即座に終わり、約 1 秒後に子を止める）を使うと、修正前（`795cf36`）の `close()` は 0.00 秒で戻り、その時点でアプリが `fta_tool.db` を開いていた。修正後は 0.36 秒で戻り、開いているプロセスはなかった（アプリが 1 秒で終わらない場合も、`terminate` の後にアプリの終了を待った）。D は、cp932 の環境で、修正前の環境の作り方では `UnicodeDecodeError`、修正後は日本語のまま読めた。追加した2つの試験は、それぞれの修正の行だけを外すと失敗する（検出力）。
+
+変更したのは試験のコード（`tests/e2e/support.py`・`stub_server.py`・`display_check.py`・`test_display_check.py`・`README.md`）だけで、アプリ・スクリプトは `d2eb76e` と同じ（`git diff --name-only d2eb76e 32730b8 -- fta_tool/app fta_tool/scripts` は空）。利用者の通常の DB・ブラウザのプロフィールには触れない（削除はテストの一時フォルダの `work` だけ）。
+
+##### 受入候補 `32730b8` での確認結果（開発環境、2026-10-30）
+
+対象 `32730b89e4f8449a73d08f2c8253991b2bc1870d`（クリーンな worktree、未コミットの変更なし、`.env` なし）。環境は上と同じ。**Linux での成功は、Windows の Chrome・Edge の成功ではない。**
+
+| 試験 | 結果 |
+|---|---|
+| 修正に対応した個別の回帰試験（手順書 第3.0節の手順2と同じ選択、16 件。`-W error::pytest.PytestUnhandledThreadExceptionWarning`） | **成功 16**・失敗 0（警告は SQLAlchemy の非推奨の1件だけ。読み取りのスレッドの例外なし） |
+| 後片付けの2件の繰り返し（`releases_its_folder or waits_for_the_apps` を 20 回） | **20 回とも成功**（2 passed）。開発環境では開いたファイルの削除が失敗しないため、Windows での安定性の確認ではない |
+| 通常の pytest（E2E を除く） | **466 passed / 20 skipped / 0 failed**。スキップ 20件はすべて PowerShell がないため |
+| 累積の全必須 E2E（`-m e2e --e2e-required`） | **合格**：成功 587・失敗 0・スキップ 0・未実施 0、必須 75 項目すべて成功、19分08秒（05:23:49〜05:42:57 UTC）。警告の数は `795cf36` の Full と同じ 113 件（以前からの非推奨の警告） |
+| 通常の pytest（E2E を含む） | **1053 passed / 20 skipped / 0 failed**、19分07秒。スキップ 20件はすべて PowerShell がないため |
+| 全テストを PR-7 の全寸法で | **未実施**（`32730b8` では行っていない）。変更は試験のコードだけで、変えたのはテスト用サーバーの起動・停止、道具の後片付け、子の出力の文字コード。追加した2件は画面を使わない。画面を使うテストの寸法は変えていない。アプリは `d2eb76e` と同じで、`d2eb76e` の全寸法の実行は合格（その SHA の結果） |
+
+件数：Full 585 → 587（+2：テスト用サーバーの停止 1、文字コード 1）。
+
+Windows の確認の方針（2026-10-30、利用者）：候補 `32730b8` で、まず失敗したテストと文字コードの確認を 10 回繰り返し（手順書 第3.0節の手順1）、成功してから個別の回帰試験を Chrome・Edge で（手順2）、そのあと同じ SHA で準備確認・Full。Windows の FullSizes は今回は行わない（未実施）。
+
 #### 未実施・未確認
 
-- Windows 11 の Chrome・Edge：候補 `d2eb76e` の準備確認（成功）と Full（**不合格**）だけを行った（上の記録）。受入候補 `795cf36` の確認（個別の回帰試験・準備確認・Full）、表示倍率 100・125・150% とブラウザの拡大 100・125・150% の確認、Microsoft IME、NVDA、目視：すべて**未実施**。
+- Windows 11 の Chrome・Edge：候補 `d2eb76e` の準備確認（成功）と Full（**不合格**）だけを行った（上の記録）。候補 `795cf36` の個別の回帰試験（Chrome は成功、Edge は失敗 1）だけを行った。受入候補 `32730b8` の確認（後片付けと文字コードの繰り返し・個別の回帰試験・準備確認・Full）、表示倍率 100・125・150% とブラウザの拡大 100・125・150% の確認、Microsoft IME、NVDA、目視：すべて**未実施**。
 - `display_check.py` の Windows での通常の実行（ブラウザの起動、拡大の検出、各確認、IME の判定、記録の作成）は未確認。準備確認は `run_display_check.ps1` の構文解析と誤った SHA での中止だけを確かめる。開発環境では、模擬の拡大での実行と、合成したイベントでの IME の判定ロジックの試験だけを行った（Microsoft IME の確認ではない）。
 - 利用者の PC の Windows の表示倍率は再確認していない（2026-10-28 の実測は表示倍率を記録していない）。100% とは扱わず、Windows の確認で設定の値を記録する。
-- Windows での FullSizes：2026-10-30 の利用者の方針で、候補 `d2eb76e`・`795cf36` の Windows の確認では行わない（**未実施**として記録。開発環境の FullSizes の合格を Windows の結果に読み替えない）。Windows の確認は Chrome・Edge の個別の回帰試験（`795cf36` から）→ Preflight → Full → 表示倍率・IME の補助確認 → 目視。
+- Windows での FullSizes：2026-10-30 の利用者の方針で、候補 `d2eb76e`・`795cf36`・`32730b8` の Windows の確認では行わない（**未実施**として記録。開発環境の FullSizes の合格を Windows の結果に読み替えない）。Windows の確認は Chrome・Edge の個別の回帰試験（`795cf36` から。`32730b8` では後片付けと文字コードの繰り返しを先に）→ Preflight → Full → 表示倍率・IME の補助確認 → 目視。
 - 高さ 500px 前後で通知が多いときの作業エリアの狭さ（約 50px）：重なりの自動検査は成功、Windows 実機での読みやすさ・操作感は**未確認**。
 - CI：リポジトリに CI の設定はなく、PR の HEAD に CI の結果はない。Codex：`d2eb76e` へのレビューは Running のまま結果が出なかった（`d2eb76e` 単独の結果はない）。2026-10-30 に HEAD `8b0ed3c`（試験・アプリは受入候補 `795cf36` と同じ。差分は記録だけ）へ1回依頼し、04:48 UTC に完了：指摘なし（「Didn't find any major issues」）。Codex のレビューは受入の判断の代わりではない。
-- Windows の Chrome・Edge での、候補 `795cf36` の個別の回帰試験・準備確認・Full・表示倍率と IME の補助確認・目視：**未実施**。2026-10-30 の候補 `d2eb76e` の Full は不合格（記録として残す）。
+- Windows の Chrome・Edge での、候補 `32730b8` の後片付けと文字コードの繰り返し・個別の回帰試験・準備確認・Full・表示倍率と IME の補助確認・目視：**未実施**。2026-10-30 の候補 `d2eb76e` の Full は不合格、候補 `795cf36` の個別の回帰試験は Edge で失敗 1（それぞれ記録として残す）。
+- 2026-10-30 の Edge の失敗について、利用者の venv の `python.exe` がランチャーであること、Windows でアプリのプロセスが残っていたこと、文字コードの警告が修正で出なくなることは**未確認**（手順書 第3.0節の手順1で確かめる）。
 - 上の「受入条件の読み方で利用者の判断が必要な点」の2点：2026-10-29 に利用者が (b) アプリを直す、と判断。修正は「条件2・条件4の修正」。修正後の Windows での確認は未実施。
 - PowerShell のスクリプトの実行の試験（`tests/test_run_browser_e2e_script.py` などの PowerShell が必要な試験）は、この開発環境に PowerShell がないためスキップ（PR-3〜PR-C と同じ）。Windows の準備確認で `test_windows_tools.py` が構文解析と実行前の中止を確かめる。
 - Chromium 141（固定版の Playwright のブラウザ）での自動試験は未実施（PR-C と同じく、環境の Chromium 153 を `--e2e-browser-executable` で明示）。

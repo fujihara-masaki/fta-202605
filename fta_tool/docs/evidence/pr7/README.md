@@ -1,6 +1,6 @@
 # PR-7（仕上げ）の試験記録
 
-状態（2026-10-30 更新）：最新の受入候補は `795cf36`（2026-10-30 の Windows の Full の失敗の修正。試験のコードだけを変更）。`795cf36` は**開発環境（Linux）の自動試験の記録だけ**で、Windows 11 の Chrome・Edge での確認と利用者の受入は**未実施**（手順は [manual-check-pr7.md](../../manual-check-pr7.md)）。前の候補 `d2eb76e` の Windows の Full は**不合格**（下の記録。書き換えない）。
+状態（2026-10-30 更新）：最新の受入候補は `32730b8`（2026-10-30 の Windows の個別の回帰試験の Edge の失敗と文字コードの警告の修正。試験のコードだけを変更）。`32730b8` は**開発環境（Linux）の自動試験の記録だけ**で、Windows 11 の Chrome・Edge での確認と利用者の受入は**未実施**（手順は [manual-check-pr7.md](../../manual-check-pr7.md)）。前の候補の Windows の結果（`d2eb76e` の Full は**不合格**、`795cf36` の個別の回帰試験は Edge で**失敗 1**）は下の記録のとおりで、書き換えない。
 
 ## Windows 実機の記録（利用者の報告）
 
@@ -8,10 +8,24 @@
 |---|---|
 | `windows-2026-10-30-d2eb76e.md` | 2026-10-30、候補 `d2eb76e`、Windows 11 Home。Chrome・Edge とも準備確認は成功 9、Full は成功 573・失敗 8（**不合格**）。失敗は同じ2系統（E-K01 の通知の「閉じる」への Tab ×7寸法、表示確認の道具の `work` の残り） |
 | `windows-full-fix-795cf36.md` | 上の2系統の失敗の原因と修正、修正前後の判定（開発環境での再現。Windows の結果ではない） |
+| `windows-2026-10-30-795cf36-individual.md` | 2026-10-30、候補 `795cf36`、Windows 11 Home。個別の回帰試験（14 件）：Chrome 成功 14、Edge 成功 13・失敗 1（`test_the_test_server_releases_its_folder_when_closed`、`work/fta_tool.db` が `WinError 32`）。両ブラウザで `UnicodeDecodeError` の警告。E-K01 は両ブラウザで 9 件すべて成功 |
+| `windows-individual-fix-32730b8.md` | 上の失敗と警告の原因と修正、修正前後の判定（開発環境での再現。Windows の結果ではない） |
 
 ## 開発環境での試験の記録（Linux、headless、Chromium 153.0.8010.12 を `--e2e-browser-executable` で明示）
 
-### 受入候補 `795cf36`（2026-10-30、Windows の Full の失敗の修正の後）
+### 受入候補 `32730b8`（2026-10-30、Windows の個別の回帰試験の失敗の修正の後）
+
+対象：`32730b89e4f8449a73d08f2c8253991b2bc1870d`（クリーンな git worktree）。アプリ・スクリプトは `d2eb76e` と同じで、変えたのは `tests/e2e/` だけ。
+
+| ファイル | 内容 |
+|---|---|
+| `e2e-report-32730b8-full.md` | 累積の全必須 E2E。判定「合格」、成功 587・失敗 0・スキップ 0・未実施 0、必須 75 項目すべて成功、19分08秒 |
+| `e2e-report-32730b8-individual.md` | 手順書 第3.0節の手順2と同じ 16 件の個別の実行 |
+| `pytest-32730b8.md` | 通常の pytest（E2E を除く・含む）、個別の実行、後片付けの2件の 20 回の繰り返し |
+
+全テストの全寸法での実行（FullSizes）は `32730b8` では**未実施**（理由は計画書 第14.8節）。目視用の画面はアプリを変えていないため撮り直していない（`screens/d2eb76e-*.png` は同じアプリの画面）。
+
+### 以前の受入候補 `795cf36`（2026-10-30、Windows の Full の失敗の修正の後。記録として残す。`32730b8` の結果ではない）
 
 対象：`795cf36b85b7c114df950b255bfe2a726ef6ab88`（クリーンな git worktree）。アプリ・スクリプトは `d2eb76e` と同じで、変えたのは `tests/e2e/` だけ。
 

@@ -2,9 +2,14 @@
 
 計画書（[ui-redesign-implementation-plan.md](ui-redesign-implementation-plan.md)）第8.7節（PR-7 仕上げ）の確認を、Windows 11 のインストール済みの **Google Chrome と Microsoft Edge の両方**で行うための手順です。対象は PR-7 の作業ブランチ `claude/pr7-ui-finish` の**受入候補の SHA（40桁。PR 本文と計画書 第14.8節に書いたもの）**です。ブランチの先頭を受入候補とみなさないでください（候補の後に記録だけのコミットが続くことがあります。第1節）。
 
-**受入候補：`795cf36b85b7c114df950b255bfe2a726ef6ab88`**（2026-10-30。2026-10-30 の Windows の Full で失敗した2系統の試験の修正。アプリ・スクリプトは `d2eb76e` と同じで、変えたのは試験のコード（`tests/e2e/`）だけ。その後のコミットは、この手順書・計画書・`docs/evidence/pr7/` の記録だけ）。以前の候補 `d2eb76e`・`a572c39`・`163b193` は確認に使いません。
+**受入候補：`32730b89e4f8449a73d08f2c8253991b2bc1870d`**（2026-10-30。同日の Windows の個別の回帰試験（候補 `795cf36`）で Edge で失敗したテスト用サーバーの後片付けと、子プロセスの出力の文字コードの修正。アプリ・スクリプトは `d2eb76e` と同じで、変えたのは試験のコード（`tests/e2e/`）だけ。その後のコミットは、この手順書・計画書・`docs/evidence/pr7/` の記録だけ）。以前の候補 `795cf36`・`d2eb76e`・`a572c39`・`163b193` は確認に使いません。
 
-**2026-10-30 の Windows の結果（候補 `d2eb76e`、Windows 11 Home）は不合格として残します**：Chrome・Edge とも準備確認は成功 9、Full は成功 573・失敗 8（同じ2系統。[evidence/pr7/windows-2026-10-30-d2eb76e.md](evidence/pr7/windows-2026-10-30-d2eb76e.md)）。新しい候補では、**まず第3.0節の個別の回帰試験**を Chrome・Edge で行い、成功してから同じ SHA で準備確認・Full（第3・4節）に進みます。
+**2026-10-30 の Windows の結果は、それぞれの SHA の結果として残します**（Windows 11 Home）：
+
+- 候補 `d2eb76e`：Chrome・Edge とも準備確認は成功 9、Full は成功 573・失敗 8（**不合格**。[evidence/pr7/windows-2026-10-30-d2eb76e.md](evidence/pr7/windows-2026-10-30-d2eb76e.md)）。
+- 候補 `795cf36`：個別の回帰試験は Chrome 成功 14（終了コード 0）、Edge 成功 13・失敗 1（終了コード 1。`test_the_test_server_releases_its_folder_when_closed` で `work/fta_tool.db` が `WinError 32`）。両ブラウザで `UnicodeDecodeError`（`PytestUnhandledThreadExceptionWarning`）。E-K01 のキーボード操作は両ブラウザで 9 件すべて成功（[evidence/pr7/windows-2026-10-30-795cf36-individual.md](evidence/pr7/windows-2026-10-30-795cf36-individual.md)）。
+
+新しい候補では、**まず第3.0節の手順1（後片付けと文字コードの 10 回の繰り返し）、次に手順2（個別の回帰試験）**を行い、成功してから同じ SHA で準備確認・Full（第3・4節）に進みます。
 
 この手順書は確認の進め方をまとめたもので、受入の合否を決めるものではありません。合否と `feature/ui-redesign` へのマージは、利用者が判断します。**開発環境（Linux）での自動試験の成功は、Windows 実機での確認や PR-7 の受入の判断の代わりではありません。**
 
@@ -83,15 +88,44 @@ $disp = "$src\scripts\run_display_check.ps1"  # PR-7 で追加した表示倍率
 
 ## 3. Google Chrome での自動確認
 
-### 3.0 個別の回帰試験（2026-10-30 の Full の失敗の修正。Chrome・Edge、Full の前に）
+### 3.0 個別の回帰試験（2026-10-30 の失敗の修正。Chrome・Edge、Full の前に）
 
-2026-10-30 の Full で失敗した試験と、その修正の回帰試験（14 件）だけを、Chrome と Edge で実行します。第1・2節で、`$sha` を上の受入候補にした worktree と変数を用意してから行います。
+2026-10-30 の Windows で失敗した試験と、その修正の回帰試験だけを先に行います。第1・2節で、`$sha` を上の受入候補にした worktree と変数を用意してから行います。**手順1が成功してから手順2へ、手順2が成功してから第3.1節（準備確認）へ**進みます。
+
+#### 手順1：テスト用サーバーの後片付けと文字コード（10 回の繰り返し）
+
+Edge の個別の回帰試験（候補 `795cf36`）で失敗した `test_the_test_server_releases_its_folder_when_closed`（`work/fta_tool.db` が `WinError 32` で削除できない）と、その修正の試験・文字コードの試験の3件を、10 回続けて実行します（タイミングで起きた失敗のため、1回の成功では判断しません）。この3件はブラウザを使いません。
 
 ```powershell
 Set-Location $src
 git rev-parse HEAD        # $sha と一致すること
 git status --short        # 何も出ないこと
-$tests = "tab_shift_tab or from_the_top or runs_its_checks or releases_its_folder or removes_its_work or cannot_be_removed or only_the_record"
+& "$venv\Scripts\python.exe" -c "import sys; print(sys.version); print(sys.executable); print(sys._base_executable)"
+$run = Join-Path $out ("{0}-{1}-cleanup" -f $sha.Substring(0,7), (Get-Date -Format "yyyyMMdd-HHmmss"))
+New-Item -ItemType Directory -Path $run | Out-Null
+$t1 = "releases_its_folder or waits_for_the_apps or read_in_utf8"
+foreach ($i in 1..10) {
+  & "$venv\Scripts\python.exe" -m pytest tests\e2e\test_display_check.py -m e2e -k $t1 `
+      --browser chromium --browser-channel msedge `
+      --e2e-env "利用者環境（Windows 11。後片付けと文字コードの確認 $i/10）" --e2e-report "$run\e2e-report-$i.md" `
+      --basetemp "$run\pytest-tmp-$i" -W error::pytest.PytestUnhandledThreadExceptionWarning `
+      -p no:cacheprovider -v -rfE 2>&1 | Tee-Object -FilePath "$run\pytest-output-$i.log"
+  "$i 回目：終了コード $LASTEXITCODE" | Tee-Object -FilePath "$run\exit-code.txt" -Append
+}
+```
+
+- 期待：10 回とも `3 passed`、終了コード 0。`-W error::…` により、子プロセスの出力が読めない（`UnicodeDecodeError` の）警告はエラーになります。`pytest-output-*.log` に `PytestUnhandledThreadExceptionWarning` と `UnicodeDecodeError` が出ないこと。
+- `e2e-report-*.md` の「結果（テスト単位）」の備考に、テスト用サーバーの止まり方と削除の回数が出ます。`test_the_test_server_releases_its_folder_when_closed` で「停止：自分で終了（終了コード 0）。アプリのプロセス（PID …）の終了を確認／一時フォルダの削除：1 回目」のように出ることを見てください。「アプリのプロセス（PID …）の終了を確認」は、venv の `python.exe` がランチャーで、アプリが別のプロセスだったことを示します（出なければ同じプロセス）。「2 回目」以上なら、アプリが終わった後も Windows の別のもの（ウイルス対策など）が一時的にファイルを使っていたことを示します（成功ですが、結果の受け渡しで知らせてください）。
+- 最初の `python -c` の3行（Python の版、`sys.executable`、`sys._base_executable`）も記録に残してください（2行目と3行目が違えば、venv の `python.exe` はランチャーです）。
+- 1回でも失敗したら手順2に進まず、`$run` のフォルダごと渡してください。
+
+#### 手順2：個別の回帰試験（Chrome・Edge）
+
+2026-10-30 の Full と個別の回帰試験で失敗した試験と、その修正の回帰試験（16 件）を、Chrome と Edge で実行します。
+
+```powershell
+Set-Location $src
+$tests = "tab_shift_tab or from_the_top or runs_its_checks or releases_its_folder or waits_for_the_apps or read_in_utf8 or removes_its_work or cannot_be_removed or only_the_record"
 foreach ($ch in "chrome", "msedge") {
   $run = Join-Path $out ("{0}-{1}-{2}-individual" -f $sha.Substring(0,7), (Get-Date -Format "yyyyMMdd-HHmmss"), $ch)
   New-Item -ItemType Directory -Path $run | Out-Null
@@ -99,14 +133,14 @@ foreach ($ch in "chrome", "msedge") {
       --browser chromium --browser-channel $ch --headed `
       --e2e-env "利用者環境（Windows 11、$ch、headed。個別の回帰試験）" --e2e-report "$run\e2e-report.md" `
       --basetemp "$run\pytest-tmp" --output "$run\failures" --screenshot only-on-failure --tracing retain-on-failure `
-      -p no:cacheprovider -v -rfE 2>&1 | Tee-Object -FilePath "$run\pytest-output.log"
+      -W error::pytest.PytestUnhandledThreadExceptionWarning -p no:cacheprovider -v -rfE 2>&1 | Tee-Object -FilePath "$run\pytest-output.log"
   "終了コード：$LASTEXITCODE" | Tee-Object -FilePath "$run\exit-code.txt" -Append
 }
 ```
 
-- 対象（Chrome・Edge それぞれ 14 件）：`test_E_K01_tab_shift_tab_and_arrows_show_the_focus_with_notifications`（7寸法）、`test_E_K01_the_notifications_are_reached_from_the_top_of_the_page`（2寸法）、`test_display_check.py` の道具の自己確認（`…runs_its_checks_and_records_them`）と一時フォルダの削除の4件。
-- 期待：`14 passed`、終了コード 0。`e2e-report.md` の「必須受入検証として実行」は「いいえ」で、ほかの受入項目は「未実施」と出ます（個別の確認のため。Full の代わりではありません）。
-- 道具の自己確認の一時フォルダ（`pytest-tmp\…\display-check\work`）が残らないこと。削除できなかったときは、試験が失敗し、`display-check\result.md` の「理由」に削除できなかったファイルと Windows のエラー（例：`WinError 32`）が出ます。その記録フォルダを渡してください。
+- 対象（Chrome・Edge それぞれ 16 件）：`test_E_K01_tab_shift_tab_and_arrows_show_the_focus_with_notifications`（7寸法）、`test_E_K01_the_notifications_are_reached_from_the_top_of_the_page`（2寸法）、`test_display_check.py` の道具の自己確認（`…runs_its_checks_and_records_them`）・テスト用サーバーの後片付け（2件）・文字コード（1件）・道具の一時フォルダの削除（3件）。
+- 期待：`16 passed`、終了コード 0。`pytest-output.log` に `PytestUnhandledThreadExceptionWarning` と `UnicodeDecodeError` が出ないこと。`e2e-report.md` の「必須受入検証として実行」は「いいえ」で、ほかの受入項目は「未実施」と出ます（個別の確認のため。Full の代わりではありません）。
+- 道具の自己確認の一時フォルダ（`pytest-tmp\…\display-check\work`）が残らないこと。削除できなかったときは試験が失敗し、`display-check\result.md` の「理由」に、削除できなかったファイルと Windows のエラー（例：`WinError 32`）、またはテスト用サーバーを止められなかった理由が出ます。消せたときは「後片付け」に、サーバーの止まり方と何回目で消せたかが出ます。
 - 失敗したら Full に進まず、記録フォルダ（`pytest-output.log`・`e2e-report.md`・`failures`）を渡してください。
 
 ### 3.1 準備確認
@@ -127,20 +161,20 @@ foreach ($ch in "chrome", "msedge") {
 ```
 
 - 記録フォルダ `<SHA7桁>-<日時>-chrome-full`。判定「合格」、終了コード 0、「結果（テスト単位）」が失敗 0・スキップ 0・未実施 0、受入項目 75 件すべて「成功」であること。
-- テストの件数は 587 件の見込み（受入候補 `795cf36` の開発環境の 585 件に、Windows だけの PowerShell の確認2件。PowerShell 7 もあれば 589 件）。`d2eb76e` の 579 件から、2026-10-30 の修正の回帰試験 6 件（E-K01 のページの先頭からの確認2件と、道具の後片付けの確認4件）が増えています。
+- テストの件数は 589 件の見込み（受入候補 `32730b8` の開発環境の 587 件に、Windows だけの PowerShell の確認2件。PowerShell 7 もあれば 591 件）。`d2eb76e` の 579 件から、2026-10-30 の修正の回帰試験 8 件（E-K01 のページの先頭からの確認2件、道具の後片付けの確認4件、テスト用サーバーの停止の確認1件、文字コードの確認1件）が増えています。
 - 内容：PR-6・PR-C までの累積の 68 項目に、PR-7 の E-K01〜E-K03・E-V01〜E-V03・E-F01 を加えた 75 項目。E-V01〜E-V03・E-F01 は、想定寸法（1920×1080・1536×730・1280×620・1366×650・1093×500・1024×683・900×600）と **2026-10-28 の実測値の寸法**（Chrome 1920×945・1536×756（DPR 1.25）・1280×630（DPR 1.5）、Edge 1530×731（DPR 1.25）・1275×609（DPR 1.5））と基本寸法で実行します。**これは寸法と devicePixelRatio を指定した確認で、ブラウザの拡大の確認ではありません。**
 - 実行中は Chrome のウィンドウが開いたり閉じたりします。テストのウィンドウを操作しないでください。PC がスリープすると止まります。所要の目安は報告（PR 本文）に書きます（開発環境の値。Windows で画面を表示する実行は、それより長くかかる見込み）。
 - 記録フォルダの `screens` に、PR-7 の表示のテストが撮った画面（png）が残ります（目視のレビュー用。判定には含めません。第6.2節）。
 
 ### 3.3 全テストを PR-7 のすべての寸法で（FullSizes。今回は行わない）
 
-計画 第8.7節の「すべての実ブラウザのテストを 1280×800・1440×900 と PR-7 で追加したサイズで実行する」を満たす実行です。**開発環境では実施し、結果を PR 本文に記録しています**（Chromium、headless）。**今回の Windows の確認（候補 `795cf36`。前の候補 `d2eb76e` でも）では行わず、Windows での FullSizes は「未実施」と記録します**（2026-10-30 の利用者の方針。合格に読み替えません）。後で行う場合のコマンドと見方だけを残します。
+計画 第8.7節の「すべての実ブラウザのテストを 1280×800・1440×900 と PR-7 で追加したサイズで実行する」を満たす実行です。**開発環境では実施し、結果を PR 本文に記録しています**（Chromium、headless）。**今回の Windows の確認（候補 `32730b8`。前の候補 `795cf36`・`d2eb76e` でも）では行わず、Windows での FullSizes は「未実施」と記録します**（2026-10-30 の利用者の方針。合格に読み替えません）。後で行う場合のコマンドと見方だけを残します。
 
 ```powershell
 & $ps1 -Mode FullSizes -Channel chrome -Venv $venv -OutRoot $out -ExpectedSha $sha
 ```
 
-- 記録フォルダ `<SHA7桁>-<日時>-chrome-fullsizes`。判定の見方は Full と同じ。`e2e-report.md` の「寸法の組」が `pr7：…` であること。テストの件数は 2699 件の見込み（`795cf36` の開発環境の 2697 件に Windows だけの2件）。
+- 記録フォルダ `<SHA7桁>-<日時>-chrome-fullsizes`。判定の見方は Full と同じ。`e2e-report.md` の「寸法の組」が `pr7：…` であること。テストの件数は 2701 件の見込み（`32730b8` の開発環境の 2699 件に Windows だけの2件）。
 - 行わなかった場合、Windows での全寸法の実行は「未実施」として記録します（合格に読み替えません）。
 
 ## 4. Microsoft Edge での自動確認（Chrome の後に）
@@ -148,7 +182,7 @@ foreach ($ch in "chrome", "msedge") {
 第3節と同じ手順を `-Channel msedge` で行います。
 
 ```powershell
-# 第3.0節の個別の回帰試験（msedge）が成功してから
+# 第3.0節の手順1・手順2（msedge）が成功してから
 & $ps1 -Mode Preflight -Channel msedge -Venv $venv -OutRoot $out -ExpectedSha $sha
 # 準備確認が成功したら
 & $ps1 -Mode Full -Channel msedge -Venv $venv -OutRoot $out -ExpectedSha $sha
@@ -326,7 +360,7 @@ Windows では、自動の判定（Full と道具）に加えて、第6.2節の�
 次をまとめて渡してください（フォルダごと zip にするか、`e2e-report.md`・`result.md` の本文を貼り付け）。
 
 1. 確認した SHA（40桁）と、`git -C $wt status --short` が空だったこと。ブランチの先頭と違った場合は、第1節の `git diff --name-only` の出力。
-2. Chrome・Edge の第3.0節の個別の回帰試験の記録フォルダ（`<SHA7桁>-<日時>-<chrome|msedge>-individual`：`e2e-report.md`、`pytest-output.log`、`exit-code.txt`、失敗があれば `failures`）。
+2. 第3.0節の手順1の記録フォルダ（`<SHA7桁>-<日時>-cleanup`：`e2e-report-*.md`、`pytest-output-*.log`、`exit-code.txt`）と、最初の `python -c` の3行。手順2の Chrome・Edge の記録フォルダ（`<SHA7桁>-<日時>-<chrome|msedge>-individual`：`e2e-report.md`、`pytest-output.log`、`exit-code.txt`、失敗があれば `failures`）。
 3. Chrome・Edge の準備確認と Full の記録フォルダ（FullSizes は今回は行わない）：`e2e-report.md`、`run-info.md`、`pytest-output.log`、失敗があれば `failures`。
 4. 道具の記録フォルダ（表示倍率ごと・ブラウザごと）：`result.md`、`result.json`、`display-output.log`、`screens`。実行したときの Windows の表示倍率の設定の値（`-OsScale` に入れた値）。
 5. 第6.1節（NVDA）を行った場合は、項目ごとの結果（読まれた文）と NVDA・Edge の版。行わなかった場合は「未実施」。
