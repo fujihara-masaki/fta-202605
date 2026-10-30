@@ -2,16 +2,17 @@
 
 計画書（[ui-redesign-implementation-plan.md](ui-redesign-implementation-plan.md)）第8.7節（PR-7 仕上げ）の確認を、Windows 11 のインストール済みの **Google Chrome と Microsoft Edge の両方**で行うための手順です。対象は PR-7 の作業ブランチ `claude/pr7-ui-finish` の**受入候補の SHA（40桁。PR 本文と計画書 第14.8節に書いたもの）**です。ブランチの先頭を受入候補とみなさないでください（候補の後に記録だけのコミットが続くことがあります。第1節）。
 
-**受入候補：`b35504f826f53359d665a79ae099b5479d6d0b0a`**（2026-10-30。同日の Windows の第3.0節の手順1（候補 `5773c84`）で失敗した、試験の模擬ランチャーの下のアプリの起動の修正。模擬ランチャーはアプリに専用の標準入力を渡し、自分のしたことを `launcher-stages.jsonl` に記録します。FTA のアプリを使わない確認の道具 `tests/e2e/launcher_probe.py` を追加。アプリ・スクリプトは `d2eb76e` と同じで、変えたのは試験のコード（`tests/e2e/`）だけ。その後のコミットは、この手順書・計画書・`docs/evidence/pr7/` の記録だけ）。以前の候補・途中のコミット `5773c84`・`6052d4b`・`32730b8`・`795cf36`・`d2eb76e`・`a572c39`・`163b193` は確認に使いません。
+**受入候補：`b118038a5fa37eaa28fceb20e54102c7a0906343`**（2026-10-30。同日の Windows の追加の表示倍率の確認（候補 `b35504f`）で NG になった、表示倍率 125%・拡大 125% のレイアウトの検査の誤検知の修正。試験は、ページが実際に配置される表示領域（端数を含む）でペインと操作を確かめます。道具 `display_check.py` は、拡大中も表示領域の全体の画面を保存します。アプリ・スクリプトは `d2eb76e` と同じで、変えたのは試験のコード（`tests/e2e/`・`tests/test_e2e_infrastructure.py`）だけ。その後のコミットは、この手順書・計画書・`docs/evidence/pr7/` の記録だけ）。以前の候補・途中のコミット `b35504f`・`5773c84`・`6052d4b`・`32730b8`・`795cf36`・`d2eb76e`・`a572c39`・`163b193` は確認に使いません。
 
 **2026-10-30 の Windows の結果は、それぞれの SHA の結果として残します**（Windows 11 Home）：
 
 - 候補 `d2eb76e`：Chrome・Edge とも準備確認は成功 9、Full は成功 573・失敗 8（**不合格**。[evidence/pr7/windows-2026-10-30-d2eb76e.md](evidence/pr7/windows-2026-10-30-d2eb76e.md)）。
 - 候補 `795cf36`：個別の回帰試験は Chrome 成功 14（終了コード 0）、Edge 成功 13・失敗 1（終了コード 1。`test_the_test_server_releases_its_folder_when_closed` で `work/fta_tool.db` が `WinError 32`）。両ブラウザで `UnicodeDecodeError`（`PytestUnhandledThreadExceptionWarning`）。E-K01 のキーボード操作は両ブラウザで 9 件すべて成功（[evidence/pr7/windows-2026-10-30-795cf36-individual.md](evidence/pr7/windows-2026-10-30-795cf36-individual.md)）。
 - 候補 `32730b8`：第3.0節の手順1の3件を2回。`test_the_test_server_releases_its_folder_when_closed` と `test_a_python_process_s_output_is_read_in_utf8` は2回とも成功、`test_close_waits_for_the_apps_own_process` は2回とも失敗（`start_server()` が 60 秒で `E2E server did not start:`、`server.log` は空。[evidence/pr7/windows-2026-10-30-32730b8-cleanup.md](evidence/pr7/windows-2026-10-30-32730b8-cleanup.md)）。
+- 候補 `b35504f`：Chrome・Edge とも Full は成功 597（受入 ID 75 件すべて成功）。表示倍率 100% での拡大と IME の確認は Chrome・Edge とも OK。追加の Edge の確認で、**表示倍率 125%・拡大 125%（1222×585、計画の範囲）の「編集画面：レイアウト…」が NG**（終了コード 1）。参考の条件（計画の想定を下回る）で、125%・150%（1018×488）と 150%・125%（1017×470）のレイアウト、150%・150%（848×392）の通知の被覆が NG（[evidence/pr7/windows-2026-10-30-b35504f-display.md](evidence/pr7/windows-2026-10-30-b35504f-display.md)。原因と対応は [evidence/pr7/windows-display-fix-b118038.md](evidence/pr7/windows-display-fix-b118038.md)）。
 - 候補 `5773c84`：第3.0節の手順1の1回目で3件が失敗し中断（模擬ランチャーを使う `test_close_waits_for_the_apps_own_process`・`test_an_app_started_without_standard_handles_is_reported_at_once`・`test_a_server_that_does_not_answer_is_reported_then_stopped`。3件とも `launcher.pid` はあり、`server.pid`・`server-stages.jsonl` はなく、`server.log` は空。ほかの3件は成功。[evidence/pr7/windows-2026-10-30-5773c84-cleanup.md](evidence/pr7/windows-2026-10-30-5773c84-cleanup.md)）。
 
-新しい候補では、**まず第3.0節の手順0（模擬ランチャーの確認）、次に手順1（7件を 10 回）、次に手順2（個別の回帰試験）**を行い、成功してから同じ SHA で準備確認・Full（第3・4節）に進みます。
+新しい候補 `b118038` では、**まず第3.0節の手順3（表示領域の端数と表示倍率の再確認）**を行い、成功してから同じ SHA で準備確認・Full（第3・4節）、第5節（表示倍率 100% の Chrome・Edge と IME）に進みます。手順0〜2の試験は `b35504f` の Full で成功しており、関係するコードは変えていません（Full に含まれます）。行う場合は手順0〜2の順です。
 
 この手順書は確認の進め方をまとめたもので、受入の合否を決めるものではありません。合否と `feature/ui-redesign` へのマージは、利用者が判断します。**開発環境（Linux）での自動試験の成功は、Windows 実機での確認や PR-7 の受入の判断の代わりではありません。**
 
@@ -173,6 +174,57 @@ foreach ($ch in "chrome", "msedge") {
 - 道具の自己確認の一時フォルダ（`pytest-tmp\…\display-check\work`）が残らないこと。削除できなかったときは試験が失敗し、`display-check\result.md` の「理由」に、削除できなかったファイルと Windows のエラー（例：`WinError 32`）、またはテスト用サーバーを止められなかった理由が出ます。消せたときは「後片付け」に、サーバーの止まり方と何回目で消せたかが出ます。
 - 失敗したら Full に進まず、記録フォルダ（`pytest-output.log`・`e2e-report.md`・`failures`）を渡してください。
 
+#### 手順3：表示領域の端数と表示倍率の再確認（候補 `b118038`。Edge）
+
+候補 `b35504f` の表示倍率 125%・拡大 125% の NG は、試験が整数に切り捨てた `clientHeight`（585）を表示領域の端としていた誤検知でした（表示領域は 1222.4×585.6 CSS px。ペインはその端で終わっている）。その修正と、拡大中の画面が左上の一部だけだった道具の修正を確かめます。**Windows の表示倍率を変えるかどうかは利用者が決めます**（第5.2節。変えたら終わってから戻してください）。
+
+(1) 修正の回帰試験（ブラウザを使う1件と、使わない1件。表示倍率は変えずに）：
+
+```powershell
+Set-Location $src
+git rev-parse HEAD        # $sha と一致すること
+git status --short        # 何も出ないこと
+$run = Join-Path $out ("{0}-{1}-fraction" -f $sha.Substring(0,7), (Get-Date -Format "yyyyMMdd-HHmmss"))
+New-Item -ItemType Directory -Path $run | Out-Null
+& "$venv\Scripts\python.exe" -m pytest tests\test_e2e_infrastructure.py -k "fraction" -p no:cacheprovider -v -rfE 2>&1 | Tee-Object -FilePath "$run\unit-output.log"
+"単体：終了コード $LASTEXITCODE" | Tee-Object -FilePath "$run\exit-code.txt" -Append
+& "$venv\Scripts\python.exe" -m pytest tests\e2e\test_display_check.py -m e2e -k "fractional or runs_its_checks" `
+    --browser chromium --browser-channel msedge `
+    --e2e-env "利用者環境（Windows 11。表示領域の端数の確認）" --e2e-report "$run\e2e-report.md" `
+    --basetemp "$run\pytest-tmp" -W error::pytest.PytestUnhandledThreadExceptionWarning `
+    -p no:cacheprovider -v -rfE 2>&1 | Tee-Object -FilePath "$run\pytest-output.log"
+"試験：終了コード $LASTEXITCODE" | Tee-Object -FilePath "$run\exit-code.txt" -Append
+```
+
+- 期待：単体は `1 passed`、試験は `2 passed`、どちらも終了コード 0。
+- `test_the_panes_reach_the_edge_of_a_fractional_display_area` は、ヘッドレスの Edge を表示倍率 1.25（`--force-device-scale-factor`）と一時プロフィールの拡大 100・125% で起動して、道具を実行します（画面は開きません。1分前後）。`e2e-report.md` の備考に、拡大 125% の client・表示領域・devicePixelRatio が出ます。失敗したら、`pytest-output.log` の全文と `pytest-tmp\…\display-check` の `result.md` を渡してください（とくに「表示領域に端数がない」で失敗した場合は、Windows のヘッドレスのウィンドウの大きさの扱いの違いで、アプリの不具合ではない可能性があります）。
+
+(2) 表示倍率 125% と 150% での道具（第5.2節と同じ。Edge、`-Ime` なし）：
+
+```powershell
+# Windows の表示倍率を 125% にしてから（サインアウトを求められたら従う）
+& $disp -Venv $venv -OutRoot $out -ExpectedSha $sha -Browser msedge -OsScale 125
+# Windows の表示倍率を 150% にしてから
+& $disp -Venv $venv -OutRoot $out -ExpectedSha $sha -Browser msedge -OsScale 150
+# 終わったら表示倍率を元に戻す
+```
+
+見ること（`result.md`）：
+
+| 表示倍率・拡大 | 期待 |
+|---|---|
+| 125%・100% | 7項目 OK |
+| **125%・125%（計画の範囲）** | **7項目 OK**。「拡大ごとの実測」の「表示領域（CSS px）」が 1222.4×585.6 前後。「主要な操作への到達」で、保存・取消の「入力の前」「入力中」「生成の結果の通知」「エラーの通知」がすべて「表示のまま（スクロールなし・覆われない）」 |
+| 125%・150%（参考） | 結果を記録する（開発環境の再現では 7 項目 OK） |
+| 150%・100% | 7項目 OK |
+| 150%・125%（参考） | 結果を記録する（開発環境の再現では 7 項目 OK） |
+| 150%・150%（参考） | 「通知の表示中のキーボード操作…」と「生成中の状態表示…」が **NG のままの見込み**（アプリは直していない。利用者の判断を受ける事項。下の注意） |
+
+- 全体の判定は、参考の条件の NG を含めずに OK（終了コード 0）になる見込みです。参考の条件の NG も、そのまま記録して渡してください。
+- 画面（`screens`）：拡大 125%・150% の画面が、表示領域の全体（表示倍率 125% で 1910×915、150% で 1908×882 前後）になり、インスペクタの右端と保存・取消の帯が写っていること。`result.md` の「目視のレビュー用の画面」に各画面の大きさが出ます。表示領域の全体を取れなかった画面には、その方法と理由が書かれます。
+- 注意（表示倍率 150%・拡大 150%、848×392）：通知が出ると、作業エリアの上の帯（タブ・絞り込み、2行で 123px）と余白の分だけの高さが残らず、作業エリアの中身が通知の行にはみ出して隠れます。計画の想定（高さ 500px）の外です。直すかどうかは利用者が決めます（[evidence/pr7/windows-display-fix-b118038.md](evidence/pr7/windows-display-fix-b118038.md) の B-3）。
+- 失敗したら Full に進まず、記録フォルダを渡してください。
+
 ### 3.1 準備確認
 
 ```powershell
@@ -191,20 +243,20 @@ foreach ($ch in "chrome", "msedge") {
 ```
 
 - 記録フォルダ `<SHA7桁>-<日時>-chrome-full`。判定「合格」、終了コード 0、「結果（テスト単位）」が失敗 0・スキップ 0・未実施 0、受入項目 75 件すべて「成功」であること。
-- テストの件数は 597 件の見込み（受入候補 `b35504f` の開発環境の 595 件に、Windows だけの PowerShell の確認2件。PowerShell 7 もあれば 599 件）。`d2eb76e` の 579 件から、2026-10-30 の修正の回帰試験 16 件（E-K01 のページの先頭からの確認2件、道具の後片付けの確認4件、テスト用サーバーの停止の確認1件、同じフォルダでの再起動の確認1件、起動の失敗の報告と後片付けの確認3件、模擬ランチャーの下の子の起動の確認4件、文字コードの確認1件）が増えています。
+- テストの件数は 598 件の見込み（受入候補 `b118038` の開発環境の 596 件に、Windows だけの PowerShell の確認2件。PowerShell 7 もあれば 600 件。候補 `b35504f` の Windows の 597 件から、表示領域の端数の道具の試験1件が増えた）。`d2eb76e` の 579 件から、2026-10-30 の修正の回帰試験 17 件（表示領域の端数の道具の確認1件、E-K01 のページの先頭からの確認2件、道具の後片付けの確認4件、テスト用サーバーの停止の確認1件、同じフォルダでの再起動の確認1件、起動の失敗の報告と後片付けの確認3件、模擬ランチャーの下の子の起動の確認4件、文字コードの確認1件）が増えています。
 - 内容：PR-6・PR-C までの累積の 68 項目に、PR-7 の E-K01〜E-K03・E-V01〜E-V03・E-F01 を加えた 75 項目。E-V01〜E-V03・E-F01 は、想定寸法（1920×1080・1536×730・1280×620・1366×650・1093×500・1024×683・900×600）と **2026-10-28 の実測値の寸法**（Chrome 1920×945・1536×756（DPR 1.25）・1280×630（DPR 1.5）、Edge 1530×731（DPR 1.25）・1275×609（DPR 1.5））と基本寸法で実行します。**これは寸法と devicePixelRatio を指定した確認で、ブラウザの拡大の確認ではありません。**
 - 実行中は Chrome のウィンドウが開いたり閉じたりします。テストのウィンドウを操作しないでください。PC がスリープすると止まります。所要の目安は報告（PR 本文）に書きます（開発環境の値。Windows で画面を表示する実行は、それより長くかかる見込み）。
 - 記録フォルダの `screens` に、PR-7 の表示のテストが撮った画面（png）が残ります（目視のレビュー用。判定には含めません。第6.2節）。
 
 ### 3.3 全テストを PR-7 のすべての寸法で（FullSizes。今回は行わない）
 
-計画 第8.7節の「すべての実ブラウザのテストを 1280×800・1440×900 と PR-7 で追加したサイズで実行する」を満たす実行です。**開発環境では実施し、結果を PR 本文に記録しています**（Chromium、headless）。**今回の Windows の確認（候補 `b35504f`。前の候補 `5773c84`・`32730b8`・`795cf36`・`d2eb76e` でも）では行わず、Windows での FullSizes は「未実施」と記録します**（2026-10-30 の利用者の方針。合格に読み替えません）。後で行う場合のコマンドと見方だけを残します。
+計画 第8.7節の「すべての実ブラウザのテストを 1280×800・1440×900 と PR-7 で追加したサイズで実行する」を満たす実行です。**開発環境では実施し、結果を PR 本文に記録しています**（Chromium、headless）。**今回の Windows の確認（候補 `b118038`。前の候補 `b35504f`・`5773c84`・`32730b8`・`795cf36`・`d2eb76e` でも）では行わず、Windows での FullSizes は「未実施」と記録します**（2026-10-30 の利用者の方針。合格に読み替えません）。後で行う場合のコマンドと見方だけを残します。
 
 ```powershell
 & $ps1 -Mode FullSizes -Channel chrome -Venv $venv -OutRoot $out -ExpectedSha $sha
 ```
 
-- 記録フォルダ `<SHA7桁>-<日時>-chrome-fullsizes`。判定の見方は Full と同じ。`e2e-report.md` の「寸法の組」が `pr7：…` であること。テストの件数は 2709 件の見込み（`b35504f` の開発環境の 2707 件に Windows だけの2件）。
+- 記録フォルダ `<SHA7桁>-<日時>-chrome-fullsizes`。判定の見方は Full と同じ。`e2e-report.md` の「寸法の組」が `pr7：…` であること。テストの件数は 2710 件の見込み（`b118038` の開発環境の 2708 件に Windows だけの2件）。
 - 行わなかった場合、Windows での全寸法の実行は「未実施」として記録します（合格に読み替えません）。
 
 ## 4. Microsoft Edge での自動確認（Chrome の後に）
@@ -257,6 +309,8 @@ $scale = <Windows の設定に表示されている値（例 100、125、150）>
 `-OsScale` の値は記録のためだけに使います（道具は表示倍率を変えません）。道具は拡大 100% の `devicePixelRatio` からも表示倍率を推定し、`result.md` に両方を書きます。2つが違う場合（ブラウザの拡大が 100% でなかった、など）は、そのまま記録して渡してください。`-OsScale` を付けなかった記録は、記録フォルダの名前が `os-unknown` になり、設定の値は「未記録」です。
 
 `result.md` の「主要な操作への到達」には、拡大ごとに、各操作が**スクロールせずに見えて覆われていなかったか**、**ペインのスクロールで届いたか**、**届かなかったか（NG）**を分けて書きます。保存・取消（入力の前・入力中）とダイアログのボタンはスクロールなしで覆われていないことが条件で、**どの操作も通知に覆われていれば NG** です（第8節の2・4）。道具がキーを押している間（各拡大で1分程度）は、キーボードとマウスに触れないでください。
+
+`result.md` の「拡大ごとの実測」には、`clientWidth`×`clientHeight`（整数）と、ページが実際に配置される表示領域（CSS px、端数を含む）の両方が出ます。ペインと操作の判定は表示領域で行います（候補 `b118038` から。整数の値は切り捨て・切り上げのどちらもあり、表示領域の端を表さないため）。`screens` の画面は、拡大中も表示領域の全体（物理画素）です（`b35504f` までは、拡大中は左上の一部だけでした）。
 
 ### 5.2 ほかの Windows の表示倍率（100%・125%・150% のうち第5.1節で行わなかったもの）
 
