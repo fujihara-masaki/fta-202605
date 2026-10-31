@@ -4,12 +4,13 @@
 
 **受入候補：`b118038a5fa37eaa28fceb20e54102c7a0906343`**（2026-10-30。同日の Windows の追加の表示倍率の確認（候補 `b35504f`）で NG になった、表示倍率 125%・拡大 125% のレイアウトの検査の誤検知の修正。試験は、ページが実際に配置される表示領域（端数を含む）でペインと操作を確かめます。道具 `display_check.py` は、拡大中も表示領域の全体の画面を保存します。アプリ・スクリプトは `d2eb76e` と同じで、変えたのは試験のコード（`tests/e2e/`・`tests/test_e2e_infrastructure.py`）だけ。その後のコミットは、この手順書・計画書・`docs/evidence/pr7/` の記録だけ）。以前の候補・途中のコミット `b35504f`・`5773c84`・`6052d4b`・`32730b8`・`795cf36`・`d2eb76e`・`a572c39`・`163b193` は確認に使いません。
 
-**2026-10-30 の Windows の結果は、それぞれの SHA の結果として残します**（Windows 11 Home）：
+**Windows の結果は、それぞれの SHA の結果として残します**（Windows 11 Home。2026-10-30・2026-10-31）：
 
 - 候補 `d2eb76e`：Chrome・Edge とも準備確認は成功 9、Full は成功 573・失敗 8（**不合格**。[evidence/pr7/windows-2026-10-30-d2eb76e.md](evidence/pr7/windows-2026-10-30-d2eb76e.md)）。
 - 候補 `795cf36`：個別の回帰試験は Chrome 成功 14（終了コード 0）、Edge 成功 13・失敗 1（終了コード 1。`test_the_test_server_releases_its_folder_when_closed` で `work/fta_tool.db` が `WinError 32`）。両ブラウザで `UnicodeDecodeError`（`PytestUnhandledThreadExceptionWarning`）。E-K01 のキーボード操作は両ブラウザで 9 件すべて成功（[evidence/pr7/windows-2026-10-30-795cf36-individual.md](evidence/pr7/windows-2026-10-30-795cf36-individual.md)）。
 - 候補 `32730b8`：第3.0節の手順1の3件を2回。`test_the_test_server_releases_its_folder_when_closed` と `test_a_python_process_s_output_is_read_in_utf8` は2回とも成功、`test_close_waits_for_the_apps_own_process` は2回とも失敗（`start_server()` が 60 秒で `E2E server did not start:`、`server.log` は空。[evidence/pr7/windows-2026-10-30-32730b8-cleanup.md](evidence/pr7/windows-2026-10-30-32730b8-cleanup.md)）。
 - 候補 `b35504f`：Chrome・Edge とも Full は成功 597（受入 ID 75 件すべて成功）。表示倍率 100% での拡大と IME の確認は Chrome・Edge とも OK。追加の Edge の確認で、**表示倍率 125%・拡大 125%（1222×585、計画の範囲）の「編集画面：レイアウト…」が NG**（終了コード 1）。参考の条件（計画の想定を下回る）で、125%・150%（1018×488）と 150%・125%（1017×470）のレイアウト、150%・150%（848×392）の通知の被覆が NG（[evidence/pr7/windows-2026-10-30-b35504f-display.md](evidence/pr7/windows-2026-10-30-b35504f-display.md)。原因と対応は [evidence/pr7/windows-display-fix-b118038.md](evidence/pr7/windows-display-fix-b118038.md)）。
+- **候補 `b118038`（2026-10-31）**：第3.0節の手順3の回帰試験は単体 1 passed・Edge の E2E 2 passed。Preflight は Chrome・Edge とも成功 9。Full は Chrome・Edge とも**成功 598**（失敗・スキップ・未実施 0、必須 75 項目すべて成功）。表示倍率 100% の拡大 100・125・150% と IME 5 項目は Chrome・Edge とも OK。Edge の表示倍率 125% は 21 項目すべて OK（**以前 NG だった 125%・拡大 125% は OK**）。表示倍率 150% は受入の範囲内がすべて OK で、参考の 150%・拡大 150%（848×392）の2項目は既知の UI 制限として NG のまま。Windows の FullSizes と NVDA は未実施。利用者の最終の目視の受入の承認は判断待ち（[evidence/pr7/windows-2026-10-31-b118038.md](evidence/pr7/windows-2026-10-31-b118038.md)）。
 - 候補 `5773c84`：第3.0節の手順1の1回目で3件が失敗し中断（模擬ランチャーを使う `test_close_waits_for_the_apps_own_process`・`test_an_app_started_without_standard_handles_is_reported_at_once`・`test_a_server_that_does_not_answer_is_reported_then_stopped`。3件とも `launcher.pid` はあり、`server.pid`・`server-stages.jsonl` はなく、`server.log` は空。ほかの3件は成功。[evidence/pr7/windows-2026-10-30-5773c84-cleanup.md](evidence/pr7/windows-2026-10-30-5773c84-cleanup.md)）。
 
 新しい候補 `b118038` では、**まず第3.0節の手順3（表示領域の端数と表示倍率の再確認）**を行い、成功してから同じ SHA で準備確認・Full（第3・4節）、第5節（表示倍率 100% の Chrome・Edge と IME）に進みます。手順0〜2の試験は `b35504f` の Full で成功しており、関係するコードは変えていません（Full に含まれます）。行う場合は手順0〜2の順です。
@@ -18,8 +19,8 @@
 
 | ブラウザ | 方式 | 対象の SHA | 状態 |
 |---|---|---|---|
-| Google Chrome | 準備確認 → 全必須 E2E（第3節）→ 表示倍率・拡大・IME の補助確認（第5節）→ 残りの手動（第6節） | 受入候補（40桁。PR 本文・第14.8節） | **未実施** |
-| Microsoft Edge | 同上（第4節・第5節・第6節） | 同上 | **未実施** |
+| Google Chrome | 準備確認 → 全必須 E2E（第3節）→ 表示倍率・拡大・IME の補助確認（第5節）→ 残りの手動（第6節） | 受入候補（40桁。PR 本文・第14.8節） | `b118038`（2026-10-31）：準備確認 成功 9、Full 成功 598（75/75）、表示倍率 100% の拡大 100・125・150% と IME 5 項目 OK。FullSizes は未実施。目視の最終承認は判断待ち |
+| Microsoft Edge | 同上（第4節・第5節・第6節） | 同上 | `b118038`（2026-10-31）：第3.0節の手順3 成功、準備確認 成功 9、Full 成功 598（75/75）、表示倍率 100%（拡大と IME 5 項目）・125%（21 項目）OK、150% は範囲内 OK（参考の 848×392 で既知の UI 制限の NG 2）。FullSizes・NVDA は未実施。目視の最終承認は判断待ち |
 
 **確認の方式**（PR-3〜PR-6・PR-C と同じ考え方）：
 
