@@ -1,0 +1,463 @@
+# PR-7 Windows 実機確認の手順（Chrome・Edge）
+
+計画書（[ui-redesign-implementation-plan.md](ui-redesign-implementation-plan.md)）第8.7節（PR-7 仕上げ）の確認を、Windows 11 のインストール済みの **Google Chrome と Microsoft Edge の両方**で行うための手順です。対象は PR-7 の作業ブランチ `claude/pr7-ui-finish` の**受入候補の SHA（40桁。PR 本文と計画書 第14.8節に書いたもの）**です。ブランチの先頭を受入候補とみなさないでください（候補の後に記録だけのコミットが続くことがあります。第1節）。
+
+**受入候補：`b118038a5fa37eaa28fceb20e54102c7a0906343`**（2026-10-30。同日の Windows の追加の表示倍率の確認（候補 `b35504f`）で NG になった、表示倍率 125%・拡大 125% のレイアウトの検査の誤検知の修正。試験は、ページが実際に配置される表示領域（端数を含む）でペインと操作を確かめます。道具 `display_check.py` は、拡大中も表示領域の全体の画面を保存します。アプリ・スクリプトは `d2eb76e` と同じで、変えたのは試験のコード（`tests/e2e/`・`tests/test_e2e_infrastructure.py`）だけ。その後のコミットは、この手順書・計画書・`docs/evidence/pr7/` の記録だけ）。以前の候補・途中のコミット `b35504f`・`5773c84`・`6052d4b`・`32730b8`・`795cf36`・`d2eb76e`・`a572c39`・`163b193` は確認に使いません。
+
+**Windows の結果は、それぞれの SHA の結果として残します**（Windows 11 Home。2026-10-30・2026-10-31）：
+
+- 候補 `d2eb76e`：Chrome・Edge とも準備確認は成功 9、Full は成功 573・失敗 8（**不合格**。[evidence/pr7/windows-2026-10-30-d2eb76e.md](evidence/pr7/windows-2026-10-30-d2eb76e.md)）。
+- 候補 `795cf36`：個別の回帰試験は Chrome 成功 14（終了コード 0）、Edge 成功 13・失敗 1（終了コード 1。`test_the_test_server_releases_its_folder_when_closed` で `work/fta_tool.db` が `WinError 32`）。両ブラウザで `UnicodeDecodeError`（`PytestUnhandledThreadExceptionWarning`）。E-K01 のキーボード操作は両ブラウザで 9 件すべて成功（[evidence/pr7/windows-2026-10-30-795cf36-individual.md](evidence/pr7/windows-2026-10-30-795cf36-individual.md)）。
+- 候補 `32730b8`：第3.0節の手順1の3件を2回。`test_the_test_server_releases_its_folder_when_closed` と `test_a_python_process_s_output_is_read_in_utf8` は2回とも成功、`test_close_waits_for_the_apps_own_process` は2回とも失敗（`start_server()` が 60 秒で `E2E server did not start:`、`server.log` は空。[evidence/pr7/windows-2026-10-30-32730b8-cleanup.md](evidence/pr7/windows-2026-10-30-32730b8-cleanup.md)）。
+- 候補 `b35504f`：Chrome・Edge とも Full は成功 597（受入 ID 75 件すべて成功）。表示倍率 100% での拡大と IME の確認は Chrome・Edge とも OK。追加の Edge の確認で、**表示倍率 125%・拡大 125%（1222×585、計画の範囲）の「編集画面：レイアウト…」が NG**（終了コード 1）。参考の条件（計画の想定を下回る）で、125%・150%（1018×488）と 150%・125%（1017×470）のレイアウト、150%・150%（848×392）の通知の被覆が NG（[evidence/pr7/windows-2026-10-30-b35504f-display.md](evidence/pr7/windows-2026-10-30-b35504f-display.md)。原因と対応は [evidence/pr7/windows-display-fix-b118038.md](evidence/pr7/windows-display-fix-b118038.md)）。
+- **候補 `b118038`（2026-10-31）**：第3.0節の手順3の回帰試験は単体 1 passed・Edge の E2E 2 passed。Preflight は Chrome・Edge とも成功 9。Full は Chrome・Edge とも**成功 598**（失敗・スキップ・未実施 0、必須 75 項目すべて成功）。表示倍率 100% の拡大 100・125・150% と IME 5 項目は Chrome・Edge とも OK。Edge の表示倍率 125% は 21 項目すべて OK（**以前 NG だった 125%・拡大 125% は OK**）。表示倍率 150% は受入の範囲内がすべて OK で、参考の 150%・拡大 150%（848×392）の2項目は既知の UI 制限として NG のまま。Windows の FullSizes と NVDA は未実施。利用者の最終の目視の受入の承認は判断待ち（[evidence/pr7/windows-2026-10-31-b118038.md](evidence/pr7/windows-2026-10-31-b118038.md)）。
+- 候補 `5773c84`：第3.0節の手順1の1回目で3件が失敗し中断（模擬ランチャーを使う `test_close_waits_for_the_apps_own_process`・`test_an_app_started_without_standard_handles_is_reported_at_once`・`test_a_server_that_does_not_answer_is_reported_then_stopped`。3件とも `launcher.pid` はあり、`server.pid`・`server-stages.jsonl` はなく、`server.log` は空。ほかの3件は成功。[evidence/pr7/windows-2026-10-30-5773c84-cleanup.md](evidence/pr7/windows-2026-10-30-5773c84-cleanup.md)）。
+
+新しい候補 `b118038` では、**まず第3.0節の手順3（表示領域の端数と表示倍率の再確認）**を行い、成功してから同じ SHA で準備確認・Full（第3・4節）、第5節（表示倍率 100% の Chrome・Edge と IME）に進みます。手順0〜2の試験は `b35504f` の Full で成功しており、関係するコードは変えていません（Full に含まれます）。行う場合は手順0〜2の順です。
+
+この手順書は確認の進め方をまとめたもので、受入の合否を決めるものではありません。合否と `feature/ui-redesign` へのマージは、利用者が判断します。**開発環境（Linux）での自動試験の成功は、Windows 実機での確認や PR-7 の受入の判断の代わりではありません。**
+
+| ブラウザ | 方式 | 対象の SHA | 状態 |
+|---|---|---|---|
+| Google Chrome | 準備確認 → 全必須 E2E（第3節）→ 表示倍率・拡大・IME の補助確認（第5節）→ 残りの手動（第6節） | 受入候補（40桁。PR 本文・第14.8節） | `b118038`（2026-10-31）：準備確認 成功 9、Full 成功 598（75/75）、表示倍率 100% の拡大 100・125・150% と IME 5 項目 OK。FullSizes は未実施。目視の最終承認は判断待ち |
+| Microsoft Edge | 同上（第4節・第5節・第6節） | 同上 | `b118038`（2026-10-31）：第3.0節の手順3 成功、準備確認 成功 9、Full 成功 598（75/75）、表示倍率 100%（拡大と IME 5 項目）・125%（21 項目）OK、150% は範囲内 OK（参考の 848×392 で既知の UI 制限の NG 2）。FullSizes・NVDA は未実施。目視の最終承認は判断待ち |
+
+**確認の方式**（PR-3〜PR-6・PR-C と同じ考え方）：
+
+1. 準備確認（Preflight）
+2. 全必須 E2E（Full。累積の必須 75 項目）
+3. Full に含められない追加の自動確認だけ：**実際のブラウザの拡大と Windows の表示倍率での自動確認**（第5節の `run_display_check.ps1`）。全テストの全寸法での実行（FullSizes、第3.3節）は、**今回の Windows の確認では行わず、未実施として記録します**（2026-10-30 の利用者の方針）
+4. 自動化できない項目だけを実機で確認（第5.3節の IME の入力、第6節）
+
+同じ機能を自動と手動で繰り返しません。自動 E2E で確かめた項目（第8節の表）は、手で操作し直しません。
+
+## 0. 守ること
+
+- 普段の DB、`.env`、通常のブラウザのプロフィール（拡大の設定・キャッシュ・拡張機能）は使いません。自動 E2E と第5節の道具は、記録フォルダの中の一時 DB・スタブ（AI: e2e-stub、実LLMは呼ばない）・一時プロフィールで動きます。
+- Chrome と Edge は **同じ SHA** で確認します。順番に実行し（同時に実行しない）、実行ごとに新しい記録フォルダを作ります（スクリプトが作ります）。
+- **Windows の表示倍率は、スクリプト・道具が変えることはありません。** 第5.2節で表示倍率を変えるときは、利用者が Windows の設定で変えます。終わったら元に戻してください。企業のポリシー・プロキシ・実行ポリシーは変えないでください。
+- 試験を通す目的で、テストの時間の上限、スキップ・除外の条件を変えません。PR-7 で **favicon の 404 の既知の例外は廃止**しました（どのコンソールのエラーも失敗）。PR3-LAYOUT の chrome-1905x945 の限定した許容（2026-10-06）は変えていません。
+- Playwright で寸法を指定した自動テスト（E-V01〜E-V03・E-F01）の結果を、ブラウザの拡大 125%・150% を実際に操作した確認として記録しません。実際の拡大は第5節の道具の結果だけです。
+- 記録にはローカルのパス（ユーザー名を含む）が入ります。外部へ上げる前に確認してください。
+
+## 1. コードを取り出す（確認する SHA の固定）
+
+確認する SHA は、PR 本文と計画書 第14.8節に書いた**受入候補の 40 桁の SHA** です。ブランチの名前や先頭ではなく、この SHA を取り出して確かめます。以降のすべての確認（Chrome・Edge・道具）は、このフォルダの同じ SHA で行います。
+
+```powershell
+cd C:\work\fta-202605                                    # 普段のリポジトリ（例）
+git fetch origin claude/pr7-ui-finish
+$sha = "<受入候補の SHA（40桁。PR 本文からコピー）>"
+git cat-file -t $sha                                     # commit と表示されること
+git merge-base --is-ancestor $sha origin/claude/pr7-ui-finish; $LASTEXITCODE   # 0（候補がブランチに含まれる）
+$wt  = "C:\fta-check\src-$($sha.Substring(0,7))"
+git worktree add --detach $wt $sha
+git -C $wt rev-parse HEAD                                # $sha と一致すること
+git -C $wt status --short                                # 何も出ないこと
+Test-Path "$wt\fta_tool\.env"                            # False であること
+```
+
+**受入候補とブランチの先頭（PR の最終 HEAD）が違う場合**は、その差分が記録・文書だけであることを確かめます（試験の結果を書いたコミットは、試験した SHA の後にしか作れないため）。
+
+```powershell
+git rev-parse origin/claude/pr7-ui-finish                # PR の最終 HEAD
+git diff --name-only $sha origin/claude/pr7-ui-finish    # 差分のファイル（空なら同じ内容）
+```
+
+- 差分が `fta_tool/docs/` の下（計画書・この手順書・`docs/evidence/pr7/`）だけなら、受入候補で確認した結果は PR の最終 HEAD のアプリ・テスト・スクリプトにもそのまま当てはまります。PR 本文にも、開発環境で同じ比較をした結果を書いています。
+- `fta_tool/app/`・`fta_tool/tests/`・`fta_tool/scripts/` などのファイルが出たら、確認を始めずに、その一覧を渡してください（新しい受入候補が必要です）。
+
+スクリプトも道具も、実行前に「HEAD が `-ExpectedSha` と一致する」「未コミットの変更がない」「コード側に `.env` がない」を確かめ、違えば何もせずに止まります（終了コード 9）。
+
+## 2. PowerShell の設定と自動確認専用の venv
+
+新しい PowerShell を開くたびに、次を設定します（PR-3〜PR-C と同じ変数）。
+
+```powershell
+$sha  = "<確認する SHA（40桁）>"
+$src  = "C:\fta-check\src-$($sha.Substring(0,7))\fta_tool"
+$venv = "C:\fta-check\e2e-venv"               # 自動確認専用の venv（コードのフォルダの外）
+$out  = "C:\fta-check\e2e"                    # 記録フォルダを作る場所（コードのフォルダの外）
+$ps1  = "$src\scripts\run_browser_e2e.ps1"    # 確認する SHA と同じ版のスクリプト
+$disp = "$src\scripts\run_display_check.ps1"  # PR-7 で追加した表示倍率・拡大・IME の補助
+```
+
+- **venv の再利用**：PR-7 は `requirements.txt`・`requirements-dev.txt` を変えていません（Playwright 1.56.0、pytest-playwright 0.7.1 のまま）。版だけ確かめます。
+
+  ```powershell
+  & "$venv\Scripts\python.exe" -m pip show playwright pytest-playwright | Select-String "^(Name|Version)"
+  ```
+
+  venv がない、または版が違う場合だけ、[manual-check-pr3.md](manual-check-pr3.md) 第12.3節の初回準備（`-Mode Setup`）を新しいフォルダで行います。既存の venv を上書きしないでください。
+
+## 3. Google Chrome での自動確認
+
+### 3.0 個別の回帰試験（2026-10-30 の失敗の修正。Chrome・Edge、Full の前に）
+
+2026-10-30 の Windows で失敗した試験と、その修正の回帰試験だけを先に行います。第1・2節で、`$sha` を上の受入候補にした worktree と変数を用意してから行います。**手順0が成功してから手順1へ、手順1が成功してから手順2へ、手順2が成功してから第3.1節（準備確認）へ**進みます。
+
+#### 手順0：模擬ランチャーの確認（FTA のアプリを使わない確認と、模擬ランチャーを使う試験だけ）
+
+候補 `5773c84` で失敗した3件は、どれも試験の模擬ランチャー（venv のランチャーの代わり）の下でアプリの Python が `main()` に達しなかったものです。まず、FTA のアプリを起動しない小さな確認（`launcher_probe`）で、模擬ランチャーの下で Python の子が起動するかを、起動のしかたごとに記録します。続けて、模擬ランチャーを使う試験だけを1回実行します。どちらもブラウザを使いません。
+
+```powershell
+Set-Location $src
+git rev-parse HEAD        # $sha と一致すること
+git status --short        # 何も出ないこと
+& "$venv\Scripts\python.exe" -c "import sys; print(sys.version); print(sys.executable); print(sys._base_executable)"
+$run = Join-Path $out ("{0}-{1}-launcher" -f $sha.Substring(0,7), (Get-Date -Format "yyyyMMdd-HHmmss"))
+New-Item -ItemType Directory -Path $run | Out-Null
+& "$venv\Scripts\python.exe" -m tests.e2e.launcher_probe --out "$run\probe" 2>&1 | Tee-Object -FilePath "$run\probe-output.log"
+"確認の道具：終了コード $LASTEXITCODE" | Tee-Object -FilePath "$run\exit-code.txt" -Append
+$t0 = "waits_for_the_apps or without_standard_handles or does_not_answer or ends_before_the_app or under_the_stand_in"
+& "$venv\Scripts\python.exe" -m pytest tests\e2e\test_display_check.py -m e2e -k $t0 `
+    --browser chromium --browser-channel msedge `
+    --e2e-env "利用者環境（Windows 11。模擬ランチャーの試験）" --e2e-report "$run\e2e-report.md" `
+    --basetemp "$run\pytest-tmp" -W error::pytest.PytestUnhandledThreadExceptionWarning `
+    -p no:cacheprovider -v -rfE 2>&1 | Tee-Object -FilePath "$run\pytest-output.log"
+"試験：終了コード $LASTEXITCODE" | Tee-Object -FilePath "$run\exit-code.txt" -Append
+```
+
+- 確認の道具（1〜2 分）：`$run\probe\probe-result.md` に、7 通りの起動のしかたごとに「子は起動した」「標準入力が閉じられるまで子は最初の行に達しなかった」「最初の行に達せずに終了した（終了コード）」などが出ます。`direct`・`share-stdin-wait`・`own-stdin`・`null-handles` で子が起動し、残ったプロセスがなければ、終了コード 0 です。`inherit-none`（`32730b8` の方式）・`share-stdin`（`5773c84` の方式）・`share-stdin-base` の結果は、失敗の原因を確かめるための記録です（起動しなくても終了コードには数えません）。結果の表をそのまま渡してください。
+- 試験（8 件：失敗した3件、模擬ランチャーの子が `main()` の前に終わる場合の報告1件、確認の道具と同じ起動のしかた4件）：期待は `8 passed`、終了コード 0。
+- 失敗したときは、`pytest-output.log` の `RuntimeError: E2E server did not start:` の下に、模擬ランチャーの記録（`launcher-stages.jsonl`：起動、子の起動の前後と子の PID、`Popen` の例外、子の終了コード）、子の PID ごとの状態、`server-stages.jsonl`、ポート、後片付けの結果、`server.log` が出ます。その全文と `$run` のフォルダを渡してください。手順1には進まないでください。
+
+
+#### 手順1：テスト用サーバーの起動・後片付けと文字コード（7件を 10 回）
+
+Edge の個別の回帰試験（候補 `795cf36`）で失敗した `test_the_test_server_releases_its_folder_when_closed`（`work/fta_tool.db` が `WinError 32` で削除できない）、候補 `32730b8` で失敗した `test_close_waits_for_the_apps_own_process`（模擬ランチャーの下のアプリが起動しない）、同じフォルダでの再起動の試験、起動の失敗の報告と後片付けの試験3件、文字コードの試験の7件を、10 回続けて実行します（タイミングで起きた失敗を含むため、1回の成功では判断しません）。この7件はブラウザを使いません。
+
+```powershell
+Set-Location $src
+git rev-parse HEAD        # $sha と一致すること
+git status --short        # 何も出ないこと
+& "$venv\Scripts\python.exe" -c "import sys; print(sys.version); print(sys.executable); print(sys._base_executable)"
+$run = Join-Path $out ("{0}-{1}-cleanup" -f $sha.Substring(0,7), (Get-Date -Format "yyyyMMdd-HHmmss"))
+New-Item -ItemType Directory -Path $run | Out-Null
+$t1 = "releases_its_folder or waits_for_the_apps or starts_again or without_standard_handles or does_not_answer or ends_before_the_app or read_in_utf8"
+foreach ($i in 1..10) {
+  & "$venv\Scripts\python.exe" -m pytest tests\e2e\test_display_check.py -m e2e -k $t1 `
+      --browser chromium --browser-channel msedge `
+      --e2e-env "利用者環境（Windows 11。後片付けと文字コードの確認 $i/10）" --e2e-report "$run\e2e-report-$i.md" `
+      --basetemp "$run\pytest-tmp-$i" -W error::pytest.PytestUnhandledThreadExceptionWarning `
+      -p no:cacheprovider -v -rfE 2>&1 | Tee-Object -FilePath "$run\pytest-output-$i.log"
+  "$i 回目：終了コード $LASTEXITCODE" | Tee-Object -FilePath "$run\exit-code.txt" -Append
+}
+```
+
+- 期待：10 回とも `7 passed`、終了コード 0。1回の所要は 20 秒前後の見込み（起動しないサーバーの試験が 5 秒待つため）。`-W error::…` により、子プロセスの出力が読めない（`UnicodeDecodeError` の）警告はエラーになります。`pytest-output-*.log` に `PytestUnhandledThreadExceptionWarning` と `UnicodeDecodeError` が出ないこと。
+- `e2e-report-*.md` の「結果（テスト単位）」の備考に、テスト用サーバーの止まり方と削除の回数が出ます。`test_the_test_server_releases_its_folder_when_closed` で「停止：自分で終了（終了コード 0）。アプリのプロセス（PID …）の終了を確認／一時フォルダの削除：1 回目」のように出ることを見てください。「アプリのプロセス（PID …）の終了を確認」は、venv の `python.exe` がランチャーで、アプリが別のプロセスだったことを示します（出なければ同じプロセス）。「2 回目」以上なら、アプリが終わった後も Windows の別のもの（ウイルス対策など）が一時的にファイルを使っていたことを示します（成功ですが、結果の受け渡しで知らせてください）。`test_close_waits_for_the_apps_own_process` の備考には「起動したプロセスの終了時にアプリはまだ動作中」と出ます（模擬ランチャーがアプリより先に終わる状況を試験が作れたこと）。
+- 試験が失敗したときは、`pytest-output-*.log` の `RuntimeError: E2E server did not start:` の下に、起動したプロセスとアプリのプロセスの状態、`server-stages.jsonl`（アプリの Python が起動したか、標準入出力の有無、アプリの読み込み、待ち受けの開始、エラー）、ポートが開いているか、後片付けの結果、`server.log` が出ます。その全文を渡してください。
+- 最初の `python -c` の3行（Python の版、`sys.executable`、`sys._base_executable`）も記録に残してください（2行目と3行目が違えば、venv の `python.exe` はランチャーです）。
+- 1回でも失敗したら手順2に進まず、`$run` のフォルダごと渡してください。
+
+#### 手順2：個別の回帰試験（Chrome・Edge）
+
+2026-10-30 の Full・個別の回帰試験・後片付けの確認で失敗した試験と、その修正の回帰試験（24 件）を、Chrome と Edge で実行します。
+
+```powershell
+Set-Location $src
+$tests = "tab_shift_tab or from_the_top or runs_its_checks or releases_its_folder or waits_for_the_apps or starts_again or without_standard_handles or does_not_answer or ends_before_the_app or under_the_stand_in or read_in_utf8 or removes_its_work or cannot_be_removed or only_the_record"
+foreach ($ch in "chrome", "msedge") {
+  $run = Join-Path $out ("{0}-{1}-{2}-individual" -f $sha.Substring(0,7), (Get-Date -Format "yyyyMMdd-HHmmss"), $ch)
+  New-Item -ItemType Directory -Path $run | Out-Null
+  & "$venv\Scripts\python.exe" -m pytest tests\e2e\test_pr7_focus.py tests\e2e\test_display_check.py -m e2e -k $tests `
+      --browser chromium --browser-channel $ch --headed `
+      --e2e-env "利用者環境（Windows 11、$ch、headed。個別の回帰試験）" --e2e-report "$run\e2e-report.md" `
+      --basetemp "$run\pytest-tmp" --output "$run\failures" --screenshot only-on-failure --tracing retain-on-failure `
+      -W error::pytest.PytestUnhandledThreadExceptionWarning -p no:cacheprovider -v -rfE 2>&1 | Tee-Object -FilePath "$run\pytest-output.log"
+  "終了コード：$LASTEXITCODE" | Tee-Object -FilePath "$run\exit-code.txt" -Append
+}
+```
+
+- 対象（Chrome・Edge それぞれ 24 件）：`test_E_K01_tab_shift_tab_and_arrows_show_the_focus_with_notifications`（7寸法）、`test_E_K01_the_notifications_are_reached_from_the_top_of_the_page`（2寸法）、`test_display_check.py` の道具の自己確認（`…runs_its_checks_and_records_them`）・テスト用サーバーの後片付け（2件）・同じフォルダでの再起動（1件）・起動の失敗の報告と後片付け（3件）・模擬ランチャーの下の子の起動（4件）・文字コード（1件）・道具の一時フォルダの削除（3件）。
+- 期待：`24 passed`、終了コード 0。`pytest-output.log` に `PytestUnhandledThreadExceptionWarning` と `UnicodeDecodeError` が出ないこと。`e2e-report.md` の「必須受入検証として実行」は「いいえ」で、ほかの受入項目は「未実施」と出ます（個別の確認のため。Full の代わりではありません）。
+- 道具の自己確認の一時フォルダ（`pytest-tmp\…\display-check\work`）が残らないこと。削除できなかったときは試験が失敗し、`display-check\result.md` の「理由」に、削除できなかったファイルと Windows のエラー（例：`WinError 32`）、またはテスト用サーバーを止められなかった理由が出ます。消せたときは「後片付け」に、サーバーの止まり方と何回目で消せたかが出ます。
+- 失敗したら Full に進まず、記録フォルダ（`pytest-output.log`・`e2e-report.md`・`failures`）を渡してください。
+
+#### 手順3：表示領域の端数と表示倍率の再確認（候補 `b118038`。Edge）
+
+**この手順3の合格は、表示領域の測り方の変更（2026-10-31 に利用者が承認）の受入条件です。**
+
+候補 `b35504f` の表示倍率 125%・拡大 125% の NG は、試験が整数に切り捨てた `clientHeight`（585）を表示領域の端としていた誤検知でした（表示領域は 1222.4×585.6 CSS px。ペインはその端で終わっている）。その修正と、拡大中の画面が左上の一部だけだった道具の修正を確かめます。**Windows の表示倍率を変えるかどうかは利用者が決めます**（第5.2節。変えたら終わってから戻してください）。
+
+(1) 修正の回帰試験（ブラウザを使う1件と、使わない1件。表示倍率は変えずに）：
+
+```powershell
+Set-Location $src
+git rev-parse HEAD        # $sha と一致すること
+git status --short        # 何も出ないこと
+$run = Join-Path $out ("{0}-{1}-fraction" -f $sha.Substring(0,7), (Get-Date -Format "yyyyMMdd-HHmmss"))
+New-Item -ItemType Directory -Path $run | Out-Null
+& "$venv\Scripts\python.exe" -m pytest tests\test_e2e_infrastructure.py -k "fraction" -p no:cacheprovider -v -rfE 2>&1 | Tee-Object -FilePath "$run\unit-output.log"
+"単体：終了コード $LASTEXITCODE" | Tee-Object -FilePath "$run\exit-code.txt" -Append
+& "$venv\Scripts\python.exe" -m pytest tests\e2e\test_display_check.py -m e2e -k "fractional or runs_its_checks" `
+    --browser chromium --browser-channel msedge `
+    --e2e-env "利用者環境（Windows 11。表示領域の端数の確認）" --e2e-report "$run\e2e-report.md" `
+    --basetemp "$run\pytest-tmp" -W error::pytest.PytestUnhandledThreadExceptionWarning `
+    -p no:cacheprovider -v -rfE 2>&1 | Tee-Object -FilePath "$run\pytest-output.log"
+"試験：終了コード $LASTEXITCODE" | Tee-Object -FilePath "$run\exit-code.txt" -Append
+```
+
+- 期待：単体は `1 passed`、試験は `2 passed`、どちらも終了コード 0。
+- `test_the_panes_reach_the_edge_of_a_fractional_display_area` は、ヘッドレスの Edge を表示倍率 1.25（`--force-device-scale-factor`）と一時プロフィールの拡大 100・125% で起動して、道具を実行します（画面は開きません。1分前後）。`e2e-report.md` の備考に、拡大 125% の client・表示領域・devicePixelRatio が出ます。失敗したら、`pytest-output.log` の全文と `pytest-tmp\…\display-check` の `result.md` を渡してください（とくに「表示領域に端数がない」で失敗した場合は、Windows のヘッドレスのウィンドウの大きさの扱いの違いで、アプリの不具合ではない可能性があります）。
+
+(2) 表示倍率 125% と 150% での道具（第5.2節と同じ。Edge、`-Ime` なし）：
+
+```powershell
+# Windows の表示倍率を 125% にしてから（サインアウトを求められたら従う）
+& $disp -Venv $venv -OutRoot $out -ExpectedSha $sha -Browser msedge -OsScale 125
+# Windows の表示倍率を 150% にしてから
+& $disp -Venv $venv -OutRoot $out -ExpectedSha $sha -Browser msedge -OsScale 150
+# 終わったら表示倍率を元に戻す
+```
+
+見ること（`result.md`）：
+
+| 表示倍率・拡大 | 期待 |
+|---|---|
+| 125%・100% | 7項目 OK |
+| **125%・125%（計画の範囲）** | **7項目 OK**。「拡大ごとの実測」の「表示領域（CSS px）」が 1222.4×585.6 前後。「主要な操作への到達」で、保存・取消の「入力の前」「入力中」「生成の結果の通知」「エラーの通知」がすべて「表示のまま（スクロールなし・覆われない）」 |
+| 125%・150%（参考） | 結果を記録する（開発環境の再現では 7 項目 OK） |
+| 150%・100% | 7項目 OK |
+| 150%・125%（参考） | 結果を記録する（開発環境の再現では 7 項目 OK） |
+| 150%・150%（参考） | 「通知の表示中のキーボード操作…」と「生成中の状態表示…」が **NG のままの見込み**（既知の UI 制限。2026-10-31 の利用者の判断で現状維持。下の注意） |
+
+- 全体の判定は、参考の条件の NG を含めずに OK（終了コード 0）になる見込みです。参考の条件の NG も、そのまま記録して渡してください。
+- 画面（`screens`）：拡大 125%・150% の画面が、表示領域の全体（表示倍率 125% で 1910×915、150% で 1908×882 前後）になり、インスペクタの右端と保存・取消の帯が写っていること。`result.md` の「目視のレビュー用の画面」に各画面の大きさが出ます。表示領域の全体を取れなかった画面には、その方法と理由が書かれます。
+- 注意（表示倍率 150%・拡大 150%、848×392）：通知が出ると、作業エリアの上の帯（タブ・絞り込み、2行で 123px）と余白の分だけの高さが残らず、作業エリアの中身が通知の行にはみ出して隠れます。計画の想定（高さ 500px）の外です。2026-10-31 の利用者の判断で、**既知の UI 制限として現状維持**（PR-7 の受入範囲は広げない。将来の UI 改善課題）。NG は参考の結果としてそのまま記録して渡してください（発生条件・影響・回避策・改善候補は [evidence/pr7/windows-display-fix-b118038.md](evidence/pr7/windows-display-fix-b118038.md) の B-3）。
+- 失敗したら Full に進まず、記録フォルダを渡してください。
+
+### 3.1 準備確認
+
+```powershell
+& $ps1 -Mode Preflight -Channel chrome -Venv $venv -OutRoot $out -ExpectedSha $sha
+```
+
+- 記録フォルダ `<SHA7桁>-<日時>-chrome-preflight` ができます。判定「成功」、終了コード 0、「起動したブラウザ」が `Google LLC …` であること。
+- 実行するのは 9 件です（E-E01 の2件×2寸法、PR3-LAYOUT の3寸法、W-02 のラッパーと **PR-7 の `run_display_check.ps1`** を Windows PowerShell 5.1 で各1件。PowerShell 7 も入っていれば各1件増えて 11 件）。**全必須 E2E の合格ではありません。**
+- 準備確認での `run_display_check.ps1` の確認は、**構文解析と、違う SHA（`-ExpectedSha 0000000`）を渡すと何もせずに止まる（終了コード 9）ことだけ**です。道具を通常どおり起動して終えること（ブラウザの起動、拡大の検出、各確認、IME の判定、記録の作成）は確かめていません。**準備確認が成功しても、道具と IME の確認が動くことの確認にはなりません。**道具が実際に動くかは、第5節の実行で初めて分かります（開発環境では、道具の判定の仕組みを自動試験で確かめています。第5.3節）。
+- 失敗したら次へ進まず、記録フォルダを渡してください。
+
+### 3.2 全必須 E2E（準備確認が成功してから）
+
+```powershell
+& $ps1 -Mode Full -Channel chrome -Venv $venv -OutRoot $out -ExpectedSha $sha
+```
+
+- 記録フォルダ `<SHA7桁>-<日時>-chrome-full`。判定「合格」、終了コード 0、「結果（テスト単位）」が失敗 0・スキップ 0・未実施 0、受入項目 75 件すべて「成功」であること。
+- テストの件数は 598 件の見込み（受入候補 `b118038` の開発環境の 596 件に、Windows だけの PowerShell の確認2件。PowerShell 7 もあれば 600 件。候補 `b35504f` の Windows の 597 件から、表示領域の端数の道具の試験1件が増えた）。`d2eb76e` の 579 件から、2026-10-30 の修正の回帰試験 17 件（表示領域の端数の道具の確認1件、E-K01 のページの先頭からの確認2件、道具の後片付けの確認4件、テスト用サーバーの停止の確認1件、同じフォルダでの再起動の確認1件、起動の失敗の報告と後片付けの確認3件、模擬ランチャーの下の子の起動の確認4件、文字コードの確認1件）が増えています。
+- 内容：PR-6・PR-C までの累積の 68 項目に、PR-7 の E-K01〜E-K03・E-V01〜E-V03・E-F01 を加えた 75 項目。E-V01〜E-V03・E-F01 は、想定寸法（1920×1080・1536×730・1280×620・1366×650・1093×500・1024×683・900×600）と **2026-10-28 の実測値の寸法**（Chrome 1920×945・1536×756（DPR 1.25）・1280×630（DPR 1.5）、Edge 1530×731（DPR 1.25）・1275×609（DPR 1.5））と基本寸法で実行します。**これは寸法と devicePixelRatio を指定した確認で、ブラウザの拡大の確認ではありません。**
+- 実行中は Chrome のウィンドウが開いたり閉じたりします。テストのウィンドウを操作しないでください。PC がスリープすると止まります。所要の目安は報告（PR 本文）に書きます（開発環境の値。Windows で画面を表示する実行は、それより長くかかる見込み）。
+- 記録フォルダの `screens` に、PR-7 の表示のテストが撮った画面（png）が残ります（目視のレビュー用。判定には含めません。第6.2節）。
+
+### 3.3 全テストを PR-7 のすべての寸法で（FullSizes。今回は行わない）
+
+計画 第8.7節の「すべての実ブラウザのテストを 1280×800・1440×900 と PR-7 で追加したサイズで実行する」を満たす実行です。**開発環境では実施し、結果を PR 本文に記録しています**（Chromium、headless）。**今回の Windows の確認（候補 `b118038`。前の候補 `b35504f`・`5773c84`・`32730b8`・`795cf36`・`d2eb76e` でも）では行わず、Windows での FullSizes は「未実施」と記録します**（2026-10-30 の利用者の方針。合格に読み替えません）。後で行う場合のコマンドと見方だけを残します。
+
+```powershell
+& $ps1 -Mode FullSizes -Channel chrome -Venv $venv -OutRoot $out -ExpectedSha $sha
+```
+
+- 記録フォルダ `<SHA7桁>-<日時>-chrome-fullsizes`。判定の見方は Full と同じ。`e2e-report.md` の「寸法の組」が `pr7：…` であること。テストの件数は 2710 件の見込み（`b118038` の開発環境の 2708 件に Windows だけの2件）。
+- 行わなかった場合、Windows での全寸法の実行は「未実施」として記録します（合格に読み替えません）。
+
+## 4. Microsoft Edge での自動確認（Chrome の後に）
+
+第3節と同じ手順を `-Channel msedge` で行います。
+
+```powershell
+# 第3.0節の手順1・手順2（msedge）が成功してから
+& $ps1 -Mode Preflight -Channel msedge -Venv $venv -OutRoot $out -ExpectedSha $sha
+# 準備確認が成功したら
+& $ps1 -Mode Full -Channel msedge -Venv $venv -OutRoot $out -ExpectedSha $sha
+# FullSizes（第3.3節）は今回は行わない（未実施として記録）
+```
+
+「起動したブラウザ」が `Microsoft Corporation …` であること。
+
+## 5. 表示倍率・ブラウザの拡大・日本語入力の補助確認（`run_display_check.ps1`）
+
+自動 E2E では、ブラウザの拡大と Windows の表示倍率を実際には変えられません。この道具は、**利用者がキーを押して拡大を変えるところ（と IME の入力）だけ**を人が行い、それ以外を自動で行います。
+
+道具が自動で行うこと：
+
+- テスト用サーバー（スタブ、実LLMなし、記録フォルダの中の一時 DB、空いているポート）とデータの準備。
+- インストール済みの Chrome・Edge を、**最大化したウィンドウ**で、**表示領域を指定せずに**起動（一時プロフィール）。
+- 実行環境の記録：OS、ブラウザの作成元・版・実行ファイル、画面（`screen`）、ウィンドウ、`clientWidth`×`clientHeight`、`innerWidth`×`innerHeight`、`devicePixelRatio`、拡大 100% の `devicePixelRatio` から推定した Windows の表示倍率、描画に使われたフォント（BIZ UDPGothic が入っているかどうかが分かります）。
+- 拡大ごとに：拡大の変化の検出（`devicePixelRatio` が「表示倍率×拡大」になったこと）、その拡大での **E-V01〜E-V03 と同じ確認**（1280px 以上で3ペイン・未満で構造ナビの折りたたみ、主要な操作が表示領域の中に見えて最前面、入力の前と入力中の保存・取消、構造ナビの開閉、未保存確認・削除・手動追加のダイアログ、生成中の状態表示・生成ログ・通知・保存失敗、一覧・新規作成）と、**通知の表示中のキーボード操作**（道具が Tab・Shift+Tab を押し、移った先とフォーカスの枠が見えて通知に覆われないこと、入力中に通知が出てもフォーカス・入力・選択が変わらないこと、通知の「閉じる」に Tab で届くこと。E-K01 と同じ判定）を、**実際のウィンドウの DOM で判定**、画面の保存。
+- 計画の想定（幅 1024px・高さ 500px）を下回る拡大は「想定を下回る」と記録し、幅 900px 未満・高さ 500px 未満は参考（判定に含めない）として結果を残します。**この場合は影響と対応方法を利用者に示して判断を受けます（計画 第5.9.4節）。**
+- `-Ime`：日本語入力の判定（第5.3節）。
+- `result.md`・`result.json`・`display-output.log`・`screens` の作成、一時 DB の削除。
+
+### 5.1 実行（いまの Windows の表示倍率のまま）
+
+最初に、Windows の設定（システム → ディスプレイ → 拡大/縮小）に表示されている**いまの値**を確かめ、そのまま使います（100% とは決めつけません。2026-10-28 の実測は表示倍率を記録していません）。表示倍率は変えずに実行します。
+
+```powershell
+$scale = <Windows の設定に表示されている値（例 100、125、150）>
+# Chrome（日本語入力の確認も行う）
+& $disp -Venv $venv -OutRoot $out -ExpectedSha $sha -Browser chrome -OsScale $scale -Ime
+# Edge（日本語入力の確認も行う）
+& $disp -Venv $venv -OutRoot $out -ExpectedSha $sha -Browser msedge -OsScale $scale -Ime
+```
+
+1. テスト用のブラウザが最大化して開きます。アドレスバーに虫眼鏡がない（拡大 100%）ことを確かめ、PowerShell のウィンドウで Enter を押します。
+2. 道具が拡大 100% の確認を自動で行います（1〜2分。ウィンドウを操作しないでください）。
+3. 「ブラウザの拡大を 125% にしてください」と表示されたら、**テスト用のブラウザのウィンドウをクリックしてから Ctrl と + を2回**押します（100→110→125%）。道具が変化を検出して自動で確認します。
+4. 「150% にしてください」と表示されたら、Ctrl と + を**1回**押します（125→150%）。
+5. `-Ime` を付けたときは第5.3節に進みます。
+6. 終わると判定（OK・NG・未完了）と `result.md` の場所が表示されます。
+
+`-OsScale` の値は記録のためだけに使います（道具は表示倍率を変えません）。道具は拡大 100% の `devicePixelRatio` からも表示倍率を推定し、`result.md` に両方を書きます。2つが違う場合（ブラウザの拡大が 100% でなかった、など）は、そのまま記録して渡してください。`-OsScale` を付けなかった記録は、記録フォルダの名前が `os-unknown` になり、設定の値は「未記録」です。
+
+`result.md` の「主要な操作への到達」には、拡大ごとに、各操作が**スクロールせずに見えて覆われていなかったか**、**ペインのスクロールで届いたか**、**届かなかったか（NG）**を分けて書きます。保存・取消（入力の前・入力中）とダイアログのボタンはスクロールなしで覆われていないことが条件で、**どの操作も通知に覆われていれば NG** です（第8節の2・4）。道具がキーを押している間（各拡大で1分程度）は、キーボードとマウスに触れないでください。
+
+`result.md` の「拡大ごとの実測」には、`clientWidth`×`clientHeight`（整数）と、ページが実際に配置される表示領域（CSS px、端数を含む）の両方が出ます。ペインと操作の判定は表示領域で行います（候補 `b118038` から。整数の値は切り捨て・切り上げのどちらもあり、表示領域の端を表さないため）。`screens` の画面は、拡大中も表示領域の全体（物理画素）です（`b35504f` までは、拡大中は左上の一部だけでした）。
+
+### 5.2 ほかの Windows の表示倍率（100%・125%・150% のうち第5.1節で行わなかったもの）
+
+Windows の設定で表示倍率を変え（サインアウトを求められたら従う）、ブラウザを閉じてから、第5.1節と同じコマンドを、変えた後の値の `-OsScale` で実行します（`-Ime` は不要）。終わったら表示倍率を元に戻してください。表示倍率を変えるかどうかは利用者が決めます。変えなかった表示倍率の行は「未実施」です。
+
+| 確認の条件（計画 第5.7節・第5.9.4節） | Edge（必須） | Chrome（必須は代表シナリオ） |
+|---|---|---|
+| いまの表示倍率（第5.1節。値を記録） × 拡大 100・125・150% | 第5.1節（1回の実行で3つ） | 第5.1節（1回の実行で3つ） |
+| 100%・125%・150% のうち残りの表示倍率 × 拡大 100・125・150% | 第5.2節（表示倍率ごとに1回の実行で3つ） | 任意（行えば記録） |
+
+- **すべての組み合わせを実機で行う必要があるか**：レイアウトは CSS ピクセルの表示領域（幅・高さ）と `devicePixelRatio` で決まるため、「表示倍率 150%・拡大 100%」と「表示倍率 100%・拡大 150%」は幅がほぼ同じになります。ただし、表示倍率はブラウザのタブ・アドレスバーの高さ、スクロールバーの太さ、文字の描画（ヒンティング）も変え、拡大は変えないため、**高さと描画は一致しません**。寸法を指定した自動テスト（E-V01〜E-V03）は幅・高さ・DPR の組を網羅していますが、実際の拡大・表示倍率での見え方の代わりにはしません（計画 第5.9.4節）。計画の条件どおり、Edge は 3×3 の 9 つ、Chrome は少なくとも表示倍率 100% の 3 つを推奨します。**行わなかった組み合わせは「未実施」として記録し、推測で合格にしません。**
+- 表示倍率 150% × 拡大 150%（1920×1080 では幅約 853px）など、計画の想定を下回る組み合わせは、道具が「想定を下回る」と記録します。結果は参考で、利用者の判断が必要です。
+
+### 5.3 日本語入力（Microsoft IME。`-Ime` を付けたとき）
+
+道具が入力欄を開いてフォーカスを置くので、利用者は次だけを行います（5 か所、各30秒程度）。
+
+1. IME をオン（半角/全角）にして、日本語を入力し、変換して **Enter で確定だけ**します（絞り込みでは「しょうがい」→「障害」）。
+2. 手を止めて待ちます。道具が、変換の確定（`compositionend`）を検出し、その後 3 秒待って、**確定の Enter で保存・送信が行われていないこと**を確かめます。
+3. 「もう一度 Enter を押して保存してください」と表示されたら Enter を押します（絞り込みでは不要）。道具が、送信・応答・保存された値を確かめます。
+
+道具は、入力欄にフォーカスを置いた時点（利用者が入力を始める前）から、ページが送った要求をすべて記録します（Playwright の要求のイベント。待つ間も Playwright の処理を止めない `wait_for_timeout` で待つので、待っている間の要求も記録されます）。判定（OK の条件）：
+
+| 場所 | 確定の Enter（入力欄の準備 〜 確定の 3 秒後） | 次の Enter（案内の後） |
+|---|---|---|
+| 一覧の改名 | `POST /analyses/{id}/title` を送らない | 1 回だけ送り、応答が 200、テスト用 DB の分析名が確定した文字（前後の空白を除く）と一致 |
+| 新規作成のタイトル | `POST /analyses` を送らない（作成しない） | 1 回だけ送り、応答が 303、確定した文字の分析ができた |
+| 編集画面の分析タイトル | `POST /analyses/{id}/title` を送らない | 1 回だけ送り、応答が 200、分析名が一致 |
+| 手動追加のタイトル | `POST /nodes/{id}/children` を送らない（追加しない） | 1 回だけ送り、応答が 200、確定した文字の要因ができた |
+| 絞り込み | 要求を 1 件も送らない | （Enter は不要）件数の表示が、確定した文字を名前か説明に含む要因の数「一致 N件（全M件）」と一致し、作業リストの表示がその要因だけ。一致する要因がない文字では NG（「障害」で確かめる） |
+
+- 確定の Enter での送信は、`compositionend` の前・同時・後のどれでも NG です（「変換を確定した Enter で送信された」）。次の Enter で送信がない、2 回以上送る、応答が成功でない、保存された値が違う、確定した文字に日本語がない、のどれでも NG で、`result.md` の「詳細」に「確定の Enter：送信なし／次の Enter：送信 N 回・応答 S／保存：…」と分けて書きます。
+- 道具が確かめないこと：画面の表示の変化（保存済みの表示など。E2E で確認）、変換候補の窓の位置・見た目、IME の種類（Microsoft IME かどうかは利用者の記録）、確定の後に `compositionend` が出ない IME の動き（その場合は時間切れの NG）。
+- 判定は道具が行い、`result.md` の「操作」欄に「利用者（IME）＋自動」と書きます。時間内に IME の変換を検出できなかった場合は NG（IME を使っていない可能性）になります。その場合は、IME がオンになっていたかを確かめて、もう一度実行してください。
+- 開発環境では、この判定の仕組みを、ページの中で合成したイベント（`compositionstart`・`compositionend`・`isComposing` の Enter）で試験しています（`tests/e2e/test_display_check.py`：確定の Enter で送らず次の Enter で保存すると OK、確定の Enter で送ると変換の確定の前・同時・後のどれでも NG、次の Enter で送らないと NG、送ったが保存に失敗（500）すると NG、絞り込みが反映されないと NG、絞り込みの間に要求を送ると NG）。**これは確認ツールの判定ロジックの検査で、Windows の Microsoft IME での確認ではありません。** Microsoft IME での確認は、この節の利用者の実行だけです。
+
+## 6. 自動化できない最小の手動確認
+
+### 6.1 スクリーンリーダー（NVDA と Edge。計画 第5.7節の優先度「推奨」）
+
+E-K03 は読み上げ領域（`role="status"`・`role="alert"`）に文が書かれることを DOM で確かめています。**実際に読み上げられるかは、ここでだけ確認します。** 行わない場合は「未実施」と記録します。
+
+準備：第5.1節の道具の代わりに、[manual-check-pr6.md](manual-check-pr6.md) 第5.1節の E2E 用スタブサーバー（20秒の遅延）を新しいフォルダで起動し、Edge の通常のウィンドウで開きます。NVDA を起動します。
+
+1回の操作で次をまとめて確かめます（約10分）：
+
+1. 編集画面で、評価の切替（Yes/No/未）に Tab で移り、読み上げ（「Yes 切り替えボタン 押されていません」など）を聞く。Space で切り替えて「押されています」になる。
+2. 表示タブ（作業・ツリー・一覧表）を左右キーで移り、「タブ 3 の 2」などが読まれる。
+3. 二次要因の生成を Enter で開始し、「…を開始しました」「親「…」：作成 N件」「…件作成しました」が読まれる（生成中に別の操作はしない）。
+4. インスペクタのメモを変えて別の要因を Enter で選び、ダイアログの題名と「編集を続ける」が読まれる。Esc で閉じ、元のボタンに戻ったことが読まれる。
+5. （ネットワークを切る必要はありません）保存の失敗は再現が難しいため、通知の読み上げは 3 の結果で代表させます。
+
+### 6.2 目視（読みやすさ）
+
+次の画像を見て、文字が読めること・欠けや重なりがないこと・不自然な配置がないことを確かめます（判定の主体は自動確認。ここは補完）。
+
+- 第5節の道具の `screens`（実際の拡大・表示倍率。最優先）。`…--通知の表示中のフォーカス.png`（通知3件以上が出ている間の作業エリアの高さとフォーカスの枠）を含みます。
+- 第3.2節の Full の `screens`（寸法を指定した確認。BIZ UDPGothic を除いた代替フォント（E-F01）の画面を含む）。画面の名前「部分失敗の生成ログ（終了の直後。通知が重なる）」は修正前に付けた名前のままです。`d2eb76e` 以降では通知は作業エリアの下の行に出て、重なりません（重なって見えたら、その画面を渡してください）。
+
+BIZ UDPGothic の有無は、道具の `result.md` の「描画に使われたフォント」で分かります。BIZ UDPGothic がない PC では、E-F01 の代替フォントの結果と、その PC の画面を見ます。
+
+### 6.3 このPR の手順で行わない環境（計画 第5.7節）
+
+| 環境 | 計画の優先度 | この手順 |
+|---|---|---|
+| Windows 11・Firefox | 推奨 | 行わない（行った場合だけ記録。未実施なら未実施） |
+| macOS・Safari | 利用があれば | 行わない（同上） |
+| macOS の日本語入力 | 必須（利用があれば） | 行わない（同上） |
+
+## 7. 記録の保存場所・失敗時の調査・後片付け
+
+### 7.1 保存場所
+
+| 実行 | 記録フォルダ（`$out` の下） | 主なファイル |
+|---|---|---|
+| 準備確認・Full・FullSizes | `<SHA7>-<日時>-<chrome|msedge>-<preflight|full|fullsizes>` | `e2e-report.md`（受入の記録：環境・ブラウザの版・寸法の組・受入項目ごと・テストごと・表示領域の記録・保存した画面）、`run-info.md`、`pytest-output.log`、`screens`（PR-7 の画面）、`failures`（失敗したテストの trace.zip と画面） |
+| 表示倍率・拡大・IME | `<SHA7>-<日時>-<chrome|msedge>-os<倍率>-display` | `result.md`・`result.json`（環境・拡大ごとの実測・確認の結果・画面の一覧）、`display-output.log`、`screens`、`error.txt`（道具が異常終了したときだけ） |
+
+### 7.2 失敗したとき
+
+- `e2e-report.md` の「テストごとの結果」でエラーの文と、失敗した時刻を確かめます。
+- `failures\<テスト名>\trace.zip` は、`& "$venv\Scripts\python.exe" -m playwright show-trace <trace.zip>` で開けます（操作ごとの画面・DOM・通信）。
+- 道具の NG は `result.md` の「詳細」と、`screens` の `…-NG.png`（NG になった時点の画面）で確かめます。
+- `net::ERR_NO_BUFFER_SPACE` が出た場合は、PR-6・PR-C で原因が未特定の事象です。既知の例外にはしません。記録フォルダをそのまま渡してください（再実行の要否は利用者が判断）。
+- 試験を通すために、設定・ポリシー・時間の上限を変えないでください。
+
+### 7.3 後片付け
+
+- スクリプトと道具は、終了時にテスト用サーバーとブラウザを止め、一時 DB を消します（`run_browser_e2e.ps1` は、残っていたプロセスを記録の「残っていたプロセス」に書きます）。
+- 途中で Ctrl+C で止めた場合は、テスト用のブラウザのウィンドウが残っていれば閉じます。確認だけ：
+
+  ```powershell
+  Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match "tests.e2e.stub_server|tests.e2e.display_check" } | Select-Object ProcessId, CommandLine
+  ```
+
+  残っていれば `Stop-Process -Id <ProcessId>` で止めます（名前やポートで一括して止めないでください）。
+- 第5.2節で変えた Windows の表示倍率を元に戻します。
+- 確認が済んだら worktree を消せます：`git worktree remove $wt`（記録フォルダ `$out` は残ります）。
+
+## 8. 第8.7節の受入条件と確認の対応（受入判定の確認表）
+
+「開発環境」は Linux の Chromium（headless）での自動試験、「Windows 自動」は第3・4節、「道具」は第5節、「手動」は第6節です。状態の欄は、実施した確認の結果を利用者が記入します（未実施は未実施のまま）。
+
+| # | 受入条件（第8.7節） | 自動で確かめること | Windows で人が行うこと | Chrome | Edge |
+|---|---|---|---|---|---|
+| 1 | 1024〜1279px で構造ナビの折りたたみ、中央とインスペクタが使える。1024px 未満でも保存・取消とダイアログのボタンに横スクロールなしで届く | E-V01〜E-V03（想定寸法・実測値の寸法）、道具の各拡大 | 道具の実行中に拡大のキーを押す | 未実施 | 未実施 |
+| 2 | 高さ 500px 前後で保存・取消、ダイアログのボタンが見える | E-V01・E-V03（全14寸法。要因を選んだ直後・入力の前・入力中・保存の成功と失敗の後・要因の切替と部分更新の後の保存・取消を、スクロールなしで判定）、道具（入力の前と入力中） | 同上 | 未実施 | 未実施 |
+| 2-2 | 想定寸法でのテストと実ブラウザ（表示倍率・拡大 100・125・150%）の結果を別々の表に記録。想定を下回る場合は利用者に示す | `e2e-report.md` の「表示領域の記録」（寸法の指定）、道具の `result.md`（実際の拡大）。想定を下回る組み合わせの記録 | 第5.2節の表示倍率の変更、想定を下回る場合の判断 | 未実施 | 未実施 |
+| 3 | キーボードだけで代表シナリオ、ダイアログのフォーカス、Esc と戻り先 | E-K01・E-K02。通知の表示中の Tab・Shift+Tab・矢印で、移った先とフォーカスの枠が見えて覆われない（`test_pr7_focus.py`、7寸法）、道具も同じ | なし（NVDA は第6.1節で任意） | 未実施 | 未実施 |
+| 4 | 主要な操作の要素が他の要素（通知を含む）に隠れない | E-V01（中心と4点の最前面。通知に覆われていればスクロールの有無にかかわらず失敗）、通知の後のフォーカス（E-K01）、道具。記録は `e2e-report.md`・`result.md` の「主要な操作への到達」 | 第6.2節の目視（通知が多いときの作業エリアの高さ） | 未実施 | 未実施 |
+| 5 | BIZ UDPGothic がない環境で見出し・ボタンが欠けない・重ならない | E-F01（代替フォント3種）、道具が描画のフォントを記録 | 第6.2節の目視 | 未実施 | 未実施 |
+| 6 | 旧 CSS・JS を削除し、全画面で参照切れがない | 通常の pytest（T-01・H-08・テンプレートの検査）、E-X01、全 E2E のコンソールの検査 | なし | 未実施 | 未実施 |
+| 7 | PR-3 のレビューで見送った未使用コードの整理 | コードの差分（レビュー） | なし | — | — |
+| 8 | favicon と既知の例外の廃止 | E-X01（favicon の取得）、`test_console_check.py`、全 E2E（例外なし） | なし | 未実施 | 未実施 |
+| — | 読み上げ（E-K03 の DOM の確認とは別） | E-K03 は DOM | 第6.1節（NVDA・Edge、推奨） | — | 未実施 |
+| — | 日本語入力（Microsoft IME、必須） | 道具が判定 | 第5.3節の入力 | 未実施 | 未実施 |
+| — | 全テストを PR-7 の全寸法で（計画 第8.7節） | 開発環境で FullSizes を実施（PR 本文） | 今回は行わない（第3.3節） | 未実施 | 未実施 |
+
+### 8.1 条件2・条件4の修正（2026-10-29 の利用者の判断）
+
+`a572c39` の時点で、通知が出ている間に作業エリアの下の方の操作（生成ログの見出し・閉じる、操作バーの生成）が通知に覆われること、1093×500 で入力の前の保存・取消がインスペクタのスクロールなしでは見えないことが分かりました。2026-10-29 に利用者が、どちらも「アプリを直す」と判断しました（「スクロールすれば届く」「入力中だけ見える」とは読み替えない）。修正後の候補で次のようになっています（詳細は計画書 第14.8節の「条件2・条件4の修正」）。
+
+- **通知**：画面に重ねず、専用の場所に出ます。編集画面では作業エリアのすぐ下、一覧・新規作成では本文の下です。通知が出ている間は、その分だけ作業エリア（本文）が低くなります。表示時間（成功・お知らせ 3 秒、注意 6 秒、エラーは閉じるまで）は変わりません。
+- **保存・取消**：インスペクタの下端（スクロールする部分の外）に、要因を選んだ時点から出ます。入力欄や保存の失敗の理由を覆いません。
+- **キーボード**：Tab・矢印で移った先は、フォーカスの枠ごと見える位置に合わせます。通知が増えて作業エリアが低くなっても、フォーカスのある操作は見えたままです（フォーカス・入力・選択は動きません）。
+
+Windows では、自動の判定（Full と道具）に加えて、第6.2節の目視で、**通知（特に閉じるまで残るエラー）が多いときに作業エリアが狭くなりすぎないか**を見てください（高さ 500px 前後で通知が上限まで出ていて生成中の状態表示もあると、作業エリアの見えている高さは約 50px まで低くなります）。重なりの自動検査（E-V01・E-K01）は成功しているが、**Windows 実機での読みやすさ・操作感は未確認**（自動試験の成功だけでは、この使いやすさを合格としない）。新しい手動の操作は加えず、道具の `screens` の画面（`…--通知の表示中のフォーカス.png` など）を見て判断します。
+
+## 9. 結果の受け渡し（Claude Code へ）
+
+次をまとめて渡してください（フォルダごと zip にするか、`e2e-report.md`・`result.md` の本文を貼り付け）。
+
+1. 確認した SHA（40桁）と、`git -C $wt status --short` が空だったこと。ブランチの先頭と違った場合は、第1節の `git diff --name-only` の出力。
+2. 第3.0節の手順0の記録フォルダ（`<SHA7桁>-<日時>-launcher`：`probe\probe-result.md`・`probe\probe-result.json`・`e2e-report.md`・`pytest-output.log`・`exit-code.txt`）。手順1の記録フォルダ（`<SHA7桁>-<日時>-cleanup`：`e2e-report-*.md`、`pytest-output-*.log`、`exit-code.txt`）と、最初の `python -c` の3行。手順2の Chrome・Edge の記録フォルダ（`<SHA7桁>-<日時>-<chrome|msedge>-individual`：`e2e-report.md`、`pytest-output.log`、`exit-code.txt`、失敗があれば `failures`）。
+3. Chrome・Edge の準備確認と Full の記録フォルダ（FullSizes は今回は行わない）：`e2e-report.md`、`run-info.md`、`pytest-output.log`、失敗があれば `failures`。
+4. 道具の記録フォルダ（表示倍率ごと・ブラウザごと）：`result.md`、`result.json`、`display-output.log`、`screens`。実行したときの Windows の表示倍率の設定の値（`-OsScale` に入れた値）。
+5. 第6.1節（NVDA）を行った場合は、項目ごとの結果（読まれた文）と NVDA・Edge の版。行わなかった場合は「未実施」。
+6. 第6.2節の目視の結果（気になった画面のファイル名と内容）。
+7. 第8節の確認表の記入。
+
+渡された記録から、計画書の第14.8節（PR-7 の確認結果）を更新します。受入の判断（合格・条件付き・不合格）は利用者が行います。
+
+## 10. PR-C との関係
+
+- PR-7 は静的ファイルの内容と構成（`style.css` の削除、`js/pages/edit/nav-drawer.js` と `favicon.svg` の追加）を変えます。PR-C のキャッシュ制御（`Cache-Control: no-cache`、内容の ETag、`If-None-Match` の優先）はそのままで、favicon も同じ扱いで配信されます（H-01・H-02・E-X01）。
+- 自動 E2E と道具は一時プロフィールで動くため、普段のプロフィールのキャッシュは関係しません。**普段のサーバーとプロフィールで PR-7 の版を使い始めるときは、PR-C の導入時の手順（3画面の Ctrl+F5、[manual-check-pr-c.md](manual-check-pr-c.md)）が引き続き必要です。**
+- PR-C の条件付き受入で残ったリスク（旧方式のキャッシュからの実キー移行の一部未確認、`ERR_NO_BUFFER_SPACE` の原因未特定など）は、この確認が通っても解消したとは扱いません。

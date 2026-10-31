@@ -117,7 +117,7 @@ function actionButton(app, label, attrs, { blocked = '', generate = false, varia
   }, label);
 }
 
-function childList(app, parent, items) {
+function childList(items) {
   if (!items.length) return el('p', { class: 'edit-inspector__status' }, '子要因はありません。');
   return el('ul', { class: 'edit-children' }, items.map((child) => el('li', {},
     chip(child),
@@ -139,7 +139,7 @@ function topContent(app) {
       el('button', { type: 'button', class: 'ui-btn ui-btn--sm', 'data-action': 'step', 'data-step': '1' },
         '「① 頂上事象・参考情報」を開く')),
     section(`一次要因（${roots.length}件）`, [
-      childList(app, null, roots),
+      childList(roots),
       el('div', { class: 'edit-inspector__actions' },
         roots.length
           ? actionButton(app, '一次要因を追加生成', { 'data-action': 'generate-additional', 'data-level': '1' }, { generate: true })
@@ -176,7 +176,7 @@ function detailsSection(current) {
 // ancestor (J-25, 判断3).
 function childrenSection(app, node) {
   const items = childrenOf(app.model, node);
-  const content = [childList(app, node, items)];
+  const content = [childList(items)];
   if (node.level === 1 || node.level === 2) {
     const reason = node.canParent ? '' : node.parentReason;
     const describedBy = reason ? 'inspector-children-reason' : null;
@@ -305,6 +305,25 @@ export function currentFactorSource() {
   return current ? current.source : null;
 }
 
+// The editor's 保存・取消 bar is at the bottom of the pane, outside its
+// scroll area (css/edit.css, PR-7): the scroll area ends above it, by the
+// bar's height (it grows with the reason of a failed save).
+let barObserver = null;
+
+function watchBar(current) {
+  const pane = document.getElementById('edit-inspector');
+  if (barObserver) barObserver.disconnect();
+  barObserver = null;
+  if (!pane) return;
+  const bar = current && current.element.isConnected ? current.element.querySelector('.edit-editor__bar') : null;
+  const update = () => pane.style.setProperty('--edit-editor-bar-height', `${bar && bar.isConnected ? bar.offsetHeight : 0}px`);
+  update();
+  if (bar && typeof ResizeObserver !== 'undefined') {
+    barObserver = new ResizeObserver(update);
+    barObserver.observe(bar);
+  }
+}
+
 function closeEditor() {
   if (editor) editor.close();
   editor = null;
@@ -333,7 +352,7 @@ function onLoaded(app, current, focusWarning) {
   }
 }
 
-export function renderInspector(app, { focusWarning = false, focusTitle = false } = {}) {
+export function renderInspector(app, { focusWarning = false } = {}) {
   const root = body();
   if (!root) return;
   const captured = captureFocus();
@@ -350,6 +369,7 @@ export function renderInspector(app, { focusWarning = false, focusTitle = false 
     } else if (!node) {
       closeEditor();
       root.replaceChildren(el('p', { class: 'edit-inspector__status' }, '要因が選ばれていません。'));
+      watchBar(null);
       return;
     } else if (same) {
       root.replaceChildren(...nodeContent(app, node, editor));
@@ -382,6 +402,7 @@ export function renderInspector(app, { focusWarning = false, focusTitle = false 
       if (focusWarning) focusWarningSection();
     }
   }
+  watchBar(editor);
   restoreCaptured(captured);
   applyRestrictions(app);
   if (app.gone) {
@@ -391,10 +412,6 @@ export function renderInspector(app, { focusWarning = false, focusTitle = false 
         button.disabled = true;
       });
     if (editor) editor.render();
-  }
-  if (focusTitle) {
-    const title = root.querySelector('[data-inspector-title]');
-    if (title) title.focus({ preventScroll: false });
   }
 }
 

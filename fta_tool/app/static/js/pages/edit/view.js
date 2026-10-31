@@ -3,7 +3,7 @@
 // table and the inspector carry data-node-id, and one function per concern
 // updates all of them — selection, work step, view tab, judgement, counts.
 
-import { generationTargets, getNode, judgementLabel, stepCounts, SUMMARY_COLUMNS, summaryCounts } from './model.js';
+import { generationTargets, judgementLabel, stepCounts, SUMMARY_COLUMNS, summaryCounts } from './model.js';
 
 const ITEM_SELECTOR = '[data-role$="-item"]';
 const TARGET_NAMES_SHOWN = 5;
@@ -156,9 +156,4 @@ export function revealSelection(app, source) {
     if (element.offsetParent === null) continue;
     element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
-}
-
-export function nodeTitle(app, id) {
-  const node = getNode(app.model, id);
-  return node ? node.title : null;
 }

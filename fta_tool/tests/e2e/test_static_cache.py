@@ -25,6 +25,12 @@ Conditions of a valid cache test (plan 6.2), kept by every scenario here:
   version itself. Changed files: the old ETag sent, 200, the new body, the
   new marker in use. Unchanged files: 304. The HTML request reached the
   server (C-03).
+
+The screens' icon (favicon.svg, PR-7) is asked for by the browser on its
+own, apart from the stylesheets and modules: an Observation keeps its
+requests apart (icon), so the files of each screen are judged as before
+(34 / 14 / 13, 38 together), and test_C_01_the_icon_is_revalidated_…
+judges the icon by the same rules (200 / 304, no-cache, the content's ETag).
 """
 
 from __future__ import annotations
@@ -52,7 +58,7 @@ from tests.e2e.edit_helpers import (
     step_button,
     toast,
 )
-from tests.e2e.static_assets import ALL_ASSETS, screen_assets, without_disabled_rule
+from tests.e2e.static_assets import ALL_ASSETS, ICON_FILES, screen_assets, without_disabled_rule
 from tests.e2e.support import expect, free_port, start_server
 
 pytestmark = [pytest.mark.e2e]
@@ -239,9 +245,14 @@ class Observation:
         self.entries = cache.browser_entries(since)
         self.html = [e for e in self.entries if e["path"] == path and e["method"] == "GET"]
         self.static = {}
+        self.icon = []  # the browser's own requests for the screens' icon (PR-7)
         for entry in self.entries:
             if entry["path"].startswith("/static/") and entry["method"] == "GET":
-                self.static.setdefault(entry["path"][len("/static/"):], []).append(entry)
+                rel = entry["path"][len("/static/"):]
+                if rel in ICON_FILES:
+                    self.icon.append(entry)
+                else:
+                    self.static.setdefault(rel, []).append(entry)
         self.css = page.evaluate(READ_CSS, sorted({css_marker_name(r) for r in cache.versions if r.endswith(".css")}))
         self.js = page.evaluate(READ_JS)
 
@@ -417,7 +428,7 @@ FORBIDDEN_TEXT = ("setCacheDisabled", "ignoreCache", "import(", "fetch(", "Netwo
 TEXT_ALLOWED_IN = {"ignoreCache": "forced_reload"}
 ALLOWED_HELPERS = {"expect_editor_ready", "factor_field", "generate_button", "item", "judgement_button",
                    "select_button", "step_button", "toast", "expect", "free_port", "start_server",
-                   "ALL_ASSETS", "screen_assets", "without_disabled_rule"}
+                   "ALL_ASSETS", "ICON_FILES", "screen_assets", "without_disabled_rule"}
 
 
 def _docstrings(tree: ast.Module) -> set[int]:
@@ -465,6 +476,40 @@ def test_C_00_the_cache_tests_keep_their_conditions():
 
 
 # ----- C-01 / C-03 ---------------------------------------------------------------
+
+@SINGLE
+@pytest.mark.acceptance("C-01")
+def test_C_01_the_icon_is_revalidated_as_the_other_static_files(page, e2e_server, record_property):
+    """PR-7: the icon every screen declares is a static file like the
+    others. Whenever the browser asks for it (on its own: when, and whether
+    again on a revisit, is the browser's choice), the answer is 200 with
+    the file's body or 304 for the ETag it sent, always with no-cache and
+    the content's ETag; the server answers the same to a client."""
+    cache = e2e_server
+    analysis_id, _, _ = make_analysis(cache)
+    since = cache.mark()
+    for screen in ("list", "new", "edit"):
+        page.goto(screen_path(screen, analysis_id))
+        wait_screen(page, screen)
+    go(page, cache, "link", "list", analysis_id)
+    go(page, cache, "reload", "list", analysis_id)
+    icon = Observation(cache, page, since, "/", []).icon
+    body = cache.current(ICON_FILES[0])
+    etag = content_etag(body)
+    for entry in icon:
+        assert entry["status"] in (200, 304), entry
+        assert entry["response"].get("cache-control") == "no-cache", entry
+        assert entry["response"].get("etag") == etag, entry
+        if entry["status"] == 200:
+            assert entry["body_sha256"] == sha256(body), entry
+        else:
+            assert entry["request"].get("if-none-match") == etag, entry
+    record_property("fta_note", f"ブラウザ自身の favicon の要求 {len(icon)} 件（"
+                    + "・".join(str(e["status"]) for e in icon) + "）" if icon else "ブラウザは favicon を要求しなかった")
+    first = cache.server.http.get(f"/static/{ICON_FILES[0]}")
+    again = cache.server.http.get(f"/static/{ICON_FILES[0]}", headers={"If-None-Match": first.headers["etag"]})
+    assert first.status_code == 200 and first.headers["cache-control"] == "no-cache" and first.headers["etag"] == etag
+    assert again.status_code == 304 and again.headers["cache-control"] == "no-cache"
 
 @SINGLE
 @pytest.mark.parametrize("screen", ["edit", "list", "new"])

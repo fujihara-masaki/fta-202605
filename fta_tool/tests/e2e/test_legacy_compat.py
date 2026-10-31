@@ -42,19 +42,20 @@ import pytest
 from tests.e2e.edit_helpers import (
     add_dialog,
     add_factor,
-    choose,
     chip,
+    choose,
     delete_dialog,
     delete_factor,
+    edit_title,
+    expect_selected,
     factor_field,
     factor_message,
     factor_save,
-    edit_title,
-    expect_selected,
     inspector,
     inspector_title,
     item,
     judgement_button,
+    nav_button,
     open_edit,
     save_button,
     select_button,
@@ -179,7 +180,7 @@ def test_details_manual_add_additional_generation_delete_and_export(page, e2e_se
     assert (call["target_level"], call["parent_factor"], call["additional"]) == (2, "一次要因B", True)
 
     # Delete C from the inspector (the in-page dialog, no confirm()): its parent is selected.
-    select_button(page, "nav", c).click()
+    nav_button(page, c).click()
     dialogs = record_dialogs(page, action="accept")
     delete_factor(page)
     expect(inspector_title(page)).to_have_text("一次要因A")
@@ -239,11 +240,18 @@ def expect_dialog_uncovered(page, dialog) -> None:
 
 
 def expect_normal_place(page) -> None:
-    """Bottom centre, where the notifications are when no dialog is open."""
+    """Where the notifications are when no dialog is open: since PR-7's fix
+    of 2026-10-29 in a row of their own at the bottom, below the work area
+    only (its width, never over the inspector or the structure navigation;
+    css/edit.css), and nothing of the page under them."""
     box = page.locator("#ui-toasts").bounding_box()
+    work = page.locator("#edit-work-area").bounding_box()
+    inspector = page.locator("#edit-inspector").bounding_box()
     size = page.viewport_size
-    assert abs(box["x"] + box["width"] / 2 - size["width"] / 2) <= 2, box
-    assert 0 <= size["height"] - (box["y"] + box["height"]) <= 48, box
+    assert abs(box["x"] - work["x"]) <= 1 and abs(box["width"] - work["width"]) <= 1, (box, work)
+    assert box["x"] + box["width"] <= inspector["x"] + 1, (box, inspector)
+    assert abs(box["y"] - (work["y"] + work["height"])) <= 1, (box, work)  # right below the work area
+    assert abs(size["height"] - (box["y"] + box["height"])) <= 1, box
 
 
 @pytest.mark.acceptance("PR3-LEGACY-NOTIFY")

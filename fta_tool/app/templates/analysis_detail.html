@@ -15,10 +15,15 @@
     work area (data-gen-status: preparing / running / finishing, with
     生成を取りやめる while preparing), the generation log and the
     restrictions of a generation; the legacy app.js and the overlay of the
-    一次 generation are gone. style.css is still loaded; its unused rules
-    are removed in PR-7. -#}
-{% block screen_styles %}<link rel="stylesheet" href="/static/css/edit.css"><link rel="stylesheet" href="/static/style.css">{% endblock %}
+    一次 generation are gone. PR-7: the widths and heights of J-20 (the
+    structure navigation folded below 1280px, shown by 「構造を表示」:
+    js/pages/edit/nav-drawer.js; css/edit.css), the notifications in a row
+    of their own below the work area and the inspector's 保存・取消 at its
+    bottom outside its scroll area (plan 8.7 conditions 2 and 4), and the
+    legacy style.css removed. -#}
+{% block screen_styles %}<link rel="stylesheet" href="/static/css/edit.css">{% endblock %}
 {% block body_class %}ui-page edit-body{% endblock %}
+{% block toast_stack %}{% endblock %}
 {% block skip_links %}
   <a class="skip-link" href="#edit-work-area">作業リストへ</a>
   <a class="skip-link" href="#edit-inspector">インスペクタへ</a>
@@ -68,6 +73,9 @@
         </section>
       </div>
     </section>
+
+    {#- The notifications, below the work area (css/edit.css; PR-7). -#}
+    <div id="ui-toasts" class="ui-toast-stack"></div>
 
     {% include "edit/_inspector.html" %}
   </div>

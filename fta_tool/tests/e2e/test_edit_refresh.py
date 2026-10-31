@@ -46,18 +46,20 @@ import pytest
 from tests.e2e.edit_helpers import (
     add_dialog,
     add_factor,
-    choose,
     chip,
+    choose,
     delete_dialog,
     delete_factor,
     editor,
+    expect_selected,
     factor_field,
     factor_save,
-    expect_selected,
     inspector,
     inspector_title,
     item,
     judgement_button,
+    nav_button,
+    nav_folded,
     open_edit,
     select_button,
     step_button,
@@ -174,8 +176,11 @@ def test_E_E07_detail_save_keeps_focus_scroll_and_typed_input(page, e2e_server):
     page.fill("#topEventInput", "入力中の頂上事象（未保存）")
     step_button(page, 2).click()
     center = set_scroll_top(page, "center", 600)
-    navigation = set_scroll_top(page, "nav", 200)
-    assert center > 0 and navigation > 0
+    # Below 1280px the navigation is folded (PR-7): hidden, it has no scroll
+    # position to keep, and the one it had is not shown.
+    folded = nav_folded(page)
+    navigation = 0 if folded else set_scroll_top(page, "nav", 200)
+    assert center > 0 and (folded or navigation > 0)
     mark_page(page)
     fetches = page_fetches(page, analysis_id)
 
@@ -192,7 +197,7 @@ def test_E_E07_detail_save_keeps_focus_scroll_and_typed_input(page, e2e_server):
     expect_selected(page, target, "一次要因21（改名）")
     expect(edit).to_be_focused()  # the editor was put back with the focus on 保存
     assert same_page(page)
-    assert (scroll_top(page, "center"), scroll_top(page, "nav")) == (center, navigation)
+    assert (scroll_top(page, "center"), 0 if folded else scroll_top(page, "nav")) == (center, navigation)
     expect(page.locator("#topEventInput")).to_have_value("入力中の頂上事象（未保存）")
     expect(page.locator("#topEventInput")).to_have_attribute("data-saved", "決済が失敗する")
     expect(page).to_have_url(re.compile(rf"#sel={target}&step=2&view=work$"))
@@ -254,7 +259,7 @@ def test_E_E07_factor_removed_elsewhere_moves_selection_and_focus_up(page, e2e_s
     b = e2e_server.add_child(a, "二次要因B")
     c = e2e_server.add_child(b, "三次要因C")
     open_edit(page, analysis_id, f"#sel={c}&step=4&view=table")
-    select_button(page, "nav", c).focus()
+    nav_button(page, c).focus()
     mark_page(page)
 
     # Another tab deletes B (and C with it); then this page is updated.
@@ -296,7 +301,7 @@ def test_E_E07_analysis_deleted_elsewhere_stops_the_operations(page, e2e_server,
     expect(page.locator("[data-title-edit]")).to_be_disabled()  # the header title (PR-4)
 
     # Selecting still works; what it shows cannot be changed.
-    select_button(page, "nav", b).click()
+    nav_button(page, b).click()
     expect(inspector_title(page)).to_have_text("一次要因B")
     expect(judgement_button(inspector(page), b, "yes")).to_be_disabled()
     expect(factor_save(page)).to_be_disabled()
@@ -463,7 +468,7 @@ def test_E_E07_a_factor_added_before_a_generation_leaves_a_newer_selection(page,
     first_fetch[0].continue_()
     page.wait_for_timeout(300)
     # … and another factor is chosen before it ends.
-    select_button(page, "nav", b).click()
+    nav_button(page, b).click()
     expect_selected(page, b, "一次要因B")
 
     held[0].continue_()  # C is generated; the generation ends, one update

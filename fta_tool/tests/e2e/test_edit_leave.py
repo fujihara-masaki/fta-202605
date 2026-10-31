@@ -34,10 +34,10 @@ import pytest
 from tests.e2e.edit_helpers import (
     leave_dialog,
     leave_link,
+    nav_button,
     open_edit,
     post_paths,
     save_status,
-    select_button,
     step_button,
     step_panel,
     toast,
@@ -313,7 +313,7 @@ def test_E_E20_order_and_the_target_fixed_when_editing_started(page, e2e_server)
     assert target == {"analysisId": analysis_id, "nodeId": a}
     # Another factor is selected and the caller's object is changed: the
     # coordinator keeps the target of when editing started.
-    select_button(page, "nav", b).click()
+    nav_button(page, b).click()
     page.evaluate(f"() => {{ window.__e2eFactorTarget.nodeId = {b}; }}")
     step_button(page, 1).click()
     page.fill("#systemContextInput", "順番の確認の構成")

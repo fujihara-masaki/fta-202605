@@ -25,7 +25,7 @@ import pytest
 
 from tests.e2e import acceptance
 from tests.e2e.edit_helpers import leave_dialog, leave_link, open_edit, save_button, step_button, step_panel
-from tests.e2e.support import expect
+from tests.e2e.support import expect, page_scroll_width
 from tests.e2e.test_edit_page import LAYOUT_CASES, check_layout, covered, display_area
 
 pytestmark = [pytest.mark.e2e, pytest.mark.acceptance("PR4-LAYOUT")]
@@ -51,7 +51,7 @@ def check_reachable(page, width: int, height: int, controls: list) -> None:
         assert not covered_when_scrolled_to(page, control), control
         box = control.bounding_box()
         assert box["x"] >= 0 and box["x"] + box["width"] <= width + 1, box
-    assert page.evaluate("() => document.documentElement.scrollWidth") <= width
+    assert page_scroll_width(page) <= width
 
 
 def readable(page, locator, minimum: float = 12) -> None:
@@ -138,5 +138,5 @@ def test_PR4_new_controls_are_visible_and_not_covered(page, e2e_server, viewport
         inside(page, dialog.get_by_role("button", name=name), width, height)
     expect(dialog.locator("[data-partial-note]")).to_be_visible()
     readable(page, dialog.locator("[data-save-results] li").first)
-    assert page.evaluate("() => document.documentElement.scrollWidth") <= width
+    assert page_scroll_width(page) <= width
     assert e2e_server.get_node(a)["title"] == "一次要因A"

@@ -1,8 +1,8 @@
 /* ===== Base: shared chrome for every screen =====
  * Loaded on all screens. Rules for the shared chrome (skip link, header) use
- * their own class names and set their font explicitly, so the screens that
- * have not been migrated yet (still styled by style.css) keep their look.
- * Element-level resets apply only to migrated screens (body.ui-page).
+ * their own class names and set their font explicitly. Element-level resets
+ * apply to the redesigned screens (body.ui-page: every screen since PR-6;
+ * the legacy style.css was removed in PR-7).
  */
 
 .visually-hidden {
@@ -36,10 +36,34 @@
 .skip-link:focus {
   transform: translateY(0);
   outline: 3px solid var(--color-focus);
-  outline-offset: 2px;
+  /* Inside the link: it is at the top edge of the display area, where an
+     outline outside it would be cut (PR-7). */
+  outline-offset: -4px;
 }
 #main:focus {
   outline: none;
+}
+
+/* ----- Screen shell (PR-7, plan 8.7 condition 4) -----
+ * The header, the main area (it scrolls, not the page) and, below it, the
+ * notifications (#ui-toasts, components.css). The notifications take their
+ * own room, so they never cover the screen; the main area is as much lower
+ * while they are shown. The edit screen keeps its own panes and puts the
+ * notifications below its work area (edit.css). */
+body.ui-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+body.ui-page > .app-header {
+  flex: none;
+}
+body.ui-page > .site-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  scroll-padding-block: var(--space-2);
 }
 
 /* ----- Header ----- */
