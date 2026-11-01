@@ -12,14 +12,22 @@
                  何も入れない。ブラウザの導入（playwright install）はしない。
       Preflight  準備確認。編集画面を開く少数の既存テストだけを実行する
                  （pytest --e2e-preflight）。全必須 E2E の合格ではない。
-      Full       全必須 E2E（pytest -m e2e --e2e-required）。
+      Full       全必須 E2E（pytest -m e2e --e2e-required）。寸法を自分で選ばない
+                 テストは基本寸法（1280×800・1440×900）、PR-7 の表示のテスト
+                 （E-V01〜E-V03・E-F01 など）は自分の寸法で実行する。
+      FullSizes  Full と同じ全必須 E2E を、寸法を自分で選ばないテストも PR-7 の
+                 すべての寸法（想定寸法と 2026-10-28 の実測値、--e2e-viewport-set
+                 pr7）で実行する（計画 第8.7節）。所要は Full の数倍。
       Diagnose   最初の読み込みの診断（tests/e2e/diagnose_navigation.py）。
                  新しい一時サーバーの同じ URL を、Python（httpx）からの GET、
                  ブラウザ（最小の構成とテストの構成）、Playwright を使わない
                  起動で開き、どこまで進むか・サーバーに届いたかを記録する。
                  合否は判定しない（テストの構成を外した実行は受入ではない）。
 
-    Preflight・Full・Diagnose は、実行のたびに -OutRoot の下へ新しい記録
+    Preflight・Full・FullSizes では、PR-7 の表示のテストが目視のレビュー用の
+    画面を記録フォルダの screens に保存します（--e2e-screens。判定には含めない）。
+
+    Preflight・Full・FullSizes・Diagnose は、実行のたびに -OutRoot の下へ新しい記録
     フォルダを作り、既存の記録には書きません。テスト用サーバーと DB は
     記録フォルダの中の一時領域（pytest-tmp、Diagnose では diagnose\server）に
     作ります。普段の DB、手動確認の DB、ポート 8000〜8002 は使いません。
@@ -31,7 +39,7 @@
     Playwright 同梱の Chromium には切り替えません。
 
 .PARAMETER Mode
-    Setup / Preflight / Full / Diagnose。
+    Setup / Preflight / Full / FullSizes / Diagnose。
 
 .PARAMETER Venv
     自動確認専用の venv のフォルダ。コードのフォルダの外で、通常の .venv とは
@@ -46,7 +54,7 @@
     fta_tool。
 
 .PARAMETER OutRoot
-    記録フォルダを作る場所（Preflight・Full・Diagnose で必須。コードのフォルダの外）。
+    記録フォルダを作る場所（Preflight・Full・FullSizes・Diagnose で必須。コードのフォルダの外）。
 
 .PARAMETER Channel
     chrome（既定）または msedge。
@@ -90,7 +98,7 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][ValidateSet("Setup", "Preflight", "Full", "Diagnose")][string]$Mode,
+    [Parameter(Mandatory = $true)][ValidateSet("Setup", "Preflight", "Full", "FullSizes", "Diagnose")][string]$Mode,
     [Parameter(Mandatory = $true)][string]$Venv,
     [string]$BasePython = "",
     [string]$Source = "",
@@ -444,8 +452,13 @@ function Invoke-Run([hashtable]$S) {
             Errors = Join-Path $runDir "pytest-stderr.log"
             Temp = Join-Path $runDir "pytest-tmp"
             Evidence = Join-Path $runDir "failures"
+            Screens = Join-Path $runDir "screens"
         }
-        $kind = if ($Mode -eq "Full") { "全必須 E2E（--e2e-required）" } else { "準備確認（--e2e-preflight。全必須 E2E の合格ではありません）" }
+        $kind = switch ($Mode) {
+            "Full" { "全必須 E2E（--e2e-required）" }
+            "FullSizes" { "全必須 E2E を PR-7 のすべての寸法で（--e2e-required --e2e-viewport-set pr7）" }
+            default { "準備確認（--e2e-preflight。全必須 E2E の合格ではありません）" }
+        }
     }
     # Where it runs: the user's environment or the development one, with the actual OS.
     $envKind = if ($Environment) { $Environment } elseif ($OnWindows) { "User" } else { "Dev" }
@@ -457,10 +470,11 @@ function Invoke-Run([hashtable]$S) {
         $runArgs = @($diagnoseScript, "--out", $paths.Diagnose, "--channel", $Channel, "--env-label", $label)
     } else {
         $runArgs = @("-m", "pytest", (Join-Path $S.Source "tests"), "-m", "e2e")
-        $runArgs += $(if ($Mode -eq "Full") { "--e2e-required" } else { "--e2e-preflight" })
+        $runArgs += $(if ($Mode -eq "Preflight") { "--e2e-preflight" } else { "--e2e-required" })
+        if ($Mode -eq "FullSizes") { $runArgs += @("--e2e-viewport-set", "pr7") }
         $runArgs += @("--browser", "chromium", "--browser-channel", $Channel, "--headed",
             "--e2e-env", $label, "--e2e-report", $paths.Report,
-            "--basetemp", $paths.Temp, "--output", $paths.Evidence,
+            "--basetemp", $paths.Temp, "--output", $paths.Evidence, "--e2e-screens", $paths.Screens,
             "--screenshot", "only-on-failure", "--tracing", "retain-on-failure",
             "-p", "no:cacheprovider", "-v", "-rfE")
         if ($SlowMo -gt 0) { $runArgs += @("--slowmo", "$SlowMo") }
@@ -566,8 +580,9 @@ function Invoke-Run([hashtable]$S) {
             $info["終了コード（pytest）"] = $(if ($null -ne $exitCode) { "$exitCode" } else { "-" })
             $info["判定（e2e-report.md）"] = $(if ($verdict) { $verdict } else { "（e2e-report.md がありません）" })
             $info["結果（テスト単位）"] = $(Get-ReportValue $paths.Report "結果（テスト単位）")
-            $knownText = Get-ReportValue $paths.Report "既知の例外（favicon の 404）"
-            $info["既知の例外（favicon の 404）"] = $(if ($knownText -and $knownText -match '^(\d+) 件') { "{0} 件（e2e-report.md の「既知の例外として除いたコンソールのエラー」）" -f $Matches[1] } else { $knownText })
+            # PR-7 removed the known favicon 404: the report says there is no exception.
+            $info["コンソールのエラーの例外"] = $(Get-ReportValue $paths.Report "コンソールのエラーの例外")
+            $info["寸法の組"] = $(Get-ReportValue $paths.Report "寸法の組（--e2e-viewport-set）")
         }
         $info["起動したブラウザ"] = $(Get-ReportValue $paths.Report "起動したブラウザ")
         $info["残っていたプロセス"] = Get-LeftoverText $leftovers $seen.Count
@@ -587,7 +602,8 @@ function Invoke-Run([hashtable]$S) {
     Write-Host ("  判定             : {0}" -f $verdict) -ForegroundColor $(if ($ok) { "Green" } else { "Red" })
     Write-Host ("  終了コード       : {0}" -f $exitCode)
     Write-Host ("  結果（テスト単位）: {0}" -f $info["結果（テスト単位）"])
-    Write-Host ("  既知の例外       : {0}" -f $info["既知の例外（favicon の 404）"])
+    Write-Host ("  コンソールの例外 : {0}" -f $info["コンソールのエラーの例外"])
+    Write-Host ("  寸法の組         : {0}" -f $info["寸法の組"])
     Write-Host ("  起動したブラウザ : {0}" -f $browser)
     Write-Host ("  所要時間         : {0}" -f $info["所要時間"])
     Write-Host ("  記録フォルダ     : {0}" -f $runDir)
@@ -595,6 +611,9 @@ function Invoke-Run([hashtable]$S) {
     Write-Host  "    run-info.md         この実行の条件と終了コード"
     Write-Host  "    pytest-output.log   pytest の出力（pytest-stderr.log もあわせて）"
     Write-Host  "    pytest-tmp          テスト用サーバーの一時 DB とログ（e2e-server0\server.log）"
+    if (Test-Path -LiteralPath $paths.Screens) {
+        Write-Host  "    screens             PR-7 の表示のテストが保存した目視のレビュー用の画面（png。判定には含めない）"
+    }
     if (Test-Path -LiteralPath $paths.Evidence) {
         Write-Host  "    failures            失敗したテストの trace（trace.zip）と画面（png。撮れたときだけ。実際にあるファイルと"
         Write-Host  "                        撮れなかった理由は e2e-report.md の「失敗したテストの証跡（実際にあるファイル）」）"

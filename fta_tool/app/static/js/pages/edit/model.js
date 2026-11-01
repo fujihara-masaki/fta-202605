@@ -36,8 +36,6 @@ export function createModel(raw) {
   }
   return {
     analysisId: raw.analysisId,
-    factorCounts: raw.factorCounts || {},
-    lookupsOk: raw.lookupsOk !== false,
     nodes,
     byId,
     childrenOf,

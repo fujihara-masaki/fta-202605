@@ -66,6 +66,7 @@ from tests.e2e.edit_helpers import (
     item,
     leave_dialog,
     leave_link,
+    nav_button,
     open_edit,
     select_button,
     step_button,
@@ -698,9 +699,9 @@ def test_E_E17_a_b_a_during_a_generation_keeps_the_users_choice(page, e2e_server
     page.wait_for_timeout(300)
     c = e2e_server.query("SELECT id FROM nodes WHERE title = ?", ("生成の前に追加した要因C",))[0][0]
     expect(select_button(page, "nav", c)).to_have_count(0)
-    select_button(page, "nav", b).click()
+    nav_button(page, b).click()
     expect(inspector_title(page)).to_have_text("一次要因B")
-    select_button(page, "nav", a).click()
+    nav_button(page, a).click()
     expect(inspector_title(page)).to_have_text("一次要因A")
     assert generation_phase(page) == "running"  # all of it while the update was held back
     held[0].continue_()

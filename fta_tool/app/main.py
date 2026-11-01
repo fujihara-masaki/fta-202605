@@ -170,6 +170,8 @@ app = FastAPI(title="FTA分析支援ツール", lifespan=lifespan)
 # read from the registry and may map ".js" to "text/plain"; pin the standard
 # type so static files are served the same way on every OS.
 mimetypes.add_type("text/javascript", ".js")
+# The same for the screens' icon (/static/favicon.svg, PR-7).
+mimetypes.add_type("image/svg+xml", ".svg")
 # Static files are revalidated before every use, so the CSS and every module
 # of a screen are the server's current ones after an update (PR-C,
 # app/static_files.py, docs/static-assets-cache-control-plan.md).

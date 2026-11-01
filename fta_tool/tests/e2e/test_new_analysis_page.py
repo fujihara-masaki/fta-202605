@@ -33,7 +33,7 @@ from urllib.parse import parse_qs
 
 import pytest
 
-from tests.e2e.support import PageWatcher, expect, free_port, record_dialogs, start_server
+from tests.e2e.support import PageWatcher, expect, free_port, page_scroll_width, record_dialogs, start_server
 
 pytestmark = pytest.mark.e2e
 
@@ -126,13 +126,16 @@ def test_E_N01_two_columns_and_create(page, e2e_server):
     expect(main.get_by_role("heading", level=2)).to_have_text(["1 分析の名前と頂上事象", "2 AIへの参考情報 任意"])
     expect(aside.get_by_role("heading", level=2)).to_have_text(["入力の使われ方", "サンプルから入力 デモ用"])
     main_box, aside_box = main.bounding_box(), aside.bounding_box()
-    assert aside_box["x"] >= main_box["x"] + main_box["width"]
-    assert abs(aside_box["y"] - main_box["y"]) < 1
+    if page.viewport_size["width"] >= 960:
+        assert aside_box["x"] >= main_box["x"] + main_box["width"]
+        assert abs(aside_box["y"] - main_box["y"]) < 1
+    else:  # one column below 960px (css/new.css, PR-2): the aside below the main column
+        assert aside_box["y"] >= main_box["y"] + main_box["height"] and abs(aside_box["x"] - main_box["x"]) < 1
     actions = page.locator(".new-page__actions")
     assert actions.bounding_box()["y"] >= max(main_box["y"] + main_box["height"], aside_box["y"] + aside_box["height"])
     expect(actions.get_by_role("link")).to_have_text(["キャンセル"])
     expect(actions.get_by_role("button")).to_have_text(["作成して編集へ"])
-    assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth")
+    assert page_scroll_width(page) <= page.evaluate("document.documentElement.clientWidth")
     # Migrated: no legacy script, stylesheet or toast on this screen.
     assert page.evaluate("typeof window.showToast") == "undefined"
     expect(page.locator("#toast")).to_have_count(0)

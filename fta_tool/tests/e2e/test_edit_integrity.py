@@ -54,6 +54,7 @@ from tests.e2e.edit_helpers import (
     inspector,
     inspector_title,
     item,
+    nav_button,
     open_edit,
     select_button,
     step_button,
@@ -101,7 +102,7 @@ def delete_reason(page):
 
 
 def select(page, node_id: int, title: str) -> None:
-    select_button(page, "nav", node_id).click()
+    nav_button(page, node_id).click()
     expect(inspector_title(page)).to_have_text(title)
 
 

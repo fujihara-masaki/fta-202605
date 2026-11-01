@@ -43,6 +43,7 @@ from tests.e2e.edit_helpers import (
     GENERATING_SWITCH,
     add_factor,
     choose,
+    close_nav,
     editor,
     expect_editor_ready,
     expect_selected,
@@ -56,6 +57,8 @@ from tests.e2e.edit_helpers import (
     item,
     leave_dialog,
     leave_link,
+    nav_button,
+    nav_top,
     open_edit,
     save_status,
     select_button,
@@ -63,7 +66,6 @@ from tests.e2e.edit_helpers import (
     step_panel,
     tab,
     toast,
-    top_button,
     wait_until,
 )
 from tests.e2e.support import expect, record_dialogs
@@ -153,10 +155,11 @@ def test_E_E15_every_route_asks_and_continue_or_escape_keeps_everything(page, e2
         expect(editor(page)).to_have_attribute("data-node-id", str(b))
         expect(factor_field(page, "memo")).to_have_value("切替の確認の下書き")
         assert hash_of(page) == kept_hash
+        close_nav(page)  # below 1280px: fold the navigation again (PR-7)
 
     routes = [
-        ("nav", lambda: select_button(page, "nav", d)),
-        ("top event", lambda: top_button(page, "nav")),
+        ("nav", lambda: nav_button(page, d)),
+        ("top event", lambda: nav_top(page)),
         ("group parent name", lambda: page.locator(f'[data-group-parent="{a}"] [data-role="group"]')),
         ("breadcrumb", lambda: inspector(page).locator(f'.edit-crumbs [data-node-id="{a}"]')),
         ("breadcrumb top", lambda: inspector(page).locator('.edit-crumbs [data-select="top"]')),
@@ -186,7 +189,7 @@ def test_E_E15_every_route_asks_and_continue_or_escape_keeps_everything(page, e2
     assert sent == []
 
     # 破棄して移動 on one route switches and saves nothing.
-    select_button(page, "nav", c).click()
+    nav_button(page, c).click()
     switch_dialog(page).get_by_role("button", name="破棄して移動").click()
     expect_selected(page, c, "三次要因C")
     expect_editor_ready(page, c)
@@ -203,7 +206,7 @@ def test_E_E15_save_and_go_saves_to_the_edited_factor_not_the_chosen_one(page, e
     factor_field(page, "memo").fill("Aに保存されるメモ")
     factor_field(page, "title").fill("一次要因A（保存して移動）")
 
-    select_button(page, "nav", d).click()
+    nav_button(page, d).click()
     switch_dialog(page).get_by_role("button", name="保存して移動").click()
     expect_selected(page, d, "一次要因D")
     expect_editor_ready(page, d)
@@ -226,7 +229,7 @@ def test_E_E15_empty_title_sends_nothing_and_switches_nothing(page, e2e_server):
     factor_field(page, "title").fill("")
     step_button(page, 1).click()
     page.fill("#topEventInput", "送られない頂上事象")
-    select_button(page, "nav", d).click()
+    nav_button(page, d).click()
     dialog = switch_dialog(page)
     expect(dialog.locator("ul").first.locator("li")).to_have_text(["要因「一次要因A」の内容", "頂上事象"])
     dialog.get_by_role("button", name="保存して移動").click()
@@ -252,7 +255,7 @@ def test_E_E15_restored_input_same_factor_and_step1_alone_do_not_ask(page, e2e_s
     # The same factor again, and its own 要確認: no question, the draft and
     # the editor stay (no new reading of the details).
     factor_field(page, "memo").fill("同じ要因の下書き")
-    select_button(page, "nav", b).click()
+    nav_button(page, b).click()
     page.locator(f'[data-role="work-warning"][data-node-id="{b}"]').click()
     expect(inspector(page).locator("[data-inspector-warning] .edit-inspector__section-title")).to_be_focused()
     expect(switch_dialog(page)).to_have_count(0)
@@ -264,14 +267,14 @@ def test_E_E15_restored_input_same_factor_and_step1_alone_do_not_ask(page, e2e_s
     # Typed and restored (CRLF/spaces count as the same): no question.
     factor_field(page, "memo").fill("")
     factor_field(page, "description").fill("  \n")
-    select_button(page, "nav", d).click()
+    nav_button(page, d).click()
     expect_selected(page, d, "一次要因D")
     expect(switch_dialog(page)).to_have_count(0)
 
     # Only ① unsaved, the factor's draft unchanged: switched, ① kept.
     step_button(page, 1).click()
     page.fill("#systemContextInput", "①だけの下書き")
-    select_button(page, "nav", c).click()
+    nav_button(page, c).click()
     expect_selected(page, c, "三次要因C")
     expect(switch_dialog(page)).to_have_count(0)
     expect(page.locator("#systemContextInput")).to_have_value("①だけの下書き")
@@ -293,7 +296,7 @@ def test_E_E15_the_list_saves_factor_top_event_context_in_order_partial_failure_
     route = f"**/analyses/{analysis_id}/context"
     page.route(route, lambda r: r.fulfill(status=500, json={"detail": "E2E: 参考情報だけ失敗"}))
 
-    select_button(page, "nav", d).click()
+    nav_button(page, d).click()
     dialog = switch_dialog(page)
     expect(dialog.locator("ul").first.locator("li")).to_have_text(
         ["要因「一次要因A」の内容", "頂上事象", "参考情報（システム構成・対象範囲／障害発生時の状況・観測事実）"])
@@ -321,7 +324,7 @@ def test_E_E15_a_b_a_leaves_one_source_and_one_save(page, e2e_server):
     expect_editor_ready(page, a)
     sent = posts(page)
     factor_field(page, "memo").fill("一度目の下書き")
-    choose_d = select_button(page, "nav", d)
+    choose_d = nav_button(page, d)
     choose_d.click()
     switch_dialog(page).get_by_role("button", name="破棄して移動").click()
     expect_editor_ready(page, d)
@@ -354,7 +357,7 @@ def test_E_E18_a_switch_waits_for_the_save_and_its_answer_stays_with_its_factor(
     factor_field(page, "memo").fill("保存中のAのメモ")
     factor_save(page).click()
     pump(page, lambda: len(held) == 1)
-    select_button(page, "nav", d).click()
+    nav_button(page, d).click()
     waiting = page.get_by_role("dialog", name="保存の完了を待っています")
     expect(waiting).to_be_visible()
     expect(waiting).to_contain_text("要因「一次要因A」の内容の保存が終わってから切り替えます。")
@@ -379,15 +382,15 @@ def test_E_E18_details_loading_and_the_first_answer_of_a_b_a(page, e2e_server):
     page.route(f"**/nodes/{a}", lambda r: held.append(r) if r.request.method == "GET" and not held else r.continue_())
     dialogs = record_dialogs(page)
 
-    select_button(page, "nav", a).click()  # its details are held
+    nav_button(page, a).click()  # its details are held
     pump(page, lambda: len(held) == 1)
     expect(editor(page)).to_have_attribute("data-phase", "loading")
     expect(factor_field(page, "memo")).to_be_disabled()
     expect(factor_save(page)).to_be_disabled()
-    select_button(page, "nav", d).click()  # nothing to protect yet: no question
+    nav_button(page, d).click()  # nothing to protect yet: no question
     expect_editor_ready(page, d)
     e2e_server.update_node(a, memo="今のAのメモ")
-    select_button(page, "nav", a).click()  # A again: a new reading
+    nav_button(page, a).click()  # A again: a new reading
     expect_editor_ready(page, a)
     expect(factor_field(page, "memo")).to_have_value("今のAのメモ")
     held[0].fulfill(json={
@@ -500,7 +503,7 @@ def test_E_E18_the_edited_factor_removed_elsewhere_keeps_the_input_and_sends_now
     assert sent == [f"/nodes/{c}/update"]
 
     # Choosing another factor: the three choices; 破棄して移動 leaves it.
-    select_button(page, "nav", b).click()
+    nav_button(page, b).click()
     switch_dialog(page).get_by_role("button", name="破棄して移動").click()
     expect_selected(page, b, "二次要因B")
     expect_editor_ready(page, b)
@@ -551,7 +554,7 @@ def test_E_E18_generation_two_choices_no_factor_save_and_browsing_stays_free(pag
     force_click(factor_save(page))
     expect(factor_message(page)).to_contain_text("生成の準備中・生成中・結果の反映中は保存できません")
     # … and a switch offers two choices with the reason, nothing to save.
-    select_button(page, "nav", b).click()
+    nav_button(page, b).click()
     dialog = page.get_by_role("dialog", name="保存していない変更があります")
     expect(dialog.locator("[data-generating-reason]")).to_have_text(GENERATING_SWITCH)
     expect(dialog.get_by_role("button", name="保存して移動")).to_have_count(0)
@@ -560,7 +563,7 @@ def test_E_E18_generation_two_choices_no_factor_save_and_browsing_stays_free(pag
     expect(dialog).to_have_count(0)
     expect(inspector_title(page)).to_have_text("三次要因C")
     expect(factor_field(page, "memo")).to_have_value("生成中の下書き")
-    select_button(page, "nav", b).click()
+    nav_button(page, b).click()
     dialog.get_by_role("button", name="破棄して移動").click()
     expect(inspector_title(page)).to_have_text("二次要因B")
     # B's details wait for the generation: nothing of C is left in its
@@ -573,7 +576,7 @@ def test_E_E18_generation_two_choices_no_factor_save_and_browsing_stays_free(pag
     expect(page.locator("#topEventInput")).to_have_value("生成中の頂上事象の下書き")
 
     # No draft (B waits for its details): browsing is never refused.
-    select_button(page, "nav", d).click()
+    nav_button(page, d).click()
     expect(inspector_title(page)).to_have_text("一次要因D")
     expect(switch_dialog(page)).to_have_count(0)
     assert not [path for path in sent if path.startswith("/nodes/") and path.endswith("/update")]
@@ -584,7 +587,7 @@ def test_E_E18_generation_two_choices_no_factor_save_and_browsing_stays_free(pag
     pump(page, lambda: generation_phase(page) == "idle", timeout=20)
     expect_editor_ready(page, d)
     factor_field(page, "memo").fill("生成後の下書き")
-    select_button(page, "nav", b).click()
+    nav_button(page, b).click()
     dialog = switch_dialog(page)
     expect(dialog.get_by_role("button", name="保存して移動")).to_be_visible()
     expect(dialog.locator("ul").first.locator("li")).to_have_text(["要因「一次要因D」の内容", "頂上事象"])
@@ -605,7 +608,7 @@ def test_E_E18_a_generation_that_ended_while_the_two_choices_were_open_asks_agai
     step_panel(page, 3).get_by_role("button", name="Yesの一次要因から二次要因を生成").click()
     pump(page, lambda: any(path.endswith("/generate/level/2") for path in sent))
     factor_field(page, "memo").fill("2択の間の下書き")
-    select_button(page, "nav", d).click()
+    nav_button(page, d).click()
     dialog = page.get_by_role("dialog", name="保存していない変更があります")
     expect(dialog.locator("[data-generating-reason]")).to_be_visible()
     # The generation and its update end while the two choices are open.
@@ -639,7 +642,7 @@ def test_E_E15_after_a_partial_success_the_focus_returns_to_the_replaced_control
     step_button(page, 1).click()
     page.fill("#systemContextInput", "保存されない構成")
     step_button(page, 2).click()
-    opener = select_button(page, "nav", d)
+    opener = nav_button(page, d)
     handle = opener.element_handle()
     opener.click()
     dialog = switch_dialog(page)

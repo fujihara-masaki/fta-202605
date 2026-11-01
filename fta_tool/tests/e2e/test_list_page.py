@@ -596,7 +596,17 @@ def test_E_L07_export_menu_keyboard_and_links(page, e2e_server):
     # clicked directly (to a row below the open menu: the next test).
     button.click()
     expect(panel).to_be_visible()
-    assert not boxes_overlap(export_button(page, other).bounding_box(), panel.bounding_box())
+    panel_box, own = panel.bounding_box(), button.bounding_box()
+    assert not boxes_overlap(own, panel_box)  # never over its own button
+    if panel_box["y"] >= own["y"] + own["height"]:
+        assert not boxes_overlap(export_button(page, other).bounding_box(), panel_box)
+    else:
+        # A low display area (PR-7, e.g. 1093x500): no room below, the menu
+        # opens above its button, over the row above, as any popup. Esc
+        # closes it first; switching with a click is the next test.
+        assert panel_box["y"] >= 0, panel_box
+        page.keyboard.press("Escape")
+        expect(panel).to_be_hidden()
     export_button(page, other).click()
     expect(panel).to_be_hidden()
     expect(export_panel(page, other)).to_be_visible()
@@ -637,7 +647,7 @@ def test_E_L07_only_one_menu_switching_down_and_up(page, e2e_server):
         box = export_button(page, analysis_id).bounding_box()
         if boxes_overlap(box, panel_box):
             covered.append(analysis_id)
-        elif box["y"] >= panel_box["y"] + panel_box["height"] and box["y"] + box["height"] <= viewport["height"]:
+        elif box["y"] >= panel_box["y"] + panel_box["height"]:
             below = analysis_id
             break
     assert covered and below is not None, (panel_box, viewport, covered)
@@ -645,6 +655,22 @@ def test_E_L07_only_one_menu_switching_down_and_up(page, e2e_server):
     box = export_button(page, covered[0]).bounding_box()
     assert page.evaluate("([x, y, id]) => Boolean(document.elementFromPoint(x, y)?.closest(`#export-menu-${id}`))",
                          [box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, top])
+    # A low display area (PR-7): the row below the menu is out of view; the
+    # page is scrolled to it, as a user would. The open menu follows its
+    # button and may take its full height again (js/common/menu.js), so the
+    # row below it is the first one clear of it once scrolled.
+    for candidate in ids[ids.index(below):]:
+        box_below = export_button(page, candidate).bounding_box()
+        if box_below["y"] + box_below["height"] <= viewport["height"] \
+                and not boxes_overlap(box_below, panel.bounding_box()):
+            below = candidate
+            break
+        export_button(page, candidate).scroll_into_view_if_needed()
+        if not boxes_overlap(export_button(page, candidate).bounding_box(), panel.bounding_box()):
+            below = candidate
+            break
+    else:
+        raise AssertionError("開いたメニューの下に、見える行がない")
 
     export_button(page, below).click()  # down: a row below the open menu
     expect(panel).to_be_hidden()

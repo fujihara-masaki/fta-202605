@@ -85,6 +85,19 @@ def pytest_addoption(parser):
         "所定のブラウザでの結果とは区別する。--browser-channel とは同時に使えない。",
     )
     group.addoption(
+        "--e2e-viewport-set",
+        default=None,
+        choices=("base", "pr7"),
+        help="寸法を自分で選ばない実ブラウザのテストを実行する寸法の組。base（既定）：1280×800・1440×900。"
+        "pr7：それに PR-7 の想定寸法と 2026-10-28 の実測値の寸法を加えたすべて（計画 第8.7節）。",
+    )
+    group.addoption(
+        "--e2e-screens",
+        default=None,
+        metavar="DIR",
+        help="PR-7 の表示のテストが、目視のレビュー用の画面（png）を保存するフォルダ（指定しなければ保存しない）。",
+    )
+    group.addoption(
         "--e2e-env",
         default=None,
         metavar="LABEL",
@@ -98,6 +111,20 @@ def pytest_configure(config):
         "markers", "acceptance(*ids): 受入確認の項目ID（計画 第8.9節の E-xx、または PR1-xx）"
     )
     acceptance.configure(config)
+
+
+def pytest_generate_tests(metafunc):
+    """The display areas of the E2E tests that do not choose their own
+    (tests/e2e/conftest.py's viewport fixture): --e2e-viewport-set."""
+    if "viewport" not in metafunc.fixturenames:
+        return
+    for mark in metafunc.definition.iter_markers("parametrize"):
+        names = mark.args[0]
+        names = [name.strip() for name in names.split(",")] if isinstance(names, str) else list(names)
+        if "viewport" in names:
+            return
+    cases = acceptance.VIEWPORT_SETS[acceptance.viewport_set(metafunc.config)]
+    metafunc.parametrize("viewport", cases, indirect=True, ids=[case.label for case in cases])
 
 
 def pytest_collection_modifyitems(config, items):

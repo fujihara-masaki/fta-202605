@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
 import re
 import socket
@@ -33,15 +34,38 @@ FTA_TOOL_DIR = pathlib.Path(__file__).resolve().parents[2]
 class E2EServer:
     """The app under test, started by tests/e2e/stub_server.py."""
 
-    def __init__(self, url: str, workdir: pathlib.Path, process: subprocess.Popen, log_path: pathlib.Path):
+    def __init__(self, url: str, workdir: pathlib.Path, process: subprocess.Popen, log_path: pathlib.Path,
+                 log_file=None, server_pid: Optional[int] = None):
         self.url = url
         self.workdir = workdir
         self.process = process
         self.log_path = log_path
+        # The process that runs the app (stub_server.py writes it to
+        # server.pid). On Windows it is not `process`: a venv's
+        # Scripts\python.exe is a launcher that runs the real python.exe as
+        # its child, in a job that kills the child when the launcher ends
+        # (CPython PC/launcher.c, run_child). Ending the launcher therefore
+        # only starts the end of the app, which still holds fta_tool.db and
+        # server.log for a moment: close() waits for this process itself.
+        self.server_pid = server_pid
+        self.stopped = ""  # how close() stopped the app (the tests record it)
+        # Whether the app still ran when the process started for it had
+        # ended (a launcher that ends before its child): close() then waited.
+        self.app_outlived_process: Optional[bool] = None
+        # This process's handle of server.log (the server's stdout): closed in
+        # close(). Left open (until PR-7's fix of 2026-10-30) it kept Windows
+        # from deleting the work folder (a file open without FILE_SHARE_DELETE
+        # cannot be removed there; display_check.py's work stayed).
+        self.log_file = log_file
         self.db_path = workdir / "fta_tool.db"
         # The test server is on this PC: never through a proxy of the
         # environment or (on Windows) the system settings (trust_env=False).
-        self.http = httpx.Client(base_url=url, timeout=30, follow_redirects=False, trust_env=False)
+        # A new connection for every request (no keep-alive): uvicorn closes
+        # an idle connection after 5 s, and a request sent on it just then is
+        # lost ("Server disconnected without sending a response"; seen once
+        # in 2,629 tests of PR-7's run at every size, test data being made).
+        self.http = httpx.Client(base_url=url, timeout=30, follow_redirects=False, trust_env=False,
+                                 limits=httpx.Limits(max_keepalive_connections=0))
 
     # ----- lifecycle -----------------------------------------------------
     def reset(self) -> None:
@@ -52,13 +76,52 @@ class E2EServer:
         for name in ("stub_control.json", "stub_calls.jsonl", "violations.jsonl"):
             (self.workdir / name).unlink(missing_ok=True)
 
+    # How long the app may take to end by itself once asked (its open
+    # requests are given SHUTDOWN_SECONDS by uvicorn, stub_server.py), and
+    # how long a stopped process may take to be gone.
+    STOP_SECONDS = 20
+    GONE_SECONDS = 10
+
     def close(self) -> None:
+        """Stop the server and release what this process holds of its
+        folder (the HTTP client, the handle of server.log), so that the
+        folder can be removed, also on Windows.
+
+        The app is asked to end by closing its stdin (stub_server.py
+        --stop-on-stdin-eof): it ends by itself, and a venv's launcher ends
+        only after it. Only if it does not end in time is it stopped
+        (terminate, then kill). Either way this returns only when the app's
+        own process (server_pid) is gone; if it is not, it raises (a server
+        left running is never let through)."""
         self.http.close()
-        self.process.terminate()
+        how = ""
         try:
-            self.process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
+            if self.process.stdin is not None and not self.process.stdin.closed:
+                self.process.stdin.close()
+            try:
+                self.process.wait(timeout=self.STOP_SECONDS)
+                how = f"自分で終了（終了コード {self.process.returncode}）"
+            except subprocess.TimeoutExpired:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=self.GONE_SECONDS)
+                    how = f"{self.STOP_SECONDS} 秒で終わらず、止めた（terminate）"
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=self.GONE_SECONDS)
+                    how = f"{self.STOP_SECONDS} 秒で終わらず、強制終了した（kill）"
+            if self.server_pid is not None and self.server_pid != self.process.pid:
+                self.app_outlived_process = not process_gone(self.server_pid, 0)
+                if self.app_outlived_process:
+                    how += "。起動したプロセスの終了時にアプリはまだ動作中"
+                if not process_gone(self.server_pid, self.GONE_SECONDS):
+                    how += f"。アプリのプロセス（PID {self.server_pid}）が {self.GONE_SECONDS} 秒後も残っている"
+                    raise RuntimeError(f"E2E server not stopped: {how}")
+                how += f"。アプリのプロセス（PID {self.server_pid}）の終了を確認"
+        finally:
+            self.stopped = how
+            if self.log_file is not None and not self.log_file.closed:
+                self.log_file.close()
 
     # ----- stub control --------------------------------------------------
     def set_stub_mode(self, mode: str, delay_seconds: Optional[float] = None) -> None:
@@ -278,71 +341,233 @@ def free_port() -> int:
             return port
 
 
-def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str, str]] = None) -> E2EServer:
-    """Start the app for the tests; `extra_env` changes its settings (e.g.
-    FTA_SAMPLE_SCENARIOS_FILE for a server without sample scenarios)."""
-    import os
-
-    env = os.environ.copy()
+def python_env(base: Optional[dict[str, str]] = None) -> dict[str, str]:
+    """The environment of a Python process the tests start (the app, the
+    display check tool): fta_tool on its path, and its stdout and stderr in
+    UTF-8. Without PYTHONIOENCODING, Python writes a pipe or a file in the
+    locale's encoding on Windows (cp932 for Japanese), while the tests read
+    it as UTF-8: the Japanese messages were lost (UnicodeDecodeError in
+    subprocess's reader thread, PytestUnhandledThreadExceptionWarning, the
+    Windows run of 2026-10-30). Only the standard streams change (not
+    PYTHONUTF8, which would also change how the process opens files)."""
+    env = dict(os.environ if base is None else base)
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(FTA_TOOL_DIR), env.get("PYTHONPATH", "")]))
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def process_gone(pid: int, timeout: float) -> bool:
+    """True once the process `pid` has ended (waits up to `timeout` s)."""
+    if sys.platform == "win32":
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        synchronize = 0x00100000
+        handle = kernel32.OpenProcess(synchronize, False, pid)
+        if not handle:
+            return ctypes.get_last_error() == 87  # ERROR_INVALID_PARAMETER: no such process
+        try:
+            return kernel32.WaitForSingleObject(handle, int(timeout * 1000)) == 0  # WAIT_OBJECT_0
+        finally:
+            kernel32.CloseHandle(handle)
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            pass
+        status = pathlib.Path(f"/proc/{pid}/status")
+        try:
+            if "\nState:\tZ" in status.read_text():  # ended, not yet reaped: holds no file
+                return True
+        except OSError:
+            pass
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.05)
+
+
+def remove_folder(path: pathlib.Path, tries: int, wait: float) -> tuple[bool, list[str]]:
+    """Remove a folder of the tests (never ignoring an error), trying up to
+    `tries` times `wait` s apart: on Windows a file can stay in use a moment
+    after the process that had it ended (an antivirus or the indexer may
+    open it). Returns whether it is gone and the error of each failed try."""
+    import shutil
+
+    errors: list[str] = []
+    for attempt in range(tries):
+        try:
+            shutil.rmtree(path)
+            return True, errors
+        except OSError as error:
+            if not path.exists():  # gone after all (removed meanwhile): this try did it
+                return True, errors
+            errors.append(f"{type(error).__name__}: {error}")
+            if attempt + 1 < tries:
+                time.sleep(wait)
+    return False, errors
+
+
+def start_server(workdir: pathlib.Path, port: int, extra_env: Optional[dict[str, str]] = None, *,
+                 python: Optional[list[str]] = None, start_seconds: float = 60) -> E2EServer:
+    """Start the app for the tests; `extra_env` changes its settings (e.g.
+    FTA_SAMPLE_SCENARIOS_FILE for a server without sample scenarios).
+    `python` replaces the interpreter's command and `start_seconds` the time
+    it is given (the tests of the server's start and stop).
+
+    If the app does not answer, the error says how far it got (what
+    stub_server.py recorded in server-stages.jsonl, whether its port is open,
+    which processes still run) and only then are the processes it started
+    stopped (start_failure)."""
+    env = python_env()
     env["FTA_E2E_WORKDIR"] = str(workdir)
     env["FTA_E2E_STUB_MODE"] = "create"
     env.update(extra_env or {})
+    # What a server started before in this folder left (the W-02 tool starts
+    # it again in the same folder): never read as this start's.
+    for name in ("server.pid", "server-stages.jsonl", "launcher.pid", "launcher-stages.jsonl"):
+        (workdir / name).unlink(missing_ok=True)
     log_path = workdir / "server.log"
     log = log_path.open("wb")
+    # stdin is how close() asks the app to end (stub_server.py --stop-on-stdin-eof).
     process = subprocess.Popen(
-        [sys.executable, "-m", "tests.e2e.stub_server", "--port", str(port)],
-        cwd=workdir, env=env, stdout=log, stderr=subprocess.STDOUT,
+        [*(python or [sys.executable]), "-m", "tests.e2e.stub_server", "--port", str(port), "--stop-on-stdin-eof"],
+        cwd=workdir, env=env, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
     )
     url = f"http://127.0.0.1:{port}"
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + start_seconds
     while True:
         if process.poll() is not None:
-            log.close()
-            raise RuntimeError(f"E2E server exited early:\n{log_path.read_text(encoding='utf-8', errors='replace')}")
+            start_failure(process, workdir, port, log, f"起動したプロセスが終了した（終了コード {process.returncode}）")
+        server_pid = read_server_pid(workdir)
+        if server_pid is not None and server_pid != process.pid and process_gone(server_pid, 0):
+            start_failure(process, workdir, port, log, f"アプリのプロセス（PID {server_pid}）が起動の途中で終了した")
+        ended = [s for s in launcher_stages(workdir) if s.get("stage") in ("child exited", "child not started")]
+        if server_pid is None and ended:  # a stand-in launcher (the tests) says its child is gone
+            start_failure(process, workdir, port, log, f"起動したプロセスの子が、アプリの起動の前に終わった（{ended[0]['stage']}）")
         try:
             if httpx.get(url + "/", timeout=2, trust_env=False).status_code == 200:
                 break
         except httpx.HTTPError:
             pass
         if time.monotonic() > deadline:
-            process.kill()
-            log.close()
-            raise RuntimeError(f"E2E server did not start:\n{log_path.read_text(encoding='utf-8', errors='replace')}")
+            start_failure(process, workdir, port, log, f"{start_seconds:g} 秒たっても HTTP の応答がない")
         time.sleep(0.2)
-    return E2EServer(url, workdir, process, log_path)
+    return E2EServer(url, workdir, process, log_path, log, read_server_pid(workdir))
 
 
-# The one console error a test lets through (the user's decision of
-# 2026-10-03: a narrowed check for a known issue, not a fix of it). Shown in a
-# window (headed, or as Chrome / Edge), the browser asks the server of a page
-# for /favicon.ico on its own; the app has no icon, so the browser logs a 404.
-# A console error is let through only when all of these hold, else it fails
-# the test as any other:
-#   * its text is FAVICON_404_TEXT and it came from exactly <the origin of
-#     the test's server>/favicon.ico (no query, other path, origin or status);
-#   * the browser's own log of it is there (CDP Log.entryAdded, source
-#     "network"): the n-th such console error is the n-th such log entry;
-#   * that entry's request got the response (CDP Network.responseReceived)
-#     of the same URL with status 404 and resource type "Other", the browser's
-#     own request (a fetch, an img or a script of the page is another type).
-# Without the browser's records (no CDP: not Chromium) nothing is let through.
-# Each one let through is listed in the report (tests/e2e/acceptance.py).
-# PR-7 adds the icon and removes this; tests/test_e2e_infrastructure.py fails
-# as soon as the app has an icon, so that it is not let through any longer.
-FAVICON_PATH = "/favicon.ico"
-FAVICON_404_TEXT = "Failed to load resource: the server responded with a status of 404 (Not Found)"
-FAVICON_RESOURCE_TYPE = "Other"
+def read_server_pid(workdir: pathlib.Path) -> Optional[int]:
+    """The app's process id (stub_server.py writes it first), None before."""
+    try:
+        return int((workdir / "server.pid").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def launcher_stages(workdir: pathlib.Path) -> list[dict]:
+    """What a stand-in launcher of the tests recorded (launcher-stages.jsonl,
+    tests/e2e/launcher_probe.py): none for the usual start."""
+    path = workdir / "launcher-stages.jsonl"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    stages = []
+    for line in lines:
+        try:
+            stages.append(json.loads(line))
+        except ValueError:
+            pass  # a line being written
+    return stages
+
+
+def start_failure(process: subprocess.Popen, workdir: pathlib.Path, port: int, log, reason: str):
+    """Raise for a server that did not start, with what is known of it
+    (gathered before anything is stopped), then stop what it started: the
+    process started here and its descendants (Windows: taskkill /T, which
+    follows the parent links of a venv's launcher and its child), and the
+    app's own process (server.pid) if it still runs. What could not be
+    stopped is said."""
+    server_pid = read_server_pid(workdir)
+    stand_in = launcher_stages(workdir)
+    child_pids = [s["child_pid"] for s in stand_in if s.get("stage") == "child started"]
+    lines = [f"E2E server did not start: {reason}",
+             f"- 起動したプロセス（PID {process.pid}）：" + ("動作中" if process.poll() is None
+                                                          else f"終了（終了コード {process.returncode}）")]
+    if server_pid is None:
+        lines.append("- アプリのプロセス：server.pid がない（stub_server.py の main() に達していない。"
+                     "起動の途中か、その前に止まった。子のプロセスがないとは限らない）")
+    else:
+        lines.append(f"- アプリのプロセス（PID {server_pid}）：" + ("終了" if process_gone(server_pid, 0) else "動作中"))
+    if (workdir / "launcher.pid").exists() or stand_in:
+        launcher = (workdir / "launcher.pid").read_text(encoding="utf-8").strip() if (workdir / "launcher.pid").exists() else "なし"
+        lines.append(f"- スタンドインのランチャー：launcher.pid {launcher}、記録（launcher-stages.jsonl）："
+                     + ("\n" + "\n".join(json.dumps(s, ensure_ascii=False) for s in stand_in) if stand_in else "なし"))
+        for pid in child_pids:
+            lines.append(f"- スタンドインの子（PID {pid}）：" + ("終了" if process_gone(pid, 0) else "動作中"))
+    stages = workdir / "server-stages.jsonl"
+    lines.append("- stub_server.py の記録（server-stages.jsonl）：" + (
+        "\n" + stages.read_text(encoding="utf-8", errors="replace").rstrip() if stages.exists() else "なし"))
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            lines.append(f"- ポート {port}：開いている（接続できる）")
+    except OSError as error:
+        lines.append(f"- ポート {port}：開いていない（{type(error).__name__}: {error}）")
+    left = stop_started(process, server_pid, child_pids)
+    lines.append("- 後片付け：" + (f"止められなかったプロセス {left}" if left else "起動したプロセスとアプリのプロセスは終了した"))
+    log.close()
+    text = (workdir / "server.log").read_text(encoding="utf-8", errors="replace")
+    lines.append("- server.log：" + ("\n" + text.rstrip() if text.strip() else "空"))
+    raise RuntimeError("\n".join(lines))
+
+
+def stop_started(process: subprocess.Popen, server_pid: Optional[int], others: tuple = ()) -> list[int]:
+    """Stop the process started for the server with its descendants, the
+    app's own process and `others` (the children a stand-in launcher
+    recorded): only these recorded processes. Returns those still running."""
+    if process.poll() is None:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=30)
+        else:
+            process.kill()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+    recorded = [pid for pid in (server_pid, *others) if pid is not None and pid != process.pid]
+    for pid in recorded:
+        if not process_gone(pid, 0):
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=30)
+            else:
+                try:
+                    os.kill(pid, 9)
+                except OSError:
+                    pass
+    left = [] if process.poll() is not None else [process.pid]
+    left += [pid for pid in recorded if not process_gone(pid, 10)]
+    return left
+
+
+# No console error is let through. Until PR-7 the browser's own 404 for
+# /favicon.ico of the test's server was (the user's decision of 2026-10-03,
+# a narrowed check for a known issue); PR-7 gave every screen its icon
+# (/static/favicon.svg, declared in base.html, so the browser does not ask
+# for /favicon.ico) and removed the exception: a 404 of the icon, of
+# /favicon.ico or of anything else fails the test as any console error
+# (tests/test_e2e_infrastructure.py, tests/e2e/test_console_check.py).
+FAVICON_URL = "/static/favicon.svg"
+NOT_FOUND_TEXT = "Failed to load resource: the server responded with a status of 404 (Not Found)"
 
 
 class PageWatcher:
-    """Collects what must not happen on a page during a test: console errors
-    (except the known favicon 404 above), uncaught page errors and requests
-    to another origin."""
-
-    # Every watcher made during the current test: tests/e2e/conftest.py
-    # records what each one let through (once) and empties the list.
-    made: list["PageWatcher"] = []
+    """Collects what must not happen on a page during a test: console errors,
+    uncaught page errors and requests to another origin."""
 
     START = (0, 0, 0)
 
@@ -355,53 +580,14 @@ class PageWatcher:
         self.foreign_requests: list[str] = []
         self.dialogs: list[str] = []
         self._allowed: list[re.Pattern] = []
-        # The browser's own records (CDP), to tell the known favicon 404 apart.
-        self.network_log: list[dict] = []  # Log.entryAdded of source "network", level "error"
-        self.responses: dict[str, dict] = {}  # Network.responseReceived of <origin>/favicon.ico, by request id
-        self.known: dict[int, dict] = {}  # console error (index) -> the known exception it is
-        self._judged: dict[int, Optional[dict]] = {}
-        self.cdp_error = ""
-        self._page = page
         page.on("console", self._on_console)
         page.on("pageerror", lambda error: self.page_errors.append(str(error)))
         page.context.on("request", self._on_request)
-        self._cdp = self._open_cdp(page)
-        PageWatcher.made.append(self)
-
-    @classmethod
-    def take_made(cls) -> list["PageWatcher"]:
-        made, cls.made = cls.made, []
-        return made
-
-    def _open_cdp(self, page):
-        try:
-            session = page.context.new_cdp_session(page)
-            session.on("Log.entryAdded", self._on_log_entry)
-            session.on("Network.responseReceived", self._on_response)
-            session.send("Log.enable")
-            session.send("Network.enable")
-            return session
-        except Exception as error:  # noqa: BLE001 - e.g. not Chromium: then nothing is let through
-            text = str(error).strip()
-            self.cdp_error = text.splitlines()[0] if text else type(error).__name__
-            return None
 
     def _on_console(self, message) -> None:
         if message.type == "error":
             self.console_errors.append(message.text)
             self.console_error_urls.append((message.location or {}).get("url") or "")
-
-    def _on_log_entry(self, event: dict) -> None:
-        entry = event.get("entry") or {}
-        if entry.get("source") == "network" and entry.get("level") == "error":
-            self.network_log.append({"text": entry.get("text") or "", "url": entry.get("url") or "",
-                                     "request_id": entry.get("networkRequestId") or ""})
-
-    def _on_response(self, event: dict) -> None:
-        response = event.get("response") or {}
-        if response.get("url") == self.origin + FAVICON_PATH:
-            self.responses[event.get("requestId") or ""] = {
-                "url": response.get("url"), "status": response.get("status"), "type": event.get("type")}
 
     def _on_request(self, request) -> None:
         url = request.url
@@ -414,42 +600,6 @@ class PageWatcher:
         """Expected console errors, e.g. the browser's log of a 500 the test forced."""
         self._allowed.append(re.compile(pattern))
 
-    def _wait_for(self, ready) -> None:
-        """The browser's records (CDP) come on another connection than the
-        console messages: give them up to 2 seconds."""
-        for _ in range(20):
-            if ready() or self._cdp is None:
-                return
-            try:
-                self._page.wait_for_timeout(100)
-            except Exception:  # noqa: BLE001 - e.g. the page is closed: all it sent is in
-                return
-
-    def _known_favicon_404(self, index: int) -> Optional[dict]:
-        """The known exception that console error `index` is, or None (judged once)."""
-        if index in self._judged:
-            return self._judged[index]
-        text, url = self.console_errors[index], self.console_error_urls[index]
-        found = None
-        if text == FAVICON_404_TEXT and url == self.origin + FAVICON_PATH:
-            nth = sum(1 for i in range(index)
-                      if self.console_errors[i] == text and self.console_error_urls[i] == url)
-
-            def log_entry() -> Optional[dict]:
-                entries = [e for e in self.network_log if e["text"] == text and e["url"] == url]
-                return entries[nth] if len(entries) > nth else None
-
-            self._wait_for(lambda: log_entry() is not None and log_entry()["request_id"] in self.responses)
-            entry = log_entry()
-            response = self.responses.get(entry["request_id"]) if entry and entry["request_id"] else None
-            if (response and response["url"] == url and response["status"] == 404
-                    and response["type"] == FAVICON_RESOURCE_TYPE):
-                found = {"url": url, "text": text, "status": response["status"], "type": response["type"],
-                         "request_id": entry["request_id"]}
-                self.known[index] = found
-        self._judged[index] = found
-        return found
-
     def mark(self) -> tuple[int, int, int]:
         """How far the page has been checked (for problems() of what came after)."""
         return (len(self.console_errors), len(self.page_errors), len(self.foreign_requests))
@@ -461,8 +611,6 @@ class PageWatcher:
         console_end, page_end, foreign_end = until or self.mark()
         unexpected = []
         for index in range(console, console_end):
-            if self._known_favicon_404(index):
-                continue  # listed in the report; it never lets anything else through
             text, url = self.console_errors[index], self.console_error_urls[index]
             # The allowed patterns match the message only; its URL is shown, never matched.
             if not any(p.search(text) for p in self._allowed):
@@ -492,6 +640,25 @@ def record_dialogs(page, action: str = "dismiss") -> list:
     return seen
 
 
+# ----- The page's sideways scroll ---------------------------------------------------
+
+# Since PR-7's fix of 2026-10-29 the main area scrolls (css/base.css), not the
+# page: a content wider than the display area makes #main scroll sideways
+# while the root does not. The page's width is the larger of the root's and
+# the main area's scroll width (with the room of its own scroll bar, so it
+# compares with the display area's width as the root's did).
+PAGE_WIDTH = """() => {
+  const root = document.documentElement, main = document.getElementById('main');
+  const inMain = main ? main.scrollWidth + (main.offsetWidth - main.clientWidth) : 0;
+  return { width: Math.max(root.scrollWidth, inMain), left: Math.max(window.scrollX, main ? main.scrollLeft : 0) };
+}"""
+
+
+def page_scroll_width(page) -> int:
+    """The page's scroll width, the main area's included (see PAGE_WIDTH)."""
+    return page.evaluate(PAGE_WIDTH)["width"]
+
+
 # ----- The display area of PR3-LAYOUT ---------------------------------------------
 
 # What the browser reports about its display area, in CSS px: the root's
@@ -516,20 +683,24 @@ def measure_viewport(page) -> dict:
 
 
 # Display-area sizes (CSS px) at which the edit page's layout changes, from
-# its stylesheets (tokens.css, base.css, components.css, edit.css,
-# style.css; their rules that depend on the display area are pinned by
+# its stylesheets (tokens.css, base.css, components.css, edit.css; their
+# rules that depend on the display area are pinned by
 # tests/test_e2e_infrastructure.py, so a changed or new one makes this list
-# be revisited). Widths: 1280 (PR-3's base, J-20); 1100 (.edit-page
-# min-width, narrower pages scroll); the pane columns
+# be revisited). Widths: 1280 (three panes from here, J-20; below it the
+# structure navigation is folded and the inspector 340px wide) and 1024
+# (below it the work area's content keeps its width at 1024px and scrolls
+# sideways; PR-7, edit.css's two media queries); the pane columns
 # clamp(240px, 17vw, 320px) and clamp(340px, 23vw, 440px) stop at 240/0.17,
-# 320/0.17, 340/0.23 and 440/0.23; the notifications beside a legacy
-# dialog, clamp(220px, (100vw - 560px) / 2 - 32px, 360px), at 1064 and
-# 1344; the dialogs, min(520px | 560px, 100vw - 32px), at 552 and 592; the
-# menu panel (340px, at most 100vw - 16px) at 356. Heights: none (the page is
-# 100vh less the header; the dialogs' max-height depends on their content).
+# 320/0.17, 340/0.23 and 440/0.23; the dialogs, min(520px, 100vw - 32px),
+# at 552; the menu panel (340px, at most 100vw - 16px) at 356. Since PR-7's
+# fix of 2026-10-29 the notifications are in a row of their own (no width
+# of the display area: the boundaries 592 and 932 of their former width are
+# gone). Heights: 700 (below it the notifications take at most 25vh instead
+# of 30vh; components.css); otherwise the page is 100vh less the header and
+# the dialogs' max-height depends on their content.
 LAYOUT_BOUNDARIES = {
-    "width": (356, 552, 592, 1064, 1100, 1280, 1344, 240 / 0.17, 340 / 0.23, 320 / 0.17, 440 / 0.23),
-    "height": (),
+    "width": (356, 552, 1024, 1280, 240 / 0.17, 340 / 0.23, 320 / 0.17, 440 / 0.23),
+    "height": (700,),
 }
 
 

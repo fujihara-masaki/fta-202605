@@ -4,12 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}FTA分析支援ツール{% endblock %}</title>
+  {#- The icon of every screen (PR-7). Declared, so the browser does not ask
+      for /favicon.ico; served from /static like the stylesheets. -#}
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/css/tokens.css">
   <link rel="stylesheet" href="/static/css/base.css">
   <link rel="stylesheet" href="/static/css/components.css">
-  {#- Screens that are not migrated yet keep the legacy stylesheet;
-      migrated screens replace this block with their own stylesheet. #}
-  {% block screen_styles %}<link rel="stylesheet" href="/static/style.css">{% endblock %}
+  {#- Each screen adds its own stylesheet (the legacy style.css was removed
+      in PR-7, when no screen used it any more). #}
+  {% block screen_styles %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
   <a class="skip-link" href="#main">本文へ移動</a>
@@ -29,7 +32,9 @@
     {% block content %}{% endblock %}
   </main>
   <!-- Notifications (shared): visible stack + live regions for screen readers -->
-  <div id="ui-toasts" class="ui-toast-stack"></div>
+  {#- The stack has a room of its own below the main area (css/base.css);
+      the edit screen puts it below its work area instead (PR-7). -#}
+  {% block toast_stack %}<div id="ui-toasts" class="ui-toast-stack"></div>{% endblock %}
   <div id="ui-live-status" class="visually-hidden" role="status" aria-live="polite"></div>
   <div id="ui-live-alert" class="visually-hidden" role="alert" aria-live="assertive"></div>
   {#- Every screen is migrated; the legacy app.js was removed in PR-6. The

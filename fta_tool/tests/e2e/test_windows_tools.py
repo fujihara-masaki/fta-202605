@@ -1,5 +1,6 @@
-"""scripts/run_cache_check.ps1 (W-02's wrapper) run by the PowerShell of the
-machine: on Windows, Windows PowerShell 5.1 (powershell.exe) always, and
+"""scripts/run_cache_check.ps1 (W-02's wrapper) and, since PR-7,
+scripts/run_display_check.ps1 (the zoom and display-scale check) run by the
+PowerShell of the machine: on Windows, Windows PowerShell 5.1 (powershell.exe) always, and
 PowerShell 7 (pwsh) when it is installed; elsewhere pwsh when it is there.
 Each host is a test of its own, so 5.1 and 7 are told apart in the record.
 
@@ -13,7 +14,10 @@ Per host, with the real venv's python and nothing for the user to do:
   record folder);
 * with the tool's port taken, the wrapper starts the tool, which ends as
   "未完了" with the reason in result.md, and the wrapper passes its exit
-  code 2 on.
+  code 2 on;
+* run_display_check.ps1 parses and stops before anything runs for a wrong
+  -ExpectedSha (exit 9, no record folder); its run needs the user (the zoom),
+  so it is not started here.
 The execution policy is the user's: it is not changed. If it refuses
 scripts, the test fails and says so.
 """
@@ -34,6 +38,7 @@ from tests.e2e.support import FTA_TOOL_DIR
 pytestmark = [pytest.mark.e2e]
 
 PS1 = FTA_TOOL_DIR / "scripts" / "run_cache_check.ps1"
+DISPLAY_PS1 = FTA_TOOL_DIR / "scripts" / "run_display_check.ps1"
 
 
 def powershell_hosts() -> list[tuple[str, str]]:
@@ -104,3 +109,23 @@ if HOSTS:
         result = (runs[0] / "result.md").read_text(encoding="utf-8")
         assert "判定：**未完了**" in result and f"ポート {port} が使用中" in result, result
         assert (runs[0] / "w02-output.log").exists()
+
+
+if HOSTS:
+    @pytest.mark.parametrize("host, exe", HOSTS, ids=[name for name, _ in HOSTS])
+    def test_run_display_check_ps1_with_the_installed_powershell(host, exe, tmp_path, record_property):
+        info = run_host(exe, "-Command", "$PSVersionTable.PSVersion.ToString() + ' ' + $PSVersionTable.PSEdition")
+        name = "Windows PowerShell" if host == "windows-powershell" else "PowerShell"
+        record_property("fta_note", f"{name} {info.stdout.strip()}（{exe}）で実行")
+        parse = run_host(exe, "-Command",
+                         "$tokens = $null; $errors = $null; "
+                         f"[System.Management.Automation.Language.Parser]::ParseFile('{DISPLAY_PS1}', [ref]$tokens, [ref]$errors) | Out-Null; "
+                         "$errors | ForEach-Object { Write-Output $_.Message }; exit $errors.Count")
+        assert parse.returncode == 0, f"{host} ParserError:\n{parse.stdout}\n{parse.stderr}"
+        venv = pathlib.Path(sys.prefix)
+        out = tmp_path / "records"
+        wrong = run_host(exe, "-File", str(DISPLAY_PS1), "-Venv", str(venv), "-OutRoot", str(out),
+                         "-ExpectedSha", "0000000")
+        assert wrong.returncode == 9, f"{host}: {wrong.stdout}\n{wrong.stderr}"
+        assert "一致しません" in wrong.stdout or "未コミット" in wrong.stdout, wrong.stdout
+        assert not out.exists() or not any(out.iterdir())

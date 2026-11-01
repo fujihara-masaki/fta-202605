@@ -6,10 +6,13 @@
     question and stays when it cannot be saved (js/pages/edit/title.js).
     The export menu is the list's (_macros.html export_menu: the same URLs,
     download attribute and keyboard handling). The updated time is not shown
-    here (J-15). -#}
+    here (J-15). Below 1280px the header starts with the button that shows
+    the folded structure navigation (PR-7, js/pages/edit/nav-drawer.js): the
+    navigation is shown below the header, so it never covers its button. -#}
 {% import "_macros.html" as ui %}
 <div class="edit-header" data-edit-header>
   <div class="edit-header__title">
+    <button type="button" class="ui-btn ui-btn--sm edit-nav-toggle" aria-controls="edit-nav" aria-expanded="false" data-nav-toggle>構造を表示</button>
     <div class="edit-title" data-title-view>
       <h1 class="edit-title__text" id="analysisTitle" data-title-text>{{ analysis.title }}</h1>
       <button type="button" class="ui-btn ui-btn--icon edit-title__edit" data-title-edit title="分析タイトルを変更" aria-label="分析タイトルを変更：{{ analysis.title }}">✎</button>

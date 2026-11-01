@@ -51,16 +51,16 @@ from tests.e2e.edit_helpers import (
     generation_requests,
     hold,
     inspector,
-    judgement_button,
     item,
+    judgement_button,
     leave_dialog,
     leave_link,
     log_row,
+    nav_button,
     open_edit,
     phase,
     post_paths,
     pump,
-    select_button,
     step_button,
     step_panel,
     tab,
@@ -170,7 +170,7 @@ def test_E_G04_writes_and_moves_are_held_back_browsing_is_free(page, e2e_server)
     expect(page).to_have_url(re.compile(rf"/analyses/{analysis_id}(#.*)?$"))
 
     # Browsing is free: selection (no detail request), tabs, filter, typing.
-    select_button(page, "nav", c).click()
+    nav_button(page, c).click()
     expect(editor(page)).to_have_attribute("data-node-id", str(c))
     tab(page, "tree").click()
     expect(page.locator('[data-view-panel="tree"]')).to_be_visible()
@@ -465,7 +465,7 @@ def test_E_G10_no_detail_request_waiting_and_read_before_and_only_the_last_choic
     gets = detail_gets(page)
     held = start_held(page, analysis_id)
     # B: never read → 取得待ち, nothing of A's details.
-    select_button(page, "nav", b).click()
+    nav_button(page, b).click()
     expect(editor(page)).to_have_attribute("data-node-id", str(b))
     expect(editor(page)).to_have_attribute("data-phase", "waiting")
     expect(factor_status(page)).to_have_text("取得待ち")
@@ -475,14 +475,14 @@ def test_E_G10_no_detail_request_waiting_and_read_before_and_only_the_last_choic
         expect(factor_field(page, key)).to_have_value("")
     expect(page.locator("[data-inspector-title]")).to_have_text("要因B")  # what the embedded data knows
     # A again: the saved values read before, with their time.
-    select_button(page, "nav", a).click()
+    nav_button(page, a).click()
     expect_editor_ready(page, a)
     expect(factor_field(page, "memo")).to_have_value("Aのメモ")
     expect(inspector(page).locator("[data-detail-read]")).to_contain_text(re.compile(r"生成の前（\d\d:\d\d:\d\d）に読み込んだ保存済みの内容です"))
     # B, then C: the last choice is C.
-    select_button(page, "nav", b).click()
+    nav_button(page, b).click()
     expect(editor(page)).to_have_attribute("data-phase", "waiting")
-    select_button(page, "nav", c).click()
+    nav_button(page, c).click()
     expect(editor(page)).to_have_attribute("data-phase", "waiting")
     page.wait_for_timeout(300)
     assert gets == []
@@ -542,7 +542,7 @@ def test_E_G10_an_older_answer_after_the_generation_is_dropped(page, e2e_server)
     analysis_id, a, b, c = setup(e2e_server, "古い応答")
     open_edit(page, analysis_id)
     held = start_held(page, analysis_id)
-    select_button(page, "nav", b).click()
+    nav_button(page, b).click()
     held_get = hold(page, f"**/nodes/{b}")
     release(page, held)
     pump(page, lambda: len(held_get) == 1)  # B's read after the generation, held
@@ -583,7 +583,7 @@ def test_E_G10_a_failed_second_read_is_not_a_failed_first_read(page, e2e_server,
     # A first read that fails after a generation: 読み込めませんでした.
     failing["on"] = True
     held = start_held(page, analysis_id)
-    select_button(page, "nav", b).click()
+    nav_button(page, b).click()
     expect(editor(page)).to_have_attribute("data-phase", "waiting")
     release(page, held)
     expect(editor(page)).to_have_attribute("data-phase", "failed")
@@ -615,7 +615,7 @@ def test_E_G11_title_and_inspector_saves_are_held_back_and_the_two_choices(page,
     force_click(factor_save(page))
     expect(inspector(page).locator("[data-factor-message]")).to_contain_text("生成の準備中・生成中・結果の反映中は保存できません")
     # A switch with a draft: two choices and the reason; 編集を続ける keeps it.
-    select_button(page, "nav", c).click()
+    nav_button(page, c).click()
     dialog = leave_dialog(page)
     expect(dialog.locator("[data-generating-reason]")).to_have_text(GENERATING_SWITCH)
     expect(dialog.get_by_role("button", name="保存して移動")).to_have_count(0)
@@ -626,7 +626,7 @@ def test_E_G11_title_and_inspector_saves_are_held_back_and_the_two_choices(page,
     release(page, held)
     # After the end: the second read keeps the draft; three choices again.
     expect(factor_field(page, "memo")).to_have_value("生成中のメモ")
-    select_button(page, "nav", c).click()
+    nav_button(page, c).click()
     expect(leave_dialog(page).get_by_role("button", name="保存して移動")).to_be_visible()
     leave_dialog(page).get_by_role("button", name="編集を続ける").click()
     title_input(page).press("Enter")
@@ -641,7 +641,7 @@ def test_E_G11_no_draft_no_question(page, e2e_server):
     open_edit(page, analysis_id)
     choose(page, b)
     held = start_held(page, analysis_id)
-    select_button(page, "nav", c).click()
+    nav_button(page, c).click()
     expect(leave_dialog(page)).to_have_count(0)
     expect(editor(page)).to_have_attribute("data-node-id", str(c))
     release(page, held)
@@ -873,8 +873,8 @@ def test_E_G10_a_save_is_never_rolled_back_by_an_older_second_read(page, e2e_ser
     assert e2e_server.get_node(b)["memo"] == "新メモ"
     # The cache is the saved one too: shown again during the next generation.
     held = start_held(page, analysis_id)
-    select_button(page, "nav", c).click()
-    select_button(page, "nav", b).click()
+    nav_button(page, c).click()
+    nav_button(page, b).click()
     expect_editor_ready(page, b)
     expect(factor_field(page, "memo")).to_have_value("新メモ")
     expect(factor_field(page, "description")).to_have_value("別の欄の変更")
@@ -902,7 +902,7 @@ def test_E_G10_save_and_go_does_not_cross_a_second_read_either(page, e2e_server,
     pump(page, lambda: len(reads) == 1)
     step_button(page, 1).click()
     page.fill("#systemContextInput", "保存できない参考情報")
-    select_button(page, "nav", c).click()
+    nav_button(page, c).click()
     dialog = leave_dialog(page)
     dialog.get_by_role("button", name="保存して移動").click()
     expect(dialog.locator('[data-save-result="saved"]')).to_have_count(1)  # the factor
@@ -1018,7 +1018,7 @@ def test_E_G09_details_held_back_by_a_preparation_are_read_when_it_ends(page, e2
         }""")
     start_preparing(page, 2)
     gets = detail_gets(page)
-    select_button(page, "nav", c).click()  # never read: 取得待ち
+    nav_button(page, c).click()  # never read: 取得待ち
     expect(editor(page)).to_have_attribute("data-phase", "waiting")
     if ending == "cancel":
         gen_status(page).get_by_role("button", name="生成を取りやめる").click()

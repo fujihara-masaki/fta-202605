@@ -43,6 +43,46 @@ def select_button(page, role: str, node_id):
     return page.locator(f'[data-action="select"][data-role="{role}"][data-node-id="{node_id}"]')
 
 
+# ----- PR-7: the structure navigation folded below 1280px -------------------
+# Below 1280px the navigation is hidden until its button (the header's
+# 「構造を表示」) shows it over the work area, as a user opens it before using
+# it; choosing a factor in it closes it again (js/pages/edit/nav-drawer.js).
+# The tests written for the three panes reach it through these.
+
+def nav_folded(page) -> bool:
+    return page.evaluate("() => window.matchMedia('(width < 1280px)').matches")
+
+
+def nav_shown(page) -> bool:
+    return page.locator("#edit-nav").is_visible()
+
+
+def open_nav(page) -> None:
+    """Show the folded navigation (nothing to do from 1280px on)."""
+    if nav_folded(page) and not nav_shown(page):
+        page.locator("[data-nav-toggle]").click()
+        expect(page.locator("#edit-nav")).to_be_visible()
+
+
+def close_nav(page) -> None:
+    """Fold the navigation again (its button; the focus goes to the button)."""
+    if nav_folded(page) and nav_shown(page):
+        page.locator("[data-nav-toggle]").click()
+        expect(page.locator("#edit-nav")).to_be_hidden()
+
+
+def nav_button(page, node_id):
+    """The factor's button in the navigation, shown first when folded."""
+    open_nav(page)
+    return select_button(page, "nav", node_id)
+
+
+def nav_top(page):
+    """The top event's button in the navigation, shown first when folded."""
+    open_nav(page)
+    return top_button(page, "nav")
+
+
 def item(page, role: str, node_id):
     return page.locator(f'[data-role="{role}-item"][data-node-id="{node_id}"]')
 
@@ -233,7 +273,7 @@ def fill_factor(page, **fields) -> None:
 
 def choose(page, node_id, role: str = "nav") -> None:
     """Choose a factor (an R-01 route) and wait until its editor is ready."""
-    select_button(page, role, node_id).click()
+    (nav_button(page, node_id) if role == "nav" else select_button(page, role, node_id)).click()
     expect_editor_ready(page, node_id)
 
 

@@ -65,6 +65,19 @@ def test_ps1_avoids_powershell7_only_operators():
         assert not re.search(pattern, code), f"Windows PowerShell 5.1 に無い {label} が使われています"
 
 
+def test_ps1_fullsizes_runs_every_size_and_every_run_keeps_the_screens():
+    """PR-7, checked without PowerShell: FullSizes is the required run with
+    --e2e-viewport-set pr7, the other runs keep the review screens, and the
+    removed favicon exception is no longer read from the report."""
+    code = code_lines(PS1.read_bytes().decode("utf-8-sig"))
+    assert '[ValidateSet("Setup", "Preflight", "Full", "FullSizes", "Diagnose")]' in code
+    assert '$runArgs += $(if ($Mode -eq "Preflight") { "--e2e-preflight" } else { "--e2e-required" })' in code
+    assert 'if ($Mode -eq "FullSizes") { $runArgs += @("--e2e-viewport-set", "pr7") }' in code
+    assert code.count('"--e2e-viewport-set", "pr7"') == 1
+    assert '"--e2e-screens", $paths.Screens' in code
+    assert "既知の例外" not in code and '"コンソールのエラーの例外"' in code
+
+
 def find_powershell(names=("pwsh", "powershell")):
     for name in names:
         path = shutil.which(name)
@@ -187,7 +200,8 @@ done
 printf '%s\n' "| 実行環境の区分 | $label |" \
   '| 判定 | 失敗（準備確認。全必須 E2E の合格ではありません） |' \
   '| 結果（テスト単位） | 成功 6・失敗 1・スキップ 0・未実施 0 |' \
-  '| 既知の例外（favicon の 404） | 1 件（コンソールの確認から除いたもの） |' \
+  '| コンソールのエラーの例外 | なし（PR-7 で favicon を実装し、favicon の 404 の既知の例外を廃止） |' \
+  '| 寸法の組（--e2e-viewport-set） | base：基本寸法 |' \
   '| 起動したブラウザ | Microsoft Corporation 154.0.0.0 |' > "$report"
 echo "tests/e2e/test_x.py::test_x[1280x800] FAILED [100%]"
 exit 1
@@ -240,7 +254,8 @@ def test_a_run_writes_a_new_record_folder_and_passes_on_the_exit_code(run_script
     assert f"| 対象 SHA | {sha}（未コミットの変更なし） |" in info
     assert "| 終了コード（pytest） | 1 |" in info
     assert "| 判定（e2e-report.md） | 失敗（準備確認。全必須 E2E の合格ではありません） |" in info
-    assert "| 既知の例外（favicon の 404） | 1 件（e2e-report.md の「既知の例外として除いたコンソールのエラー」） |" in info
+    assert "| コンソールのエラーの例外 | なし（PR-7 で favicon を実装し、favicon の 404 の既知の例外を廃止） |" in info
+    assert "| 寸法の組 | base：基本寸法 |" in info
     # Not Windows: the leftover processes are not checked, and the record says so (never "none").
     assert "| 残っていたプロセス | 未確認（Windows 以外では、このスクリプトはプロセスを確認しません） |" in info
     # Where it ran: the development environment with the actual OS, never "the user's Windows PC".

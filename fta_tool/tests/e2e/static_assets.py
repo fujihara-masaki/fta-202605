@@ -2,7 +2,14 @@
 2.3, 2.4): its stylesheets and the modules reached from boot.js and its
 entry, read from the files' import lines. Shared by the cache tests
 (tests/e2e/test_static_cache.py) and W-02's tool
-(tests/e2e/cache_manual_check.py), so the list is kept in one place."""
+(tests/e2e/cache_manual_check.py), so the list is kept in one place.
+
+PR-7 removed the legacy style.css (the edit screen's last legacy rule,
+.ai-badge, moved to css/edit.css) and added js/pages/edit/nav-drawer.js:
+the edit screen still loads 34 files and the screens 38 together. The icon
+every screen declares (favicon.svg) is the one other static file: the
+browser asks for it on its own, outside the stylesheets and modules, so it
+is listed apart (ICON_FILES) and is not part of the 38."""
 
 from __future__ import annotations
 
@@ -15,8 +22,9 @@ APP_STATIC = pathlib.Path(__file__).resolve().parents[2] / "app" / "static"
 SCREEN_CSS_FILES = {
     "list": ("css/tokens.css", "css/base.css", "css/components.css", "css/list.css"),
     "new": ("css/tokens.css", "css/base.css", "css/components.css", "css/new.css"),
-    "edit": ("css/tokens.css", "css/base.css", "css/components.css", "css/edit.css", "style.css"),
+    "edit": ("css/tokens.css", "css/base.css", "css/components.css", "css/edit.css"),
 }
+ICON_FILES = ("favicon.svg",)
 SCREEN_ENTRY = {"list": "js/pages/list.js", "new": "js/pages/new.js", "edit": "js/pages/edit.js"}
 SCREEN_ASSET_COUNTS = {"list": 14, "new": 13, "edit": 34}
 ALL_ASSETS = 38
@@ -52,7 +60,8 @@ def screen_assets(screen: str) -> list[str]:
 def all_assets() -> list[str]:
     assets = sorted(set().union(*(screen_assets(screen) for screen in SCREENS)))
     files = sorted(p.relative_to(APP_STATIC).as_posix() for p in APP_STATIC.rglob("*") if p.is_file())
-    assert assets == files and len(assets) == ALL_ASSETS, sorted(set(assets) ^ set(files))
+    expected = sorted(assets + list(ICON_FILES))
+    assert expected == files and len(assets) == ALL_ASSETS, sorted(set(expected) ^ set(files))
     return assets
 
 
