@@ -133,7 +133,7 @@ python -m uvicorn app.main:app --app-dir "C:\fta-check\src-pr8\fta_tool" --port 
 
 | 条件 | 状況 |
 |---|---|
-| 1 通常の pytest と必須受入検証が通る | 開発環境（`254f826`）で実施。結果は [evidence/pr8/README.md](evidence/pr8/README.md)（スキップは PowerShell がないための環境依存のものだけ。必須 E2E のスキップ・未実施は 0 であることを記録で確認） |
+| 1 通常の pytest と必須受入検証が通る | **開発環境（`254f826`、2026-11-02）で成功**：通常の pytest 467 passed / 20 skipped（E2E を含めて 1063 passed / 20 skipped。スキップはすべて PowerShell がないための環境依存）、累積の全必須 E2E 596 passed・失敗 0・スキップ 0・未実施 0、必須 75 項目すべて成功（[evidence/pr8/README.md](evidence/pr8/README.md)）。Windows では未実施（`b118038` の記録を根拠に使う範囲は第4節） |
 | 1-1 利用者の Windows での手動確認（E2E とは別に記録） | Edge・Chrome、表示倍率、日本語入力、主要操作は、PR-1〜PR-7 の各受入の記録（第4節）。**PR-8 の受入対象の SHA での確認は第5節（未実施）** |
 | 1-2 第6節の判断の記録の更新 | 計画書 第6節「PR-8 時点の J 項目の状況」で更新。条件付き採用のうち確認できなかった条件：J-25 の「安全性が確認できない削除を無条件に実行可能にしない」は、一覧からの分析の削除の経路で満たしていない（S-11）。J-20 の推奨の Firefox・macOS Safari は未確認 |
 | 2 利用者が付録D を利用者の環境で確認し、受け入れた | **未実施**（第4節の表・第5節） |
