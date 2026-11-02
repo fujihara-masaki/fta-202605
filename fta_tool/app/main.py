@@ -849,7 +849,13 @@ async def generate_factors(
 
 @app.post("/analyses/{analysis_id}/delete")
 def delete_analysis(analysis_id: int, db: Session = Depends(get_db)):
-    analysis = crud.delete_analysis(db, analysis_id)
+    # S-11: a delete whose scope reaches another analysis, loops, or cannot
+    # be walked completely is refused with 409 and the reason; nothing changes.
+    try:
+        analysis = crud.delete_analysis(db, analysis_id)
+    except crud.DeleteRefused as refused:
+        logger.warning("分析の削除を拒否しました | analysis_id=%s reason=%s", analysis_id, refused.reason)
+        raise HTTPException(status_code=409, detail=refused.reason) from None
     if not analysis:
         raise HTTPException(status_code=404, detail="分析が見つかりません")
     return {"success": True}
@@ -892,7 +898,12 @@ async def update_node(node_id: int, request: Request, db: Session = Depends(get_
 
 @app.post("/nodes/{node_id}/delete")
 def delete_node(node_id: int, db: Session = Depends(get_db)):
-    node = crud.delete_node(db, node_id)
+    # S-11: as for the analysis delete (crud.check_delete_scope).
+    try:
+        node = crud.delete_node(db, node_id)
+    except crud.DeleteRefused as refused:
+        logger.warning("要因の削除を拒否しました | node_id=%s reason=%s", node_id, refused.reason)
+        raise HTTPException(status_code=409, detail=refused.reason) from None
     if not node:
         raise HTTPException(status_code=404, detail="ノードが見つかりません")
     return {"success": True}
