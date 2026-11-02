@@ -148,7 +148,7 @@ DB スキーマの変更、不整合データの自動修復、生成の並行�
 - 試験：`tests/test_node_integrity.py`（T-07。既存の削除 API の動作の記録を含む）、`tests/e2e/test_edit_integrity.py`（E-E08・PR3-DELETE-SCOPE・PR3-GEN-PARENTS）。
 - 実行確認に使ったスクリプトは [evidence/pr8/s11-s12-probe-254f826.md](evidence/pr8/s11-s12-probe-254f826.md) に全文と出力を記録した（アプリの変更なし、一時 DB）。
 
-## 8. 実装の結果（2026-11-02、専用 PR `claude/pr8-s11-s12-fix`）
+## 8. 実装の結果（2026-11-02、専用 PR #28 `claude/pr8-s11-s12-fix`）
 
 第1〜6節は判断の前・判断の時点の記録として残す（第2節の「現在の動作」は `254f826` のもの）。
 
