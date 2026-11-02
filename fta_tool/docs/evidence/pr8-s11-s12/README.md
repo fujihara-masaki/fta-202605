@@ -1,6 +1,6 @@
 # S-11・S-12 の対策の試験記録（受入候補 `40b3778`）
 
-状態（2026-11-02）：**開発環境の自動試験は成功**。**Windows 11 の Chrome・Edge の Preflight → Full、付録D の補足の実操作、PR-8 の最終受入（利用者）は未実施**（手順は [manual-check-pr8.md](../../manual-check-pr8.md) 第5節）。対策の内容は [pr8-s11-s12-options.md](../../pr8-s11-s12-options.md) 第8節。
+状態（2026-11-02）：**開発環境の自動試験は成功**。同日、**Windows 11 Home の Chrome・Edge の Preflight → Full（各 601 件成功、必須 77/77）、付録D の代表操作、利用者による PR-8 の最終受入（合格）**（[windows-2026-11-02-40b3778.md](windows-2026-11-02-40b3778.md)。利用者の報告による記録）。PR #28 のマージは未実施。対策の内容は [pr8-s11-s12-options.md](../../pr8-s11-s12-options.md) 第8節。
 
 ## 対象
 
@@ -17,6 +17,7 @@
 |---|---|
 | `pytest-40b3778.md` | 追加の回帰試験（S-11・S-12 を別々に）、通常の pytest（E2E を除く：497 passed / 20 skipped、E2E を含む：1096 passed / 20 skipped。スキップはすべて PowerShell がないための環境依存）、Full のコマンドと件数、対策前との件数の比較、対策前のコードでの検出力 |
 | `e2e-report-40b3778-full.md` | 累積の全必須 E2E（Full）の記録：成功 599・失敗 0・スキップ 0・未実施 0、判定「合格」、**必須 77 項目すべて成功**（Chromium 153、headless、18分55秒） |
+| `windows-2026-11-02-40b3778.md` | Windows 11 Home の Chrome・Edge の Preflight（各 9 件）・Full（各 601 件、必須 77/77）、付録D の代表操作 7 項目、PR-8 の最終受入（合格）。**利用者の報告による記録**（記録フォルダは利用者の PC にあり、ここでは検査していない） |
 | `s11-s12-probe-40b3778.md` | PR-8 の実行確認のスクリプトを変えずに受入候補で再実行：削除 3 種は 409 でデータ不変、生成 2 種は即時に `success:false`（対策前は 200 の巻き込み・500・20 秒以内に応答なし） |
 
 ## Windows の Full の件数の見込み
@@ -29,7 +30,7 @@
 
 ## 実施していないもの
 
-- Windows の Chrome・Edge での試験（Preflight・Full）：未実施（利用者が受入候補で行う）。
+- ~~Windows の Chrome・Edge での試験（Preflight・Full）：未実施（利用者が受入候補で行う）~~ → 2026-11-02 に利用者が実施（`windows-2026-11-02-40b3778.md`）。
 - 全テストの PR-7 の全寸法での実行（FullSizes）：開発環境でも未実施（Windows は省略が承認済み）。
 - Chromium 141（Playwright の固定版のブラウザ）での実行：未実施。
 - 実際の uvicorn の複数ワーカーでの同時実行による S-11 の並行の変更の確認：未実施（検査の直後に別の接続で変更を確定する注入で試験）。
