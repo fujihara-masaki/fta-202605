@@ -4,7 +4,8 @@ Tests for the analysis-context input / edit UX:
 - Normal (hand-entered) creation saves system_context / incident_context.
 - Creation without context keeps the legacy behavior (analysis_context == "").
 - The new-analysis form shows the context fields as visible inputs (the
-  sample-scenario apply writes into them, not into hidden fields).
+  sample-scenario transfer writes into them, not into hidden fields); the
+  sample data is embedded as JSON for the screen's module.
 - The detail page renders the saved context and the dedicated update API
   (POST /analyses/{id}/context) trims, preserves demo_points and unknown
   keys, and safely handles empty / broken / legacy-shaped JSON.
@@ -14,6 +15,7 @@ Tests for the analysis-context input / edit UX:
 """
 
 import json
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -25,6 +27,7 @@ from app import crud, models, schemas
 from app.database import get_db
 from app.main import app
 from app.services.ai_provider import GeneratedFactor
+from tests.test_ui_templates import parse
 
 
 @pytest.fixture()
@@ -122,11 +125,15 @@ def test_create_analysis_without_context_keeps_legacy_behavior(client):
 
     analysis_id = int(res.headers["location"].rstrip("/").split("/")[-1])
     assert _get_stored_context(client, analysis_id) == ""
-    # Detail page still renders (empty-context state shows the add affordance).
+    # The edit screen still opens: step ① has both reference fields (ids
+    # kept) and shows the empty state (plan appendix C).
     page = client.get(f"/analyses/{analysis_id}")
     assert page.status_code == 200
-    assert "分析コンテキスト" in page.text
-    assert "未入力" in page.text
+    root = parse(page.text)
+    for field_id in ("systemContextInput", "incidentContextInput"):
+        field = root.find("textarea", id=field_id)
+        assert (field.text(), field.attrs["data-saved"]) == ("", "")
+    assert "empty" in root.find(id="analysisContextStatus").attrs["class"].split()
 
 
 # --- New-analysis form: visible fields (sample apply targets them) -----------
@@ -141,13 +148,29 @@ def test_new_analysis_form_shows_visible_context_fields(client):
     assert "障害発生時の状況・観測事実" in res.text
     assert '<input type="hidden" id="systemContextInput"' not in res.text
     assert '<input type="hidden" id="incidentContextInput"' not in res.text
-    # applySample writes into the visible fields by these ids.
-    assert 'id="systemContextInput"' in res.text
-    assert 'id="incidentContextInput"' in res.text
-    # demo_points stays a hidden field (only filled by the sample apply).
-    if "SAMPLE_SCENARIOS" in res.text:
-        assert '<input type="hidden" id="demoPointsInput" name="demo_points"' in res.text
-        assert "getElementById('systemContextInput').value = sample.system_context" in res.text
+    # The sample transfer writes into the visible fields by these ids.
+    assert '<textarea id="systemContextInput" name="system_context"' in res.text
+    assert '<textarea id="incidentContextInput" name="incident_context"' in res.text
+    # demo_points stays a hidden field (only filled by the sample transfer).
+    assert '<input type="hidden" id="demoPointsInput" name="demo_points" value="">' in res.text
+    # The transfer is done by the screen's module (static/js/pages/new.js),
+    # not by an inline script, from the sample data embedded as JSON (T-03);
+    # the transfer itself is checked in a real browser (E-N03).
+    assert "getElementById('systemContextInput').value" not in res.text
+    assert '<script type="module" src="/static/js/pages/new.js"></script>' in res.text
+    samples = main_module.get_sample_scenarios()
+    if samples:
+        match = re.search(
+            r'<script type="application/json" id="sample-scenarios-data">(.*?)</script>', res.text, re.S)
+        assert match
+        embedded = json.loads(match.group(1))
+        assert [s["id"] for s in embedded] == [s["id"] for s in samples]
+        for sample in embedded:
+            # what the transfer writes into the visible fields and demo_points
+            assert isinstance(sample["top_event"], str)
+            assert isinstance(sample["system_context"], str)
+            assert isinstance(sample["incident_context"], str)
+            assert isinstance(sample["demo_points"], str)
 
 
 # --- Detail page: display ----------------------------------------------------
@@ -162,10 +185,14 @@ def test_detail_page_renders_saved_context(client):
         client, analysis_context=json.dumps(ctx, ensure_ascii=False))
     res = client.get(f"/analyses/{analysis_id}")
     assert res.status_code == 200
-    assert "認証システムはWeb2台構成" in res.text
-    assert "9時から500エラー" in res.text
-    assert "入力済み" in res.text
-    # demo_points is kept server-side only, not surfaced as an input.
+    root = parse(res.text)
+    assert root.find("textarea", id="systemContextInput").text() == "認証システムはWeb2台構成"
+    assert root.find("textarea", id="incidentContextInput").text() == "9時から500エラー"
+    # Saved state of the reference information (the old status element,
+    # moved as it was; PR-4 replaces it with the new save status, J-11).
+    assert "filled" in root.find(id="analysisContextStatus").attrs["class"].split()
+    # demo_points is kept server-side only: not an input, not in the page,
+    # not in the embedded summary.
     assert "デモ観点X" not in res.text
 
 
@@ -173,7 +200,10 @@ def test_detail_page_safe_on_broken_context_json(client):
     analysis_id = _create_analysis(client, analysis_context="{broken json")
     res = client.get(f"/analyses/{analysis_id}")
     assert res.status_code == 200
-    assert "分析コンテキスト" in res.text
+    root = parse(res.text)
+    for field_id in ("systemContextInput", "incidentContextInput"):
+        assert root.find("textarea", id=field_id).text() == ""
+    assert "empty" in root.find(id="analysisContextStatus").attrs["class"].split()
 
 
 # --- POST /analyses/{id}/context ---------------------------------------------

@@ -1,0 +1,7 @@
+{#- Tree view (the ツリー tab): the whole tree with level, judgement and
+    tags; judgement changes are reflected here at once (C-04). The filter
+    only highlights (J-08). -#}
+{% import "edit/_parts.html" as parts %}
+<div data-region="tree">
+  {{ parts.outline(view, 'tree', analysis.top_event) }}
+</div>

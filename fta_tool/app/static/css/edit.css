@@ -1,0 +1,1143 @@
+/* ===== Analysis edit (B) =====
+ * Three panes below the header and the work steps: structure navigation,
+ * work area (tabs, filter, the chosen view) and inspector, each scrolling
+ * on its own. Widths and heights are those of the display area the browser
+ * lays out (CSS px, document.documentElement.clientWidth × clientHeight;
+ * J-20, plan 5.9.4, finished in PR-7):
+ *   1280px and wider   the three panes side by side;
+ *   1024〜1279px       the structure navigation is folded: the button
+ *                      「構造を表示」 at the start of the header shows it over
+ *                      the left of the work area (js/pages/edit/
+ *                      nav-drawer.js); the work area and the inspector stay;
+ *   below 1024px       the work area's content keeps the width it has at
+ *                      1024px and scrolls sideways inside the work area; the
+ *                      inspector (its 保存・取消 at its bottom), the header and
+ *                      the dialogs stay within the display area, so they are
+ *                      reached without scrolling sideways.
+ * The notifications are below the work area, in a row of their own: they
+ * never cover a pane (plan 8.7 condition 4). The 保存・取消 bar of the
+ * factor's editor is at the bottom of the inspector, outside its scroll
+ * area, from the moment the editor is shown (condition 2), and the dialogs
+ * stay within the display area (their body scrolls). The user's display areas measured on 2026-10-28 (plan
+ * 5.9.4): Chrome 1920×945・1536×756・1280×630, Edge 1912×914・1530×731・
+ * 1275×609 at zoom 100・125・150 % — Edge at 150 % is below 1280px.
+ * Parts come from components.css.
+ */
+
+.edit-page [hidden] {
+  display: none !important;
+}
+
+.edit-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - var(--header-height));
+  overflow: hidden;
+}
+
+/* ----- Header: the analysis title edited inline, export menu, 一覧へ (PR-4) ----- */
+.edit-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.edit-header__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.edit-header__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+}
+.edit-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.edit-title__text {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.edit-title-editor {
+  display: grid;
+  grid-template-columns: minmax(240px, 560px) auto;
+  align-items: center;
+  column-gap: var(--space-2);
+  row-gap: 2px;
+  min-width: 0;
+}
+.edit-title-editor__input {
+  min-width: 0;
+}
+.edit-title-editor__actions {
+  display: flex;
+  gap: var(--space-1);
+}
+.edit-title-editor__help,
+.edit-title-editor__error {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+/* The AI provider in use (moved from the legacy style.css in PR-7). */
+.ai-badge {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--color-primary);
+  border-radius: 999px;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+/* ----- Work steps ①〜⑤ ----- */
+.edit-steps {
+  flex: none;
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.edit-steps__list {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.edit-step {
+  display: grid;
+  grid-template-areas: "number name" "number status";
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-2);
+  width: 100%;
+  min-height: 44px;
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+.edit-step:hover {
+  background: var(--color-surface-hover);
+}
+.edit-step:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+.edit-step__number {
+  grid-area: number;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+}
+.edit-step__name {
+  grid-area: name;
+  overflow: hidden;
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.edit-step__status {
+  grid-area: status;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.edit-step[aria-current="step"] {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  box-shadow: inset 0 -3px 0 var(--color-primary);
+}
+.edit-step[aria-current="step"] .edit-step__number {
+  color: var(--color-primary);
+}
+
+/* ----- Three panes ----- */
+/* Row 2 holds the notifications, below the work area only (#ui-toasts in
+   analysis_detail.html; empty, it takes no room). */
+.edit-layout {
+  position: relative;
+  display: grid;
+  flex: 1;
+  grid-template-columns: clamp(240px, 17vw, 320px) minmax(0, 1fr) clamp(340px, 23vw, 440px);
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
+}
+.edit-nav {
+  grid-column: 1;
+  grid-row: 1 / -1;
+}
+.edit-center {
+  grid-column: 2;
+  grid-row: 1;
+}
+.edit-layout > .ui-toast-stack {
+  grid-column: 2;
+  grid-row: 2;
+}
+.edit-inspector {
+  grid-column: 3;
+  grid-row: 1 / -1;
+}
+.edit-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-surface);
+}
+.edit-nav {
+  border-right: 1px solid var(--color-border);
+}
+.edit-inspector {
+  position: relative;
+  border-left: 1px solid var(--color-border);
+}
+.edit-center {
+  background: var(--color-bg);
+}
+.edit-pane__heading {
+  flex: none;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.edit-pane__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.edit-nav .edit-pane__scroll {
+  padding: var(--space-2) var(--space-2) var(--space-5);
+}
+.edit-center .edit-pane__scroll {
+  /* The 128px of room below the last controls that PR-4 kept for the
+     notifications over the work area went with PR-7's fix: they have a row
+     of their own below it, and that room would keep the area from getting
+     lower than 144px (it would overlap their row at 500px high). */
+  padding: var(--space-4) var(--space-5) var(--space-6);
+}
+.edit-inspector .edit-pane__scroll {
+  /* Above the 保存・取消 bar (its height: js/pages/edit/inspector.js). */
+  margin-bottom: var(--edit-editor-bar-height, 0px);
+  padding: var(--space-3) var(--space-4) var(--space-6);
+}
+.edit-pane__scroll {
+  scroll-padding-block: var(--space-2);
+}
+#edit-work-area:focus,
+#edit-inspector:focus,
+.edit-view:focus {
+  outline: none;
+}
+.edit-view:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 4px;
+}
+
+/* ----- Work area bar: tabs and filter ----- */
+.edit-center__bar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-2) var(--space-5) 0;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.edit-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+.edit-filter__text {
+  width: 220px;
+  min-height: 32px;
+}
+.edit-filter__select {
+  width: auto;
+  min-height: 32px;
+}
+.edit-filter__count {
+  min-width: 7em;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+
+/* ----- Outline: structure navigation and tree ----- */
+.edit-outline,
+.edit-outline__children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.edit-outline__children {
+  margin-left: 12px;
+  padding-left: 8px;
+  border-left: 1px solid var(--color-border);
+}
+.edit-outline__node {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  width: 100%;
+  margin: 1px 0;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+}
+.edit-outline__node:hover {
+  background: var(--color-surface-hover);
+}
+.edit-outline__node:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: -1px;
+}
+.edit-outline__node[aria-current="true"] {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+}
+.edit-outline__title {
+  flex: 1 1 8em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.edit-outline__node--top .edit-outline__title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.edit-outline__issue {
+  flex-basis: 100%;
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+}
+.edit-tree__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin: 1px 0;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+}
+.edit-outline__item.is-selected > .edit-tree__row {
+  background: var(--color-primary-soft);
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+.edit-outline--tree {
+  font-size: var(--font-size-sm);
+}
+/* Filter (J-08): the navigation and the tree highlight, never hide. */
+.edit-outline__item.is-filter-match > .edit-outline__node,
+.edit-outline__item.is-filter-match > .edit-tree__row {
+  background: var(--color-warning-soft);
+  box-shadow: inset 3px 0 0 var(--color-warning);
+}
+.edit-outline__item.is-filter-dim > .edit-outline__node,
+.edit-outline__item.is-filter-dim > .edit-tree__row {
+  opacity: 0.45;
+}
+
+.edit-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-primary);
+  font-family: var(--font-sans);
+  font-size: inherit;
+  font-weight: 600;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.edit-link:hover {
+  color: var(--color-primary-hover);
+}
+.edit-link:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+.edit-link[aria-current="true"] {
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+/* ----- Group of factors with inconsistent parent links (J-25) ----- */
+.edit-anomalies {
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-soft);
+}
+.edit-anomalies__title {
+  margin-bottom: var(--space-2);
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+.edit-anomalies__lead {
+  margin-bottom: var(--space-2);
+  font-size: var(--font-size-xs);
+}
+.edit-anomalies .edit-outline__node,
+.edit-anomalies .edit-tree__row {
+  background: var(--color-surface);
+}
+
+/* ----- Work view ----- */
+.edit-step-panel__title {
+  margin-bottom: var(--space-3);
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+}
+.edit-opbar {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+.edit-opbar__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.edit-opbar__note {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.edit-rows {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.edit-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+.edit-row.is-selected {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-soft);
+}
+.edit-row[data-depth="2"] {
+  margin-left: 24px;
+}
+.edit-row[data-depth="3"] {
+  margin-left: 48px;
+}
+.edit-row__body {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+}
+.edit-row__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.edit-row__title {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-md);
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.edit-row__title:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+.edit-row__title:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+.edit-row[data-judgement="no"] .edit-row__title {
+  color: var(--color-text-muted);
+}
+.edit-row__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.edit-row__desc {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.edit-group {
+  margin-bottom: var(--space-4);
+}
+.edit-group__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-left: 4px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+}
+.edit-group__header.is-selected {
+  border-left-color: var(--color-primary);
+}
+.edit-group__title {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+.edit-group__prefix {
+  flex: none;
+  color: var(--color-text-muted);
+}
+.edit-group__judgement {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.edit-group__actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+.edit-empty {
+  padding: var(--space-3);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+.edit-empty--group {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+}
+.edit-work__anomalies {
+  margin-top: var(--space-5);
+}
+
+/* ① top event and the reference information, with the save status (PR-4) */
+.edit-step1__autosave {
+  margin-bottom: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-soft);
+  font-size: var(--font-size-sm);
+}
+.edit-step1__autosave p {
+  margin: 0;
+}
+.edit-step1__label-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.edit-step1__message {
+  flex: 1 1 auto;
+  margin: 0;
+  color: var(--color-danger);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+.edit-step1 {
+  display: grid;
+  gap: var(--space-4);
+}
+.edit-step1__block {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+.edit-step1__subtitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-md);
+  font-weight: 700;
+}
+.edit-step1__context {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+.edit-step1__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+.edit-opbar__warn {
+  display: block;
+  color: var(--color-warning);
+  font-weight: 700;
+}
+.context-status {
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.context-status.filled {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+.context-status.empty {
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+}
+
+/* ⑤ counts, what each export format contains, export links (PR-4) */
+.edit-summary,
+.edit-step5__export {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+}
+.edit-step5__title {
+  margin: 0;
+  font-size: var(--font-size-md);
+  font-weight: 700;
+}
+.edit-step5__lead,
+.edit-step5__note {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+.edit-summary__table td,
+.edit-summary__table th[scope="col"] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.edit-summary__table th[scope="col"]:first-child {
+  text-align: left;
+}
+.edit-export-table td[data-included="no"] {
+  color: var(--color-text-muted);
+}
+.edit-export-table td[data-included="partial"] {
+  color: var(--color-warning);
+}
+.edit-step5__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* ----- Table view ----- */
+.edit-table {
+  font-size: var(--font-size-sm);
+}
+.edit-table tbody tr.is-selected td {
+  background: var(--color-primary-soft);
+}
+.edit-table__title {
+  min-width: 180px;
+}
+.edit-table__title .ui-tag {
+  margin-left: 4px;
+}
+.edit-table__parent {
+  max-width: 240px;
+  overflow-wrap: anywhere;
+}
+.edit-table__warning {
+  max-width: 240px;
+  color: var(--color-warning);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+.edit-table__desc {
+  min-width: 200px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  overflow-wrap: anywhere;
+}
+
+/* ----- Inspector ----- */
+.edit-inspector__body {
+  display: grid;
+  gap: var(--space-3);
+}
+.edit-crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  margin: 0;
+  padding: 0;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  list-style: none;
+}
+.edit-crumbs li + li::before {
+  margin-right: 4px;
+  content: "›";
+}
+.edit-crumbs [aria-current="page"] {
+  color: var(--color-text);
+  font-weight: 700;
+}
+.edit-inspector__title {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.edit-inspector__title:focus,
+.edit-inspector__section-title:focus {
+  outline: none;
+}
+.edit-inspector__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.edit-inspector__section {
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+.edit-inspector__section-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+.edit-inspector__section > .ui-judgement {
+  justify-self: start;
+}
+.edit-inspector__notice {
+  display: grid;
+  gap: 4px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-soft);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+.edit-inspector__warning {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-soft);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.edit-inspector__text {
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+/* Unused since PR-5 (the read-only details list became the editor); the old
+   CSS is removed in PR-7. */
+.edit-details {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px var(--space-3);
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+.edit-details dt {
+  color: var(--color-text-muted);
+  font-weight: 700;
+}
+.edit-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.edit-details dd[data-empty="true"] {
+  color: var(--color-text-muted);
+}
+.edit-inspector__status {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.edit-inspector__status[data-kind="error"] {
+  color: var(--color-danger);
+  font-weight: 700;
+}
+.edit-inspector__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.edit-inspector__reason {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.edit-children {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.edit-children li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  font-size: var(--font-size-sm);
+}
+
+/* ----- The analysis is gone (partial update got 404) ----- */
+.edit-gone {
+  flex: none;
+  margin: var(--space-2) var(--space-5) 0;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-weight: 700;
+}
+
+/* ----- Inspector: the factor's editor (PR-5) -----
+   Seven fields saved with 保存. The 保存・取消 bar (with the reason of a
+   failed save) is at the bottom of the inspector pane, outside its scroll
+   area, from the moment the editor is shown: placed against the pane
+   (position: absolute; the scroll area is not positioned, so it neither
+   scrolls nor clips it), the scroll area ends above it (PR-7, plan 8.7
+   condition 2). In the page it stays after the fields, so Tab goes from the
+   fields to 保存・取消. Text wraps; no width depends on the font. */
+.edit-editor {
+  display: grid;
+  gap: var(--space-2);
+}
+.edit-editor__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-2);
+}
+.edit-editor__lead {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.edit-editor__fields {
+  display: grid;
+  gap: var(--space-2);
+}
+.edit-editor__field .ui-input {
+  width: 100%;
+}
+.edit-editor__field textarea.ui-input {
+  min-height: 3.2em;
+}
+.edit-editor__required {
+  margin-left: 4px;
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+}
+.edit-editor[data-phase="loading"] .edit-editor__fields,
+.edit-editor[data-phase="failed"] .edit-editor__fields {
+  opacity: 0.55;
+}
+.edit-editor__bar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1;
+  display: grid;
+  gap: var(--space-1);
+  max-height: 50%;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.edit-editor__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.edit-editor__message {
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+.edit-editor__message[data-kind="error"] {
+  color: var(--color-danger);
+  font-weight: 700;
+}
+.edit-editor__message[data-kind="info"] {
+  color: var(--color-text-muted);
+}
+.edit-editor__message[hidden] {
+  display: none;
+}
+
+/* ----- Dialogs with fields (manual add, PR-5) ----- */
+.ui-dialog--form .ui-field .ui-input {
+  width: 100%;
+}
+
+/* ----- PR-6: generation ----- */
+/* Status line of a generation under way, above the work area (visible on
+   every tab and step; hidden when idle). No viewport-dependent rule. */
+.edit-genstatus {
+  flex: none;
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--color-warning);
+  background: var(--color-warning-soft);
+  font-size: var(--font-size-sm);
+}
+.edit-genstatus[hidden] {
+  display: none;
+}
+.edit-genstatus__slow {
+  font-weight: 700;
+}
+.edit-genstatus__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+/* The three ways to add factors in the operation bar (J-06). */
+.edit-opbar__kinds {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  font-size: var(--font-size-sm);
+}
+.edit-opbar__kinds > div {
+  display: grid;
+  grid-template-columns: 6.5em minmax(0, 1fr);
+  gap: var(--space-2);
+}
+.edit-opbar__kinds dt {
+  font-weight: 700;
+}
+.edit-opbar__kinds dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+/* The generation log of a level (below its operation bar). */
+.edit-genlog {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  font-size: var(--font-size-sm);
+}
+.edit-genlog__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.edit-genlog__title {
+  margin: 0;
+  font-size: var(--font-size-md);
+}
+.edit-genlog__when,
+.edit-genlog__scope,
+.edit-genlog__storage {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+}
+.edit-genlog__restored,
+.edit-genlog__note {
+  padding: var(--space-1) var(--space-2);
+  border-left: 3px solid var(--color-warning);
+  background: var(--color-warning-soft);
+}
+.edit-genlog__rows {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.edit-genlog__row {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-2);
+  align-items: baseline;
+  overflow-wrap: anywhere;
+}
+.edit-genlog__details {
+  grid-column: 2;
+  margin: 0;
+  padding-left: var(--space-4);
+  color: var(--color-text-muted);
+}
+.edit-genlog__badge,
+.edit-genbadge {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.edit-genlog__badge[data-category="created"],
+.edit-genbadge[data-category="created"] {
+  border-color: var(--color-success);
+  background: var(--color-success-soft);
+}
+.edit-genlog__badge[data-category="failed"],
+.edit-genlog__badge[data-category="network"],
+.edit-genlog__badge[data-category="parent-gone"],
+.edit-genlog__badge[data-category="analysis-gone"],
+.edit-genlog__badge[data-category="server-error"],
+.edit-genbadge[data-category="failed"],
+.edit-genbadge[data-category="network"],
+.edit-genbadge[data-category="parent-gone"],
+.edit-genbadge[data-category="analysis-gone"],
+.edit-genbadge[data-category="server-error"] {
+  border-color: var(--color-danger);
+  background: var(--color-danger-soft);
+}
+.edit-genlog__badge[data-category="all-excluded"],
+.edit-genlog__badge[data-category="no-candidates"],
+.edit-genbadge[data-category="all-excluded"],
+.edit-genbadge[data-category="no-candidates"] {
+  border-color: var(--color-warning);
+  background: var(--color-warning-soft);
+}
+/* The inspector's editor while its details wait for the end of a generation. */
+.edit-editor[data-phase="waiting"] .edit-editor__fields {
+  opacity: 0.6;
+}
+.edit-inspector__status[data-kind="warning"],
+.edit-inspector__status[data-kind="error"] {
+  font-weight: 700;
+}
+/* Links held back while a generation is under way. */
+a[aria-disabled="true"][data-gen-locked] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ----- Display areas narrower than 1280px (PR-7, J-20) ----- */
+/* The button of the header that shows the folded structure navigation:
+   only below 1280px. */
+.edit-nav-toggle {
+  display: none;
+  flex: none;
+}
+@media (width < 1280px) {
+  .edit-layout {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+  .edit-center,
+  .edit-layout > .ui-toast-stack {
+    grid-column: 1;
+  }
+  .edit-inspector {
+    grid-column: 2;
+  }
+  .edit-nav-toggle {
+    display: inline-flex;
+  }
+  /* Folded: shown over the left of the work area while it is open (the
+     same cell of the grid), above the notifications' row, so it neither
+     covers them nor is covered. The header and the work steps stay above
+     it, the dialogs over it. */
+  .edit-nav {
+    position: relative;
+    z-index: var(--z-drawer);
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: start;
+    width: min(320px, 100%);
+    border-right: 1px solid var(--color-border-strong);
+    box-shadow: var(--shadow-lg);
+  }
+  .edit-nav:not([data-open]) {
+    display: none;
+  }
+}
+/* Below 1024px the work area keeps its content as wide as at 1024px (1024px
+   less the inspector) and scrolls it sideways itself. */
+@media (width < 1024px) {
+  .edit-center .edit-view {
+    min-width: 684px;
+  }
+}

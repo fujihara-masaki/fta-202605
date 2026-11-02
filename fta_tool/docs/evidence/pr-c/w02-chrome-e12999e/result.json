@@ -1,0 +1,635 @@
+{
+ "verdict": "OK（PR-C の動作。旧方式の準備は一部）",
+ "exit_code": 3,
+ "reason": "",
+ "run": "20261028211335-11f5d8",
+ "reached": "done",
+ "sha": "e12999efa4ccfe7ab0a2894baca94c997c46e54c",
+ "worktree_clean": true,
+ "os": "Windows-11-10.0.26200-SP0",
+ "python": "3.12.10",
+ "browser_label": "Google Chrome",
+ "browser_reported": [
+  {
+   "brand": "Not:A-Brand",
+   "version": "8.0.0.0"
+  },
+  {
+   "brand": "Chromium",
+   "version": "156.0.8078.48"
+  },
+  {
+   "brand": "Google Chrome",
+   "version": "156.0.8078.48"
+  }
+ ],
+ "port": 8001,
+ "analysis_id": 1,
+ "preparation": {
+  "coverage": "一部",
+  "prepared": [
+   "css/list.css",
+   "js/pages/list.js"
+  ],
+  "not_prepared": [
+   "css/base.css",
+   "css/components.css",
+   "css/edit.css",
+   "css/new.css",
+   "css/tokens.css",
+   "js/common/boot.js",
+   "js/common/dialog.js",
+   "js/common/dom.js",
+   "js/common/http.js",
+   "js/common/ime.js",
+   "js/common/menu.js",
+   "js/common/notify.js",
+   "js/common/storage.js",
+   "js/common/text.js",
+   "js/common/unsaved.js",
+   "js/pages/edit.js",
+   "js/pages/edit/add-dialog.js",
+   "js/pages/edit/bridge.js",
+   "js/pages/edit/delete-dialog.js",
+   "js/pages/edit/factor-editor.js",
+   "js/pages/edit/factor-source.js",
+   "js/pages/edit/filter.js",
+   "js/pages/edit/generation.js",
+   "js/pages/edit/genlog.js",
+   "js/pages/edit/inspector.js",
+   "js/pages/edit/judgement.js",
+   "js/pages/edit/model.js",
+   "js/pages/edit/permissions.js",
+   "js/pages/edit/refresh.js",
+   "js/pages/edit/restrict.js",
+   "js/pages/edit/state.js",
+   "js/pages/edit/step1.js",
+   "js/pages/edit/title.js",
+   "js/pages/edit/view.js",
+   "js/pages/new.js",
+   "style.css"
+  ],
+  "unexpected": []
+ },
+ "results": [
+  {
+   "item": "手順2 一覧：Ctrl+F5",
+   "ok": true,
+   "detail": "HTML の要求 6 件のうちキャッシュを使わない要求 1 件、ページが使った版 CSS=20261028211335-11f5d8-w1 JS={'js/common/dom.js': '20261028211335-11f5d8-w1'}",
+   "operated_by": "利用者の実操作"
+  },
+  {
+   "item": "手順2 新規作成：Ctrl+F5",
+   "ok": true,
+   "detail": "HTML の要求 4 件のうちキャッシュを使わない要求 1 件、ページが使った版 CSS=20261028211335-11f5d8-w1 JS={'js/common/dom.js': '20261028211335-11f5d8-w1'}",
+   "operated_by": "利用者の実操作"
+  },
+  {
+   "item": "手順2 編集：Ctrl+F5",
+   "ok": true,
+   "detail": "HTML の要求 4 件のうちキャッシュを使わない要求 1 件、ページが使った版 CSS=20261028211335-11f5d8-w1 JS={'js/common/dom.js': '20261028211335-11f5d8-w1', 'js/pages/edit/factor-source.js': '20261028211335-11f5d8-w1'}",
+   "operated_by": "利用者の実操作"
+  },
+  {
+   "item": "手順2：38件が 200・Cache-Control: no-cache・期待どおりの Content-Type（移行）",
+   "ok": true,
+   "detail": "38/38 件",
+   "operated_by": "自動"
+  },
+  {
+   "item": "手順3：F5 が通常の再読み込み",
+   "ok": true,
+   "detail": "HTML の要求 1 件、キャッシュを使わない要求 0 件、ナビゲーションの種類 reload（Ctrl+F5 や DevTools の「キャッシュを無効にする」では NG）",
+   "operated_by": "利用者の実操作"
+  },
+  {
+   "item": "手順3：編集画面の34件がそれぞれ要求された（ファイルの一致）",
+   "ok": true,
+   "detail": "期待 34 件、要求 34 件",
+   "operated_by": "自動"
+  },
+  {
+   "item": "手順3：変更した3件は w1 の ETag で要求され 200・w2 の本文",
+   "ok": true,
+   "detail": "3件とも期待どおり",
+   "operated_by": "自動"
+  },
+  {
+   "item": "手順3：変更していない31件がそれぞれ 304",
+   "ok": true,
+   "detail": "31 件中 期待と違うもの 0 件",
+   "operated_by": "自動"
+  },
+  {
+   "item": "手順3：ページが使った版（CSS の計算値・下位のモジュールの目印）",
+   "ok": true,
+   "detail": "CSS=20261028211335-11f5d8-w2 js/common/dom.js=20261028211335-11f5d8-w2 js/pages/edit/factor-source.js=20261028211335-11f5d8-w2（期待 20261028211335-11f5d8-w2）",
+   "operated_by": "自動"
+  }
+ ],
+ "observed": {
+  "A": {
+   "probes": [
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/",
+     "navigation": "navigate",
+     "css": "",
+     "js": {},
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793189653304
+    },
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/analyses/new",
+     "navigation": "navigate",
+     "css": "",
+     "js": {},
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793189669421
+    },
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/",
+     "navigation": "navigate",
+     "css": "",
+     "js": {},
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793190017053
+    },
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/analyses/1",
+     "navigation": "navigate",
+     "css": "",
+     "js": {},
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793190020211
+    }
+   ],
+   "states": {
+    "css/base.css": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "css/components.css": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "css/edit.css": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "css/list.css": "200・Cache-Control なし（旧方式で保存）",
+    "css/new.css": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "css/tokens.css": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/common/boot.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/common/dialog.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/common/dom.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/common/http.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/common/ime.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/common/menu.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/common/notify.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/common/storage.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/common/text.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/common/unsaved.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/add-dialog.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/bridge.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/delete-dialog.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/factor-editor.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/factor-source.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/filter.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/generation.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/genlog.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/inspector.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/judgement.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/model.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/permissions.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/refresh.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/restrict.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/state.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/step1.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/title.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/edit/view.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "js/pages/list.js": "200・Cache-Control なし（旧方式で保存）",
+    "js/pages/new.js": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）",
+    "style.css": "304（既存の保存を確認。保存の形式は変わらない。前回の確認の no-cache の可能性）"
+   }
+  },
+  "B": {
+   "probes": [
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/",
+     "navigation": "navigate",
+     "css": "",
+     "js": {},
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793190071231
+    },
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/",
+     "navigation": "reload",
+     "css": "",
+     "js": {},
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793190075377
+    },
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/analyses/new",
+     "navigation": "navigate",
+     "css": "",
+     "js": {},
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793190076673
+    },
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/analyses/new",
+     "navigation": "reload",
+     "css": "",
+     "js": {},
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793190077492
+    },
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/",
+     "navigation": "navigate",
+     "css": "",
+     "js": {},
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793190079425
+    },
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/analyses/1",
+     "navigation": "navigate",
+     "css": "",
+     "js": {},
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793190080763
+    },
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/analyses/1",
+     "navigation": "reload",
+     "css": "",
+     "js": {},
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793190081283
+    },
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/",
+     "navigation": "navigate",
+     "css": "",
+     "js": {},
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793190091071
+    },
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/",
+     "navigation": "reload",
+     "css": "20261028211335-11f5d8-w1",
+     "js": {
+      "js/common/dom.js": "20261028211335-11f5d8-w1"
+     },
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793190094434
+    },
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/analyses/new",
+     "navigation": "navigate",
+     "css": "20261028211335-11f5d8-w1",
+     "js": {
+      "js/common/dom.js": "20261028211335-11f5d8-w1"
+     },
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793190096340
+    },
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/analyses/new",
+     "navigation": "reload",
+     "css": "20261028211335-11f5d8-w1",
+     "js": {
+      "js/common/dom.js": "20261028211335-11f5d8-w1"
+     },
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793190098268
+    },
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/",
+     "navigation": "navigate",
+     "css": "20261028211335-11f5d8-w1",
+     "js": {
+      "js/common/dom.js": "20261028211335-11f5d8-w1"
+     },
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793190100318
+    },
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/analyses/1",
+     "navigation": "navigate",
+     "css": "20261028211335-11f5d8-w1",
+     "js": {
+      "js/common/dom.js": "20261028211335-11f5d8-w1"
+     },
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793190101158
+    },
+    {
+     "run": "20261028211335-11f5d8",
+     "path": "/analyses/1",
+     "navigation": "reload",
+     "css": "20261028211335-11f5d8-w1",
+     "js": {
+      "js/common/dom.js": "20261028211335-11f5d8-w1",
+      "js/pages/edit/factor-source.js": "20261028211335-11f5d8-w1"
+     },
+     "browser": [
+      {
+       "brand": "Not:A-Brand",
+       "version": "8.0.0.0"
+      },
+      {
+       "brand": "Chromium",
+       "version": "156.0.8078.48"
+      },
+      {
+       "brand": "Google Chrome",
+       "version": "156.0.8078.48"
+      }
+     ],
+     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+     "at": 1793190102812
+    }
+   ]
+  },
+  "C": {
+   "probe": {
+    "run": "20261028211335-11f5d8",
+    "path": "/analyses/1",
+    "navigation": "reload",
+    "css": "20261028211335-11f5d8-w2",
+    "js": {
+     "js/common/dom.js": "20261028211335-11f5d8-w2",
+     "js/pages/edit/factor-source.js": "20261028211335-11f5d8-w2"
+    },
+    "browser": [
+     {
+      "brand": "Not:A-Brand",
+      "version": "8.0.0.0"
+     },
+     {
+      "brand": "Chromium",
+      "version": "156.0.8078.48"
+     },
+     {
+      "brand": "Google Chrome",
+      "version": "156.0.8078.48"
+     }
+    ],
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+    "at": 1793190114505
+   }
+  }
+ }
+}

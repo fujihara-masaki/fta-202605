@@ -1,0 +1,103 @@
+{#- Shared UI parts (import with: {% import "_macros.html" as ui %}) -#}
+
+{#- Judgement of a factor (UI-12): Yes / No / 未 as toggle buttons in a group
+    (role="group", aria-pressed; plan 5.7). data-node-id ties every copy of
+    a factor's judgement on the page to one update function (js/pages/edit). -#}
+{% macro judgement_toggle(node) -%}
+<div class="ui-judgement" role="group" aria-label="評価：{{ node.title }}" data-judgement-toggle data-node-id="{{ node.id }}">
+  {%- for value, text in (("yes", "Yes"), ("no", "No"), ("unknown", "未")) %}
+  <button type="button" class="ui-judgement__option ui-judgement__option--{{ value }}" data-action="judgement" data-node-id="{{ node.id }}" data-value="{{ value }}" aria-pressed="{{ 'true' if node.judgement == value else 'false' }}">{{ text }}</button>
+  {%- endfor %}
+</div>
+{%- endmacro %}
+
+{#- The judgement as text (Yes / No / 未評価), kept in step by the same function. -#}
+{% macro judgement_chip(node) -%}
+<span class="ui-chip ui-chip--{{ node.judgement }}" data-judgement-chip data-node-id="{{ node.id }}">{{ node.judgement_label }}</span>
+{%- endmacro %}
+
+{#- Tags of a factor (J-14): AI / 手動, 要確認 (a button that selects the
+    factor and shows the quality warning in the inspector: UI-17, one of the
+    R-01 routes), 「直接要因評価：…」 with the item name, and メモあり. -#}
+{% macro node_tags(node, role) -%}
+<span class="ui-tag {{ 'ui-tag--ai' if node.ai_generated else 'ui-tag--manual' }}">{{ 'AI' if node.ai_generated else '手動' }}</span>
+{%- if node.warning_text %}
+<button type="button" class="ui-tag ui-tag--warning" data-action="select" data-node-id="{{ node.id }}" data-role="{{ role }}-warning" data-focus="warning" aria-label="要確認（品質警告を表示）：{{ node.title }}">要確認</button>
+{%- endif %}
+{%- if node.direct_cause_label %}
+<span class="ui-tag ui-tag--direct">直接要因評価：{{ node.direct_cause_label }}</span>
+{%- endif %}
+{%- if node.has_memo %}
+<span class="ui-tag ui-tag--memo">メモあり</span>
+{%- endif %}
+{%- endmacro %}
+
+{#- Export menu: the existing export URLs, with a short description of what
+    each format contains (plan section 4, UI-04 note; based on
+    services/export_service.py). The download attribute keeps the page in
+    place, so no leave confirmation is shown while an input is unsaved. -#}
+{% macro export_menu(analysis_id, analysis_title, button_class="ui-btn ui-btn--sm") -%}
+{%- set formats = [
+  ("json", "JSON（.json）", "分析タイトル・頂上事象・参考情報・作成／更新日時と、要因のすべての項目（階層・説明・AI／手動・評価・直接要因評価・根拠・再発防止策・メモ・品質警告）"),
+  ("csv", "CSV（.csv）", "要因の一覧（1行に1要因。階層・親要因・説明・AI／手動・評価・直接要因評価・根拠・再発防止策・メモ・品質警告）。分析タイトル・頂上事象・参考情報は含みません"),
+  ("markdown", "Markdown（.md）", "頂上事象・参考情報（デモ観点を含む）と、要因の階層・評価・直接要因評価・コメント・再発防止策。分析タイトル・説明・AI／手動・根拠・メモ・品質警告は含みません"),
+] -%}
+<div class="ui-menu" data-ui-menu>
+  <button type="button" class="{{ button_class }}" data-ui-menu-button aria-expanded="false" aria-controls="export-menu-{{ analysis_id }}">出力<span class="visually-hidden" data-bind-title>：{{ analysis_title }}</span><span class="ui-menu__caret" aria-hidden="true">▾</span></button>
+  <div class="ui-menu__panel" id="export-menu-{{ analysis_id }}" data-ui-menu-panel hidden>
+    <p class="ui-menu__heading">出力する形式を選んでください（ファイルを保存します）</p>
+    <ul class="ui-menu__list">
+      {%- for fmt, label, description in formats %}
+      <li>
+        <a class="ui-menu__item" href="/analyses/{{ analysis_id }}/export/{{ fmt }}" download data-export-format="{{ fmt }}">
+          <span class="ui-menu__label">{{ label }}</span>
+          <span class="ui-menu__desc">{{ description }}</span>
+        </a>
+      </li>
+      {%- endfor %}
+    </ul>
+  </div>
+</div>
+{%- endmacro %}
+
+
+{#- What each export format contains (plan section 4, UI-04 note), from what
+    services/export_service.py writes. T-06 (tests/test_ui_templates.py)
+    checks every cell against real exports; the exports are never changed
+    to match this table. data-included: yes / no / partial. -#}
+{% macro export_contents_table() -%}
+{%- set rows = [
+  ("title", "分析タイトル", ("yes", "あり"), ("no", "なし"), ("no", "なし（見出しは固定の「FTA分析結果」）")),
+  ("top_event", "頂上事象", ("yes", "あり"), ("no", "なし"), ("yes", "あり")),
+  ("context", "参考情報（システム構成・障害発生時の状況・デモ観点）", ("yes", "あり"), ("no", "なし"), ("yes", "あり（「分析コンテキスト」の節）")),
+  ("timestamps", "分析の作成・更新日時", ("yes", "あり"), ("no", "なし"), ("no", "なし")),
+  ("structure", "要因の階層・親子", ("yes", "あり（ID・親ID・階層）"), ("yes", "あり（ID・レベル・親ID・親要因名）"), ("yes", "あり（入れ子のリスト）")),
+  ("factor_title", "要因名", ("yes", "あり"), ("yes", "あり"), ("yes", "あり")),
+  ("description", "説明", ("yes", "あり"), ("yes", "あり"), ("no", "なし")),
+  ("origin", "AI／手動", ("yes", "あり"), ("yes", "あり"), ("no", "なし")),
+  ("judgement", "評価（Yes／No／未評価）", ("yes", "あり"), ("yes", "あり"), ("yes", "あり")),
+  ("direct_cause", "直接要因評価・評価コメント", ("yes", "あり"), ("yes", "あり"), ("yes", "あり（直接要因評価が未評価なら出さない）")),
+  ("evidence", "根拠", ("yes", "あり"), ("yes", "あり"), ("no", "なし")),
+  ("prevention", "再発防止策", ("yes", "あり"), ("yes", "あり"), ("yes", "あり")),
+  ("memo", "メモ", ("yes", "あり"), ("yes", "あり"), ("no", "なし")),
+  ("warning", "品質警告", ("yes", "あり"), ("yes", "あり（要確認・警告理由・品質ステータス）"), ("no", "なし")),
+  ("anomaly", "親子関係に不整合がある要因", ("yes", "あり"), ("yes", "あり"), ("partial", "一部なし（一次要因から親をたどれない要因は出ない）")),
+] -%}
+<div class="ui-table-wrap">
+  <table class="ui-table edit-export-table" data-export-table aria-label="出力形式ごとに含まれる項目">
+    <thead>
+      <tr><th scope="col">項目</th><th scope="col">JSON</th><th scope="col">CSV</th><th scope="col">Markdown</th></tr>
+    </thead>
+    <tbody>
+      {%- for key, label, json, csv, md in rows %}
+      <tr data-export-item="{{ key }}">
+        <th scope="row">{{ label }}</th>
+        {%- for fmt, cell in (("json", json), ("csv", csv), ("markdown", md)) %}
+        <td data-format="{{ fmt }}" data-included="{{ cell[0] }}">{{ cell[1] }}</td>
+        {%- endfor %}
+      </tr>
+      {%- endfor %}
+    </tbody>
+  </table>
+</div>
+{%- endmacro %}

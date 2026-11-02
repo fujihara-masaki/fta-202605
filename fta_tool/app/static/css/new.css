@@ -1,0 +1,142 @@
+/* ===== New analysis (B) =====
+ * Two columns: the form sections (1, 2) on the left, how the input is used
+ * and the sample on the right, the actions below both. Parts come from
+ * components.css (ui-panel, ui-field, ui-input, ui-btn, ui-status); this file
+ * only lays them out.
+ */
+
+.new-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-5) 120px;
+}
+
+.new-page__header {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+}
+.new-page__title {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  line-height: 1.3;
+}
+.new-page__lead {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.new-page__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  align-items: start;
+  gap: var(--space-5);
+}
+.new-page__main,
+.new-page__aside {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* Section number in the panel titles (1, 2) */
+.new-page__step {
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
+  font-size: var(--font-size-sm);
+}
+.new-page__intro {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+.new-page__context {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+/* 入力の使われ方 */
+.new-usage {
+  display: grid;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+}
+.new-usage dt {
+  font-weight: 700;
+}
+.new-usage dd {
+  margin-top: 2px;
+  color: var(--color-text-muted);
+}
+
+/* サンプルから入力 */
+.new-sample__preview {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+}
+.new-sample__preview[hidden] {
+  display: none;
+}
+.new-sample__preview-title {
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+.new-sample__items {
+  display: grid;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+}
+.new-sample__items dt {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+}
+.new-sample__items dd {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.new-sample__apply {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+}
+
+/* キャンセル / 作成して編集へ, below both columns */
+.new-page__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+.new-page__submit-status {
+  margin-right: auto;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+/* Narrower windows (e.g. high display scaling): one column. The layout for
+ * narrow widths is checked in PR-7 (plan 5.9.4). */
+@media (max-width: 959px) {
+  .new-page__layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 719px) {
+  .new-page__context {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

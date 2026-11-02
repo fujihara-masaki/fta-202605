@@ -1,0 +1,10 @@
+# Development / verification dependencies (J-26). Kept separate from the
+# production requirements.txt, which is not changed.
+#
+#   pip install -r requirements-dev.txt
+#   python -m playwright install chromium   # browser for tests/e2e (once)
+#
+# playwright 1.56.0 drives Chromium 141.0.7390.37. See tests/e2e/README.md.
+-r requirements.txt
+playwright==1.56.0
+pytest-playwright==0.7.1

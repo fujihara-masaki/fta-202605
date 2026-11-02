@@ -1,0 +1,31 @@
+{#- Work steps ①〜⑤ (plan 3.2): a guide, the order is not enforced. The
+    current step gets aria-current="step" from js/pages/edit, which also
+    recounts the statuses from the embedded data after a judgement. -#}
+<nav class="edit-steps" aria-label="作業ステップ" data-region="steps">
+  <ol class="edit-steps__list">
+    <li>
+      <button type="button" class="edit-step" data-action="step" data-step="1">
+        <span class="edit-step__number">①</span>
+        <span class="edit-step__name">頂上事象・参考情報</span>
+        <span class="edit-step__status" data-step-status="1">{{ '頂上事象：入力済み' if (analysis.top_event or '').strip() else '頂上事象：未入力' }}</span>
+      </button>
+    </li>
+    {%- for level, number, name in ((1, "②", "一次要因"), (2, "③", "二次要因"), (3, "④", "三次要因")) %}
+    {%- set counts = view.step_counts[level] %}
+    <li>
+      <button type="button" class="edit-step" data-action="step" data-step="{{ level + 1 }}">
+        <span class="edit-step__number">{{ number }}</span>
+        <span class="edit-step__name">{{ name }}</span>
+        <span class="edit-step__status" data-step-status="{{ level + 1 }}">{{ counts.total }}件・未評価{{ counts.unevaluated }}</span>
+      </button>
+    </li>
+    {%- endfor %}
+    <li>
+      <button type="button" class="edit-step" data-action="step" data-step="5">
+        <span class="edit-step__number">⑤</span>
+        <span class="edit-step__name">確認・出力</span>
+        <span class="edit-step__status">出力</span>
+      </button>
+    </li>
+  </ol>
+</nav>

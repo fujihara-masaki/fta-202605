@@ -1,56 +1,72 @@
 # FTA分析支援ツール
 
-FTA（フォルトツリー解析）を支援するWebアプリケーションです。AIによる要因候補の自動生成、ツリー構造の視覚的編集、JSON/CSV/Markdown形式でのエクスポートをサポートします。
+FTA（フォルトツリー解析）を支援するWebアプリケーションです。AIによる要因候補の自動生成、作業ステップ・構造ナビ・インスペクタによる要因の評価と編集、JSON/CSV/Markdown形式でのエクスポートをサポートします。
 
 ## 機能
 
-- **FTA分析の作成・管理**: 分析タイトルと頂上事象を設定して分析を作成・削除
-- **AIによる要因生成**: 一次・二次・三次要因をAIが自動提案
-- **追加生成**: 既存要因と重複しないよう、一次要因・各要因の子要因をAIで追加生成
-- **インタラクティブなツリー編集**: 横並びカラムでFTAツリーを直感的に編集
-- **検索・フィルタ**: 要因名・説明のテキスト検索、評価（Yes/No/未評価/要確認）での絞り込み
-- **ツリー表示・一覧表表示**: カード編集ビューに加えて、階層ツリーと表形式の一覧を併設
-- **Yes/No評価**: 各要因に対してユーザが妥当性を評価
-- **直接要因評価**: 要因ごとに根拠・防止策・コメントを記録
-- **エクスポート**: JSON / CSV / Markdown形式で出力
-- **分析コンテキスト**: 頂上事象と分けてシステム構成・対象範囲、障害発生時の状況・観測事実を保存し、AI生成の参考情報に使用
-- **手動追加・品質警告**: AIを使わない要因追加と、生成候補の品質チェック結果（「要確認」）の表示
+- **分析一覧**: 分析の一覧（表）、タイトルの行内の改名、出力、削除（要因数を示す確認ダイアログ）
+- **新規分析作成**: 分析タイトル・頂上事象・AIへの参考情報の入力（2列）。デモ用サンプルのプレビューと転記
+- **分析・編集画面**（作業ステップ ①頂上事象・参考情報 → ②一次要因 → ③二次要因 → ④三次要因 → ⑤確認・出力）
+  - **構造ナビ**（左）：頂上事象から三次要因までの木。選んだ要因をすべての表示で同期
+  - **作業エリア**（中央）：表示タブ「作業・ツリー・一覧表」、絞り込み、ステップごとの操作バー・生成ログ・作業リスト
+  - **インスペクタ**（右）：選んだ要因の評価、詳細（タイトル・説明・メモ・直接要因評価・評価コメント・根拠・再発防止策）の編集と保存、子要因の追加、削除
+- **AIによる要因生成**: 一次要因（頂上事象の下）と、Yes と評価した要因を親にした二次・三次要因の**通常生成**
+- **追加生成**: 既存の要因と重複しないよう、一次要因全体または選んだ親1件の下にAIで追加
+- **手動追加**: AIを使わない要因の追加（手動・未評価）
+- **Yes/No評価と直接要因評価**: 該当判断（Yes/No/未評価。Yes が次の階層の通常生成の親）と、別の軸の直接要因評価（5値）・根拠・再発防止策・コメント
+- **生成ログ**: 親ごとの結果（作成・候補0件・全候補除外・処理失敗・通信失敗など）と部分失敗の通知。生成中は書き込みと画面の移動を制限
+- **未保存の内容の保護**: 画面の移動・要因の切替・再読み込みの前に確認（保存して移動・破棄して移動・編集を続ける）
+- **AIへの参考情報**: 頂上事象と分けて「システム構成・対象範囲」「障害発生時の状況・観測事実」を保存し、AI生成の参考情報に使用（出力・API・設計資料では「分析コンテキスト」（`analysis_context`）と呼ぶ）
+- **品質警告**: 生成候補の品質チェック結果（「要確認」）の表示
+- **エクスポート**: JSON / CSV / Markdown形式で出力（形式ごとの項目の違いは⑤に表示）
+
+画面の詳しい仕様（操作・状態・制約）は [現行画面・操作仕様](docs/ui-current-spec.md) を参照してください。
 
 ## UI仕様・再設計資料
 
-- [現行画面・操作仕様](docs/ui-current-spec.md) — 実装を根拠にした画面、操作、状態、README照合結果
-- [UI再設計ブリーフ](docs/ui-redesign-brief.md) — Claude Designへ渡す制約、シナリオ、必要素材
+| 文書 | 位置づけ |
+|---|---|
+| [現行画面・操作仕様](docs/ui-current-spec.md) | **現行仕様（正）**。UI 再設計の実装後のコードを根拠にした画面・操作・状態・制約と、確認の区分（コード確認・自動試験・Windows 実機・未確認） |
+| [画面改修 実装計画](docs/ui-redesign-implementation-plan.md) | UI 再設計（一覧A／新規作成B／分析編集B）の実装計画と、判断（第6節）・各 PR の記録（第14節） |
+| [設計記録（統合案 第2版）](docs/proposals/ui-design-integrated-v2.md) | 取り込んだ提案の原文（未承認の内容を含む。現行仕様ではない） |
+| [UI再設計ブリーフ](docs/ui-redesign-brief.md) | 再設計の検討時に Claude Design へ渡した制約・シナリオ（当時の資料） |
+| [PR-8 最終受入の手順](docs/manual-check-pr8.md)・[S-11・S-12 の判断資料](docs/pr8-s11-s12-options.md) | 基準ブランチへの統合の前の受入の準備と、API の制約（S-11・S-12）の判断資料・採用した対策の方針・実装の結果（第8節） |
 
-> 上記は調査時点の現行仕様です。生成品質の詳細は引き続き `docs/` 内の各専用文書を参照してください。
+生成品質の詳細は引き続き `docs/` 内の各専用文書を参照してください。
 
 ## ディレクトリ構成
 
 ```
 fta_tool/
   app/
-    __init__.py
-    main.py          # FastAPI アプリケーション本体
-    database.py      # SQLAlchemy DB設定
-    models.py        # ORM モデル (Analysis, Node)
-    schemas.py       # Pydantic スキーマ
-    crud.py          # DB操作関数
-    services/
-      __init__.py
-      ai_provider.py     # AI プロバイダ抽象層
-      export_service.py  # エクスポート処理
+    main.py            # FastAPI アプリケーション本体（ルート）
+    detail_view.py     # 編集画面に渡す表示用データ（親子関係の区分・削除範囲・生成対象の判定）
+    static_files.py    # /static の配信（no-cache と内容の ETag）
+    database.py        # SQLAlchemy DB設定
+    models.py          # ORM モデル (Analysis, Node)
+    schemas.py         # Pydantic スキーマ
+    crud.py            # DB操作関数
+    services/          # AI プロバイダ、生成ワークフロー、品質チェック、出力、サンプル など
     templates/
-      base.html
-      index.html
-      analysis_form.html
-      analysis_detail.html
+      base.html               # 共通の枠（ヘッダー・通知・favicon）
+      _macros.html            # 出力メニュー・評価の表示などの共通部品
+      index.html              # 分析一覧（A案）
+      analysis_form.html      # 新規分析作成（B案）
+      analysis_detail.html    # 分析・編集（B案）
+      edit/                   # 編集画面の部品（ヘッダー、作業ステップ、構造ナビ、作業エリア、ツリー、一覧表、インスペクタ）
     static/
-      style.css
-      app.js
-  tests/
-    __init__.py
-    test_ai_provider.py
-    test_export_service.py
-  requirements.txt
+      favicon.svg
+      css/                    # tokens・base・components と画面ごとの list・new・edit
+      js/common/              # 共通（通知、ダイアログ、メニュー、未保存の保護と保存調整、通信、保存領域、IME、文字の検査）
+      js/pages/               # list.js・new.js・edit.js と edit/（生成、生成ログ、インスペクタ、部分更新 など）
+  config/              # prompts.yaml（プロンプト）、sample_scenarios.yaml（サンプル）
+  scripts/             # Windows の確認用スクリプト（run_browser_e2e.ps1 など）と比較試験の道具
+  tests/               # 通常の pytest
+    e2e/               # 実ブラウザのテスト（Playwright、スタブの AI、一時 DB）。手順は tests/e2e/README.md
+  docs/                # 仕様・計画・手順書・証跡（docs/evidence/）
+  requirements.txt     # 本番用の依存
+  requirements-dev.txt # 開発用（requirements.txt ＋ Playwright・pytest-playwright）
+  pytest.ini
   .env.example
   README.md
 ```
@@ -170,7 +186,7 @@ cd fta_tool
 uvicorn app.main:app --reload
 ```
 
-ブラウザで `http://localhost:8000` を開き、FTA 分析画面で「一次要因を生成」を押してください。
+ブラウザで `http://localhost:8000` を開き、分析・編集画面の「② 一次要因」で「一次要因を生成」を押してください。
 
 **トラブルシューティング**
 
@@ -206,7 +222,7 @@ uvicorn app.main:app --reload
 >
 > 件数が不足した場合、ツールは自動で1回リトライします（`FTA_RETRY_BELOW_MIN=true` で制御）。  
 > `FTA_RETRY_BELOW_TARGET=true` を設定すると、目標件数未満の場合にも追加リトライします（処理時間が増える）。  
-> それでも不足する場合は **「追加生成」ボタン** を使って補完できます。
+> それでも不足する場合は **追加生成**（「② 一次要因」の「一次要因を追加生成」、または親の見出し・インスペクタの「AIで追加生成」）を使って補完できます。
 
 ### Azure OpenAI
 
@@ -254,13 +270,24 @@ COPILOT_FACTOR_API_KEY=your-api-key   # オプション
 
 ## 使い方
 
-1. トップページで「新規分析を作成」をクリック
-2. 分析タイトルと頂上事象を入力して作成
-3. 分析詳細画面で「一次要因を生成」ボタンをクリック
-4. 生成された要因を確認し、Yes/Noで評価
-5. Yes評価の要因から「二次要因を生成」でドリルダウン
-6. 「詳細編集」で根拠・直接要因評価・再発防止策を記録
-7. 完成したらJSON/CSV/MDでエクスポート
+1. 分析一覧で「＋ 新規分析を作成」をクリック
+2. 分析タイトル（必須）と頂上事象・AIへの参考情報（任意）を入力し、「作成して編集へ」（サンプルの転記も使えます。転記しただけでは保存されません）
+3. 分析・編集画面の「① 頂上事象・参考情報」で内容を確認し、「② 一次要因」で「一次要因を生成」（生成の前に、入力中の頂上事象と参考情報が自動で保存されます）
+4. 生成ログで結果を確認し、作業リストまたはインスペクタで Yes／No／未評価を付ける
+5. 「③ 二次要因」で「Yesの一次要因から二次要因を生成」（Yes の親ごとに順に生成）。「④ 三次要因」も同じ。特定の親を補うときは「AIで追加生成」または「手動追加」
+6. 要因を選び、インスペクタで直接要因評価・評価コメント・根拠・再発防止策・メモを入力して「保存」
+7. 「⑤ 確認・出力」またはヘッダーの「出力▾」から JSON／CSV／Markdown を出力
+
+初めて UI 再設計後の版を使うときは、3画面（一覧・新規作成・編集）でそれぞれ1回、強制の再読み込み（Ctrl+F5）をしてください（以前の版の CSS・JavaScript がブラウザに残っている場合があるため。[docs/static-assets-cache-control-plan.md](docs/static-assets-cache-control-plan.md)）。
+
+### 既知の制約（2026-11-02 時点）
+
+- 親子関係に不整合がある要因（別の分析の要因を親にしている、自分自身を親にしている、循環など。通常の操作では作られない）について（S-11・S-12 の対策後）：
+  - 分析の削除・要因の削除で、削除される範囲に別の分析の要因・自己参照・循環が含まれる、または範囲をすべて確認できない場合は、**何も削除せずに理由を表示します**（API は HTTP 409 と日本語の理由）。正常な削除は従来どおりです。
+  - 生成で、親が自分自身を親にしている・循環上や循環の下にある・上位が3階層を超える場合は、その親については AI を呼ばず要因を作りません（親を指定した要求は `success:false` と理由。親を指定しない二次・三次の要求は不整合な親を除いて生成します）。
+  - 不整合なデータの修復の手段はありません。削除の確定の後に別の要求がその要因の下に要因を作ること（親の存在確認がない既存の制約）は防げません。詳細は [現行画面・操作仕様](docs/ui-current-spec.md) 第5節・第8節、[判断資料](docs/pr8-s11-s12-options.md) 第8節。
+- 生成中は、同じ画面の書き込み（評価・保存・追加・削除・出力）と画面の移動を止めます。別のタブや API の直接呼び出しは止めません。単一ワーカーでは生成中にほかの要求が待たされます。
+- 表示領域が幅 1024px・高さ 500px を下回る組み合わせ（例：Edge の表示倍率 150%・拡大 150%）では、通知が作業エリアの一部を覆うことがあります。詳細は [現行画面・操作仕様](docs/ui-current-spec.md) 第3節・第8節。
 
 ## 設定ファイルの構成
 
@@ -349,13 +376,15 @@ python scripts\analyze_langgraph_comparison.py ..\comparison_results\trial_001
 ## テストの実行
 
 ```bash
-# プロジェクトルートから実行
-pytest fta_tool/tests/ -v
-
-# または fta_tool ディレクトリ内から
 cd fta_tool
-pytest tests/ -v
+pip install -r requirements-dev.txt   # 開発用（本番用 requirements.txt ＋ Playwright・pytest-playwright）
+pytest -m "not e2e"                   # 通常の pytest（実ブラウザのテストを除く）
+pytest                                # 実ブラウザのテストも含む（ブラウザ・Playwright がなければ E2E はスキップ）
 ```
+
+- `pytest.ini` が `fta_tool/` を基準にするため、`fta_tool/` で実行します。通常の pytest も、アプリの DB は一時ディレクトリに作ります（利用者の `fta_tool.db` は使いません）。
+- PowerShell がない環境では、Windows 用スクリプトの確認がスキップになります（環境依存のスキップ）。
+- **UI 改修の必須受入検証**（実ブラウザのテスト。スキップ・未実施は失敗）は `pytest -m e2e --e2e-required --e2e-env "<実行環境>" --e2e-report e2e-report.md` です。ブラウザの準備、Windows の Chrome・Edge での実行（`scripts/run_browser_e2e.ps1`）、記録の読み方は [tests/e2e/README.md](tests/e2e/README.md) を参照してください。実LLMは呼ばず、スタブの AI と一時 DB を使います。
 
 ## データベース
 
@@ -371,13 +400,13 @@ SQLite (`fta_tool.db`) をローカルに自動生成します。テーブルは
 | GET | `/analyses/{id}` | 分析詳細・編集 |
 | POST | `/analyses/{id}/title` | 分析タイトル更新 |
 | POST | `/analyses/{id}/context` | 分析コンテキスト更新 |
-| POST | `/analyses/{id}/delete` | 分析削除（配下の要因も削除） |
+| POST | `/analyses/{id}/delete` | 分析削除（配下の要因も削除）。削除範囲に別の分析の要因・自己参照・循環がある、または範囲を確認できない場合は何も削除せず HTTP 409（`detail` に理由） |
 | POST | `/analyses/{id}/top-event` | 頂上事象更新 |
-| POST | `/analyses/{id}/generate/level/{level}` | AI要因生成（`{"additional": true}` で追加生成） |
+| POST | `/analyses/{id}/generate/level/{level}` | AI要因生成（`{"additional": true}` で追加生成）。親子関係に不整合がある親は AI を呼ばず対象外（`success:false` または `excluded_parents`。現行仕様 第5節） |
 | POST | `/analyses/{id}/nodes/add-level1` | 一次要因手動追加 |
-| GET | `/nodes/{id}` | ノード詳細取得（詳細編集モーダル用） |
+| GET | `/nodes/{id}` | ノード詳細取得（編集画面のインスペクタの詳細の編集欄が使用） |
 | POST | `/nodes/{id}/update` | ノード更新 |
-| POST | `/nodes/{id}/delete` | ノード削除 |
+| POST | `/nodes/{id}/delete` | ノード削除（子孫も削除）。分析の削除と同じ条件で HTTP 409 |
 | POST | `/nodes/{id}/children` | 子ノード追加 |
 | GET | `/analyses/{id}/export/json` | JSONエクスポート |
 | GET | `/analyses/{id}/export/csv` | CSVエクスポート |
