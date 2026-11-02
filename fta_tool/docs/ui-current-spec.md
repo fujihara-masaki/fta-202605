@@ -4,133 +4,263 @@
 
 | 項目 | 値 |
 |---|---|
-| 調査対象ブランチ | `work` |
-| 調査開始時の commit SHA | `f575e05be2ae0da5728999a402b6c1285b7158c1` |
-| 調査日 | 2026-09-25 (UTC) |
-| 対象 | 分析一覧、新規分析作成、分析・編集、関連モーダル・メニュー・通知・確認表示 |
+| 版 | 第2版（UI 再設計の実装後。PR-8 で全面改訂） |
+| 調査対象ブランチ | `feature/ui-redesign`（UI 再設計の統合用ブランチ。基準ブランチ `claude/fta-analysis-tool-Yg5yn` へは未統合） |
+| 調査対象の commit SHA | `254f826072b146c11883ed37b5e9e39bacbc6ebf`（PR #26 のマージコミット。アプリ・テンプレート・JavaScript・CSS・試験は PR-7 の受入候補 `b118038a5fa37eaa28fceb20e54102c7a0906343` と同じ。差分は `fta_tool/docs/` だけであることを `git diff --name-only b118038 254f826` で確認） |
+| 調査日 | 2026-11-02 (UTC) |
+| 対象 | 分析一覧（A案）、新規分析作成（B案）、分析・編集（B案）と、そのダイアログ・メニュー・通知・未保存の確認 |
+| 第1版 | 2026-09-25、ブランチ `work`、`f575e05be2ae0da5728999a402b6c1285b7158c1`（改修前の画面。カード列・旧モーダル・`app.js`）。内容は git の履歴で参照できる。改修前の挙動と、この版で解消したものは第8節 |
 
-ブランチとSHAは `git status --short --branch` と `git rev-parse HEAD` で確認した。利用者が実際に使うローカル環境のブランチ、SHA、`.env`、DBとの同一性は、環境が未提供のため**未確認**である。
+利用者が実際に使う環境のブランチ、SHA、`.env`、DB との同一性は、環境が提供されていないため**未確認**である（第9節）。
 
 ### 確認方法と区分
 
-- **コード確認**: Jinja2テンプレート、`app.js`、CSS、FastAPIルート、ORM/CRUD、出力サービス、生成設定、関連テストを照合した。
-- **テスト仕様確認**: 関連自動テストのコードを読み、期待されるHTTP・保存契約を照合した。調査環境では依存パッケージ不足によりテストを実行できず、実ブラウザの目視、レスポンシブ表示、実LLM、実データを含め、今回の**動作確認は未実施**。
-- **未確認**: 実装から確定できない利用者期待、運用環境、表示品質、外部AIの応答。
+この文書の各行の「確認」欄は次の区分で書く。区分を混ぜて「確認済み」とは書かない。
+
+| 区分 | 内容 |
+|---|---|
+| **コード確認** | 上の SHA のテンプレート（`app/templates/`）、JavaScript（`app/static/js/`）、CSS（`app/static/css/`）、FastAPI のルート（`app/main.py`）、表示用データ（`app/detail_view.py`）、ORM・CRUD を読んで照合した |
+| **自動試験** | 通常の pytest（`tests/`）と実ブラウザの E2E（`tests/e2e/`、Playwright。スタブの AI と一時 DB）。括弧内は受入 ID（`tests/e2e/acceptance.py` の `REQUIRED_IDS`）またはテストの ID。2026-11-02 に開発環境（Linux、Chromium 153、headless）で `254f826` に対して実行した結果は [evidence/pr8/](evidence/pr8/README.md) |
+| **Windows 実機** | 利用者の Windows 11 での確認。Chrome・Edge の全必須 E2E と表示倍率・IME の確認道具は PR-7 の受入候補 `b118038`（2026-10-31。アプリは上の SHA と同じ）の記録、実操作・目視は各 PR の受入時の SHA の記録（計画書 第14節）。**新しい SHA で再実行したものではない** |
+| **未確認** | 実装から確定できない利用者の期待、運用環境、実LLMの応答、記録のない環境（第9節） |
 
 ## 2. 画面と遷移
 
 | 画面 | URL / テンプレート | 目的・遷移 |
 |---|---|---|
-| 分析一覧 | `GET /` / `index.html` | 分析の参照、改名、編集開始、出力、削除。新規作成または編集へ遷移 |
-| 新規分析作成 | `GET /analyses/new` / `analysis_form.html` | 初期情報を登録。`POST /analyses` 成功後、対象編集画面へ303 redirect |
-| 分析・編集 | `GET /analyses/{id}` / `analysis_detail.html` | 頂上事象から一〜三次要因を生成・追加・編集・評価し出力。一覧へ戻る |
+| 分析一覧（A案） | `GET /` / `index.html` | 分析の一覧（表）、改名、編集画面へ、出力、削除。0件のときは空の状態と作成の案内 |
+| 新規分析作成（B案） | `GET /analyses/new` / `analysis_form.html` | 2列（左：入力、右：入力の使われ方とサンプル）。「作成して編集へ」で `POST /analyses`、成功すると 303 で分析・編集画面へ |
+| 分析・編集（B案） | `GET /analyses/{id}` / `analysis_detail.html`（部品は `templates/edit/`） | ヘッダー、作業ステップ①〜⑤、構造ナビ・作業エリア（表示タブ）・インスペクタの3ペイン、通知の行 |
 
-全画面のヘッダーに「分析一覧」「新規作成」がある。共通トーストはsuccess/errorが3秒、warningが6秒で消える。
+### 共通の枠（`base.html`）
 
-## 3. 機能棚卸し
+- ヘッダーに「分析一覧」「新規作成」（現在の画面は `aria-current="page"`）と、スキップリンク「本文へ移動」（編集画面は「作業リストへ」「インスペクタへ」も）。
+- 全画面が favicon `/static/favicon.svg`（`type="image/svg+xml"`）を宣言する。アプリは `/favicon.ico` に応答しない（宣言があるためブラウザは要求しない。E-X01）。
+- 画面は外部の URL のリソース（フォントを含む）を読み込まない。フォントは端末のもの（T-01、E-X01、E-F01）。
+
+### 通知（`js/common/notify.js`、J-24）
+
+| 項目 | 仕様 | 確認 |
+|---|---|---|
+| 種別と表示時間 | 成功・お知らせは 3 秒、注意は 6 秒で閉じる。**エラーは閉じるまで残る**（「閉じる」で閉じる） | コード確認、自動試験（PR1-BASE-NOTIFY、PR3-LEGACY-NOTIFY） |
+| 場所 | 画面に重ねない。編集画面は作業エリアの直下の行（作業エリアと同じ幅）、一覧・新規作成は本文の下。通知がある間は、その分だけ作業エリア（本文）が低くなる | コード確認（`base.css`・`edit.css`）、自動試験（E-V01・`test_pr7_focus.py`）、Windows 実機（`b118038` の Full と道具） |
+| 高さと件数 | 高さの上限は表示領域の 30%（高さ 700px 未満は 25%）。超えた分は通知の中でスクロールし、最新を表示する。同じ通知は回数の表示で1つにまとめ、5件を超えると古いものから閉じる（エラー以外を先に。最新は閉じない） | コード確認（`MAX_TOASTS = 5`、`components.css`） |
+| 読み上げ | 読み上げ領域 `#ui-live-status`（role=status、polite）と `#ui-live-alert`（role=alert、assertive）に書く | 自動試験（E-K03。DOM の確認で、スクリーンリーダーの読み上げではない）。NVDA での読み上げは**未確認** |
+| フォーカスの保持 | 通知が増えて作業エリアが低くなったとき、Tab・矢印でフォーカスが移ったとき、フォーカスのある操作が枠ごと見えるようにその領域をスクロールする（`keepInView()`）。フォーカス・入力値・選択は変えない | 自動試験（`test_pr7_focus.py`、E-K01） |
+
+### 未保存の内容の保護（`js/common/unsaved.js`、J-12）
+
+| 画面 | 対象 | 画面内のリンク・切替 | ブラウザの操作（再読み込み・タブを閉じる等） |
+|---|---|---|---|
+| 一覧 | 改名中で変更のあるタイトル | 「編集を続ける／破棄して移動／保存して移動」の3択。別の行の ✎ も同じ | ブラウザ標準の確認 |
+| 新規作成 | 見える4項目のどれかに入力がある | 「入力を続ける／破棄して移動」の2択（フォームは自分のボタンでだけ保存） | ブラウザ標準の確認。送信時は確認しない |
+| 編集：画面を離れる | ①の頂上事象・参考情報、インスペクタの下書き（ヘッダーのタイトルは確認なしで保存し、保存できなければ移動しない） | 3択。「保存して移動」は全保存元を検査してから1件ずつ保存し、1件でも失敗したら移動しない（項目ごとの結果、「再試行」、成功済みの保存は取り消されない旨） | ブラウザ標準の確認 |
+| 編集：要因の切替（R-01 の経路） | インスペクタの下書き | 3択（生成中は「編集を続ける／破棄して移動」の2択で、保存要求を送らない） | — |
+
+「保存して移動」は画面内の操作だけで出る。ブラウザの操作では、ブラウザ標準の確認になり、保存して移動は選べない。強制終了などを含む下書きの復旧は行わない（下書きはブラウザに保存しない）。確認：自動試験（E-L05、E-N04・E-N06、E-E11・E-E12・E-E15・E-E20、E-G08）、Windows 実機（各 PR の F5 の確認：PR-1 `516ee00`、PR-2 `9fa2967`、PR-4 `7a9d517`、PR-5 `dbe1c04`、PR-6 `fc337f1`）。
+
+### 静的ファイルのキャッシュ（`app/static_files.py`、PR-C）
+
+`/static` の応答（200・304）は `Cache-Control: no-cache` と内容の SHA-256 から作る ETag を持ち、`If-None-Match` を優先して判定する（H-01〜H-09、C-00〜C-07）。導入前にブラウザが保存した応答は、3画面（一覧・新規作成・編集）をそれぞれ1回強制の再読み込み（Ctrl+F5）するまで使われうる（計画書 第14.7節、[static-assets-cache-control-plan.md](static-assets-cache-control-plan.md)）。HTML の応答は変えていない。
+
+## 3. 機能棚卸し（UI-01〜UI-17）
+
+根拠は上の SHA のファイル・関数。テストの ID は第10節。
 
 | ID | 画面・領域 | 操作と目的 | 入力・表示／条件 | 保存・状態・失敗時 | 根拠 | 確認 |
 |---|---|---|---|---|---|---|
-| UI-01 | 一覧 | 更新日時降順の分析を開く | title、頂上事象、作成/更新日時 | 0件は空状態と作成CTA | `app/main.py:index`, `app/crud.py:get_analyses`, `app/templates/index.html` | コード確認 |
-| UI-02 | 一覧 | titleをインライン改名 | 必須、255文字以内。Enter/保存、Esc/取消 | `Analysis.title`, `updated_at`。成功/失敗トースト | `app/static/app.js:startTitleRename/saveAnalysisTitle`, `app/main.py:update_title` | コード確認 |
-| UI-03 | 一覧 | 分析を削除 | 名前、全要因・評価・メモも消える旨をconfirm | Analysisと全Nodeをcascade削除。成功後reload | `app/static/app.js:deleteAnalysis`, `app/main.py:delete_analysis`, `app/models.py:Analysis.nodes` | コード確認 |
-| UI-04 | 一覧/編集 | JSON/CSV/MD出力 | 分析存在時。項目差は§6 | 正常時はファイル出力。対象分析が不存在でもHTTP 200で、JSONはエラーオブジェクト、CSVは空本文、Markdownはエラー文書を返す（詳細は§6） | `app/main.py:export_analysis_json/export_analysis_csv/export_analysis_markdown`, `app/services/export_service.py` | コード確認 |
-| UI-05 | 新規 | 分析を作成 | title必須。頂上事象、2種contextは任意 | Analysis作成。contextはJSON。成功後編集へ。サーバ側title長上限なし | `app/templates/analysis_form.html`, `app/main.py:create_analysis`, `app/models.py:Analysis` | コード確認 |
-| UI-06 | 新規 | デモsampleをpreviewし入力欄へ転記 | category、頂上事象、context、demo points | 適用時は未保存、form送信で保存 | `app/services/sample_scenarios.py:get_sample_scenarios`, `app/templates/analysis_form.html:onSampleSelect/applySample` | コード確認 |
-| UI-07 | 編集 | 分析title/頂上事象を更新 | title必須・255文字、頂上事象は空保存可 | titleはblur/Enter、頂上事象はボタン。**未保存の頂上事象を生成前に保存するのは一次の通常生成・一次の追加生成だけ** | `app/templates/analysis_detail.html`, `app/static/app.js:saveAnalysisTitle/saveTopEvent/ensureTopEventReady/generateFactors/generateAdditional` | コード確認 |
-| UI-08 | 編集/context | 2種の生成参考情報を保存 | システム構成・対象範囲、障害時状況・観測事実。任意 | JSONへmergeし未知key/demo_pointsを維持。生成前に未保存値を自動保存 | `app/main.py:update_analysis_context`, `app/static/app.js:saveAnalysisContext/ensureAnalysisContextReady/generateFactors/generateAdditional` | コード確認 |
-| UI-09 | 編集/通常生成 | 一次、またはYes評価した全親の子をAI生成 | 一次は頂上事象必須。二/三次はYes親必須。処理中は全生成ボタン無効 | AI Node。既定目標4/3/2件。一次はoverlay、二/三次は親ごと順次badge | `app/static/app.js:generateFactors/generateFactorsSequential`, `app/main.py:generate_factors` | コード確認（動作未確認） |
-| UI-10 | 編集/追加生成 | 既存兄弟と異なる要因をAI追加 | 一次は一括、二/三次は特定親。特定親はNo/未評価でも可 | `additional=true`、既定2件。指定親badge | `app/static/app.js:generateAdditional`, `app/main.py:_get_factor_count/generate_factors` | コード確認 |
-| UI-11 | 手動追加modal | AIなしで一次または指定親の子を追加 | title必須、説明任意。兄弟同階層同名は409 | `ai_generated=false`, `unknown`。成功reload、失敗toast | `app/main.py:add_child_node/add_level1_node`, `app/templates/analysis_detail.html`, `app/static/app.js:submitAddNode` | コード確認 |
-| UI-12 | カード | Yes/No/未評価を保存 | 3値。常時操作可 | `user_judgement`。カード・表へ即時反映。Yesだけ通常の次階層生成対象 | `app/static/app.js:setJudgement`, `app/main.py:update_node`, `app/models.py:Node.user_judgement` | コード確認 |
-| UI-13 | 詳細modal | 要因と直接要因評価を編集 | title、説明、memo、直接要因5値、comment、根拠、再発防止策 | 開く時APIで保存値取得。Yes/Noとは別データ。成功reload | `app/main.py:get_node_detail/update_node`, `app/templates/analysis_detail.html`, `app/static/app.js:openNodeDetail/saveNodeDetail` | コード確認 |
-| UI-14 | カード | title直接編集、要因ツリー削除 | 空titleは保存しない。削除は子孫も消すconfirm | title保存は通知なし。削除成功reload | `app/static/app.js:saveNodeTitle/deleteNode`, `app/main.py:update_node/delete_node`, `app/models.py:Node.children` | コード確認 |
-| UI-15 | 検索 | 名前/説明と評価/要確認をAND絞込 | Yes/No/未評価/要確認 | **カードと一覧表のみ**。階層ツリーは対象外。件数はカード基準 | `app/static/app.js:applyNodeFilter`, `app/templates/analysis_detail.html` filter bar | コード確認 |
-| UI-16 | 表示 | カード列、階層tree、表で参照 | 親、評価、直接要因、警告等 | tree/表の開閉はanalysis別localStorage、reload時scrollはsessionStorage | `app/templates/analysis_detail.html`, `app/static/app.js:reloadPreservingScroll` and DOMContentLoaded handlers | コード確認 |
-| UI-17 | 品質表示 | 警告理由を確認 | AI tag、要確認badge/reason | `warning_flags`を保存。hover/click toast、modal、表、出力へ反映 | `app/services/factor_quality.py:evaluate_candidate`, `app/static/app.js:showWarningDetail`, `app/templates/analysis_detail.html` | コード確認 |
+| UI-01 | 一覧 | 分析を開く | 表（タイトル・頂上事象（未設定は「（未設定）」）・作成日時・更新日時・操作）。更新日時の新しい順、件数を表示。タイトルと「編集」から編集画面へ | 0件は「分析がまだありません」と作成の案内 | `main.py:index`、`crud.get_analyses`、`templates/index.html` | コード確認、自動試験（E-L01、E-L08） |
+| UI-02 | 一覧 | タイトルの行内の改名 | ✎ で入力欄。Enter・保存で保存、Esc・取消で戻す。前後の空白を除いて必須・255文字（コードポイント）。変換確定の Enter は保存しない | `POST /analyses/{id}/title`。サーバーの理由をそのまま表示（C-02 解消）。ブラウザのタブ名は変えない（C-01 解消）。未保存のまま離れると3択 | `js/pages/list.js`、`js/common/text.js`・`ime.js`・`unsaved.js`、`main.py:update_title` | コード確認、自動試験（E-L02〜E-L05）、Windows 実機（PR-1 `516ee00` の手動確認、IME は `b118038` の道具で OK） |
+| UI-03 | 一覧 | 分析の削除 | 画面内のダイアログ（タイトル、一覧の表示時点の要因数、取り消せない旨）。キャンセル・Esc が既定 | `POST /analyses/{id}/delete`。成功で行を消す。失敗は理由をダイアログ内に表示。**親がこの分析の要因である別の分析の要因も削除される（件数に入らない。第8節 S-11）** | `js/pages/list.js:openDeleteDialog`、`main.py:delete_analysis`、`crud.delete_analysis`・`count_nodes_by_analysis` | コード確認、自動試験（E-L06）。別の分析の要因の巻き込みは一時 DB で実行確認（[evidence/pr8/s11-s12-probe-254f826.md](evidence/pr8/s11-s12-probe-254f826.md)） |
+| UI-04 | 一覧／編集 | JSON・CSV・Markdown の出力 | 「出力▾」メニュー（一覧の各行、編集画面のヘッダー。キーボードで開閉）と⑤の出力リンク。⑤に形式ごとの項目の表 | `GET /analyses/{id}/export/{json,csv,markdown}`（`download` 属性）。保存済みの内容だけ。出力の項目は第6節 | `templates/_macros.html:export_menu`・`export_contents_table`、`js/common/menu.js`、`templates/edit/_work.html`、`services/export_service.py` | コード確認、自動試験（E-L07、T-06（⑤の表と実際の出力の照合）、PR4-LAYOUT） |
+| UI-05 | 新規 | 分析の作成 | 分析タイトル（必須）、頂上事象（任意）、参考情報2種（任意）。タイトルは前後の空白を除いて必須・255文字（画面側の検査。サーバーは未変更、S-9）。誤りは欄の下に表示しフォーカス、送信しない | `POST /analyses`（同じ5項目、タイトルは前後の空白を除いて送る）。二重送信しない。成功で編集画面（①と頂上事象）へ | `templates/analysis_form.html`、`js/pages/new.js`、`main.py:create_analysis` | コード確認、自動試験（E-N01・E-N02・E-N05、PR2-IME）、Windows 実機（PR-2 `9fa2967`、IME は `b118038` の道具で OK） |
+| UI-06 | 新規 | サンプルのプレビューと転記 | サンプルを選ぶとプレビュー。「この内容を入力欄へ転記」で頂上事象・参考情報2種・非表示の `demo_points` を置き換える。**分析タイトルは転記しない**（J-21） | 「サンプルを転記済み・未保存」を表示。作成するまで保存しない。サンプルの設定ファイルがなければ欄を出さない | `services/sample_scenarios.py`、`templates/analysis_form.html`（JSON の埋め込み）、`js/pages/new.js` | コード確認、自動試験（E-N03、PR2-NO-SAMPLES） |
+| UI-07 | 編集 | 分析タイトル・頂上事象の更新 | タイトルはヘッダーの行内編集（✎、Enter で保存、Esc で取消、フォーカスが外れたら保存。必須・255文字）。頂上事象は①の「頂上事象を保存」（空でも保存可） | `POST /analyses/{id}/title`・`/top-event`。①は「入力中（未保存）／保存済み」を保存と同じ正規化で比較（J-11）。生成前の自動保存は第5節 | `templates/edit/_header.html`・`_work.html`、`js/pages/edit/title.js`・`step1.js` | コード確認、自動試験（E-E10・E-E11、E-G01・E-G11）、Windows 実機（PR-4 `7a9d517`、IME は `b118038` の道具で OK） |
+| UI-08 | 編集／① | 参考情報2種の保存 | システム構成・対象範囲、障害発生時の状況・観測事実。2つをまとめて「参考情報を保存」 | `POST /analyses/{id}/context`。サーバーが JSON にまとめ、`demo_points` と未知のキーを保つ（画面には出さない）。保存状態の表示は UI-07 と同じ | `js/pages/edit/step1.js`、`main.py:update_analysis_context` | コード確認、自動試験（E-E10、E-E09） |
+| UI-09 | 編集／②〜④ | 通常生成 | 一次：頂上事象の下に生成。二次・三次：一つ上の階層の Yes の要因（絞り込みで非表示も含む、不整合のある要因は除く）を親に、親ごとに順に要求。操作バーに対象の親名と件数・除外件数・設定値の件数 | 第5節。生成ログ・親の見出しのバッジ・通知・部分更新 | `templates/edit/_work.html`、`js/pages/edit/generation.js`・`genlog.js`、`main.py:generate_factors` | コード確認、自動試験（E-G01〜E-G05、E-G12）、Windows 実機（`b118038` の Full。PR-6 `fc337f1` の実操作） |
+| UI-10 | 編集 | 追加生成 | 一次：「一次要因を追加生成」（一次要因があるとき）。二次・三次：親の見出しとインスペクタの「AIで追加生成」で選んだ親1件の下に。親の評価が Yes・No・未評価のどれでも可（J-16）。三次の下には追加しない | `additional: true`、設定値の件数（既定 2）。結果の表示は通常生成と同じ | `js/pages/edit/generation.js`、`templates/edit/_parts.html`、`main.py:_get_factor_count` | コード確認、自動試験（E-G07） |
+| UI-11 | 編集 | 手動追加 | 画面内のダイアログ。追加先（分析・親・階層）を開いた時点で固定して表示。タイトル必須、説明任意。Enter（変換確定を除く）で追加、Esc・キャンセルで閉じる | `POST /analyses/{id}/nodes/add-level1`、`POST /nodes/{id}/children`。手動・未評価。同名は 409 の理由をダイアログ内に表示し入力を残す。成功で部分更新し、追加した要因を選ぶ（R-01 の確認を経る） | `js/pages/edit/add-dialog.js`、`main.py:add_level1_node`・`add_child_node` | コード確認、自動試験（E-E17、PR3-GEN-PARENTS）、Windows 実機（IME は `b118038` の道具で OK） |
+| UI-12 | 編集 | Yes／No／未評価 | 作業リストの行とインスペクタの3つのボタン。すぐ保存 | `POST /nodes/{id}/update`（`user_judgement` だけ）。サーバーの確認の後に全表示・ステップの件数・生成の対象へ反映（C-04 解消）。同じ要因は1件ずつ送り、最後の操作が残る。失敗は理由を表示し変えない | `js/pages/edit/judgement.js`・`view.js` | コード確認、自動試験（E-E03、E-E19） |
+| UI-13 | 編集／インスペクタ | 要因の詳細の編集 | 7項目：要因タイトル（必須）・説明・メモ・直接要因評価（5値）・評価コメント・根拠・再発防止策の候補。開いたときに `GET /nodes/{id}` で取得し、取得まで入力不可 | 「保存」で `POST /nodes/{id}/update`。保存状態（入力中（未保存）／保存済み／保存中…）。保存・取消はペインの下端（スクロール領域の外）。下書きは部分更新でも残る。Yes/No とは別のデータ | `templates/edit/_inspector.html`、`js/pages/edit/inspector.js`・`factor-editor.js`・`factor-source.js` | コード確認、自動試験（E-E14・E-E18、PR5-LAYOUT、E-V03）、Windows 実機（PR-5 `dbe1c04`） |
+| UI-14 | 編集／インスペクタ | 要因タイトルの編集・要因の削除 | タイトルはインスペクタの編集欄だけ（作業リストでの直接編集はない。J-10）。「この要因を削除」で画面内のダイアログ（対象名、サーバーが計算した子孫の件数と合計、表示時点の件数である旨、編集中の変更も破棄される旨） | `POST /nodes/{id}/delete`。子孫も削除。削除の可否はサーバーが計算し、不可ならボタンを無効にして理由を出す（J-25 判断2）。成功で親（または頂上事象）を選ぶ | `js/pages/edit/delete-dialog.js`・`permissions.js`、`detail_view.py:deletion_scope`、`main.py:delete_node` | コード確認、自動試験（E-E16、PR3-DELETE-SCOPE、T-07） |
+| UI-15 | 編集 | 絞り込み | 要因名・説明の文字と、評価（Yes・No・未評価・要確認）の AND。「クリア」。変換中は確定まで絞り込まない | **作業リストと一覧表は一致しない行を隠し、構造ナビとツリーは一致を強調して他を薄くする**（親を隠さない、J-08）。件数を表示。生成の対象は変わらない（J-07）。分析ごとに sessionStorage へ保持 | `templates/analysis_detail.html`、`js/pages/edit/filter.js` | コード確認、自動試験（E-E04）、Windows 実機（PR-3 `410972d` の目視、IME は `b118038` の道具で OK） |
+| UI-16 | 編集 | 3つの表示 | 表示タブ「作業・ツリー・一覧表」（矢印キーで切替）。作業：ステップごとの作業リスト（③④は親ごとの見出し）。ツリー：全体の階層。一覧表：全要因（階層・要因・親要因・評価・直接要因評価・要確認・説明） | 選択は全表示とインスペクタで一致。状態の保持は第2節の下「状態の復元」 | `templates/edit/_work.html`・`_tree.html`・`_table.html`・`_parts.html`、`js/pages/edit.js`・`view.js`・`state.js` | コード確認、自動試験（E-E01・E-E02・E-E05・E-E06） |
+| UI-17 | 編集 | 品質警告の確認 | AI／手動のタグ、「要確認」のバッジ。インスペクタに警告の全文 | 生成時の `warning_flags` を保存。一覧表の「要確認」列、出力（JSON・CSV）に反映 | `services/factor_quality.py`、`templates/edit/_parts.html`、`js/pages/edit/inspector.js` | コード確認、自動試験（E-E02、T-04） |
+
+### 編集画面の構成と操作
+
+| 領域 | 内容 | 根拠 |
+|---|---|---|
+| ヘッダー | 「構造を表示」（幅 1280px 未満だけ）、分析タイトル（行内編集）、AI プロバイダの表示、「出力▾」、「一覧へ」。更新日時は出さない（J-15） | `templates/edit/_header.html`、`js/pages/edit/title.js`・`nav-drawer.js` |
+| 作業ステップ | ①頂上事象・参考情報（頂上事象の入力済み／未入力）、②一次要因・③二次要因・④三次要因（件数・未評価の数）、⑤確認・出力。順序は強制しない。要因を選ぶとそのステップに切り替わる | `templates/edit/_steps.html`、`js/pages/edit.js` |
+| 構造ナビ | 頂上事象から三次要因までの木（評価・要確認・手動の印）と、末尾の「親子関係に不整合がある要因」 | `templates/edit/_nav.html`・`_parts.html` |
+| 作業エリア | 表示タブと絞り込み、生成中の状態表示（準備中・生成中・反映中。準備中は「生成を取りやめる」）、選んだステップのパネル（①の入力、②〜④の操作バー・生成ログ・作業リスト、⑤の件数・出力） | `templates/analysis_detail.html`・`edit/_work.html` |
+| インスペクタ | パンくず、タグ（階層・AI／手動・「直接要因評価：…」・「メモあり」、J-14）、親子関係の注意（J-25）、評価、品質警告、詳細の編集欄（UI-13）、子要因の一覧と「AIで追加生成」「手動追加」、「この要因を削除」。頂上事象を選んだときは保存済みの頂上事象（未設定は「（頂上事象が未設定です）」）と「「① 頂上事象・参考情報」を開く」 | `js/pages/edit/inspector.js` |
+| 通知の行 | 作業エリアの直下（第2節「通知」） | `templates/analysis_detail.html`、`css/edit.css` |
+
+### 部分更新・選択・状態の復元（`js/pages/edit/refresh.js`・`state.js`）
+
+- 手動追加・削除・詳細の保存・生成の後は、同じ URL を取り直し、`data-region` の領域だけを差し替える（全体の再読み込みをしない）。①とインスペクタの編集欄は差し替えないので、入力中の値・フォーカスが残る。選択・ステップ・タブ・絞り込み・スクロール位置も残る。
+- 古い応答で巻き戻さない：取得は1件ずつ。評価・頂上事象の保存中は取得せず、その前に出した取得の応答は捨てる。画面で確定した評価が応答に含まれなければ取り直し、2回続けば「表示を最新にできませんでした」と表示して何も反映しない。生成中は取得しない。
+- 分析が削除されていれば（404）、その旨を表示して操作を止める。ほかの失敗は、入力中の内容がなければ再読み込みし、あれば「最新の表示に更新できませんでした」と表示して入力を残す。
+- 状態の復元：選んだ要因・ステップ・表示タブは URL のハッシュ（`#sel=<ID|top>&step=1〜5&view=work|tree|table`、`history.replaceState`）、スクロール位置と絞り込みは sessionStorage の `fta:edit:v1:<分析ID>`。保存領域が使えなくても既定の表示で動く。不正なハッシュは既定の表示（要因なし：①と頂上事象、要因あり：②と最初の一次要因）。
+- 確認：自動試験（E-E06・E-E07・E-E19、E-G05、PR1-BASE-STORAGE）。既知事項：別のタブで評価を変えた後、最初の部分更新だけ反映されない場合がある（計画書 第14.3節）。
+
+### 幅・高さ・表示倍率（J-20、`css/edit.css`・`components.css`）
+
+| 表示領域 | 編集画面の配置 | 確認 |
+|---|---|---|
+| 幅 1280px 以上 | 3ペイン（構造ナビ 240〜320px・作業エリア・インスペクタ 340〜440px） | 自動試験（PR3-LAYOUT、E-V01）、Windows 実機（`b118038` の Full と道具、表示倍率 100%・125%・150%） |
+| 幅 1024〜1279px | 構造ナビを折りたたみ、ヘッダーの「構造を表示」（`aria-expanded`）で作業エリアの左に重ねて表示。開くと選択中の要因へフォーカス、Esc・ボタンで閉じてボタンへ戻る、ナビで選ぶと（R-01 の確認の後）閉じる。インスペクタは 340px | 自動試験（E-V01・E-V02、E-K01）、Windows 実機（同上） |
+| 幅 1024px 未満 | 作業エリアの中身だけが 1024px のときの幅（684px）を保ち、作業エリアの中で横スクロール。インスペクタ・ヘッダー・ダイアログは表示領域の中で、保存・取消とダイアログのボタンに横スクロールなしで届く | 自動試験（E-V03） |
+| 高さ 500px 前後 | 保存・取消はインスペクタの下端（スクロール領域の外）で、要因を選んだ時点から見える。通知は高さの 25%（700px 未満）まで | 自動試験（E-V01・E-V03、`test_pr7_focus.py`）、Windows 実機（表示倍率 125%・拡大 125% の 1222.4×585.6 で4つの状態のどれでも見える） |
+
+既知の制約（2026-10-31 の利用者の判断で現状維持。計画書 第14.8節）：
+
+- Edge の表示倍率 150%・ブラウザの拡大 150%（表示領域 848×392 CSS px。計画の想定の高さ 500px を下回る参考の条件）では、通知が出ている間、作業エリアの下の方の項目・フォーカス・生成中の状態表示が通知に覆われる（Windows の道具で NG 2件）。保存・取消とダイアログのボタンは覆われない。回避は通知を閉じる（Tab で届く）か、拡大を 125% 以下にする。
+- 高さ 500px で閉じるまで残るエラーが重なると、作業エリアの見える高さは約 50px まで低くなる（重なりの自動検査は成功。この条件に絞った Windows の読みやすさの確認はしていない）。
+- 構造ナビを折りたたむ幅では、構造ナビのスクロール位置は保持しない（開くと選択中の要因へスクロール）。
+- 寸法と devicePixelRatio を指定した自動試験は、実際のブラウザの拡大・OS の表示倍率の確認の代わりではない。Firefox・macOS の Safari は**未確認**（計画の推奨・利用があれば）。
 
 ## 4. 代表操作フロー
 
-1. 一覧から新規作成へ行き、必須title、任意の頂上事象と2種contextを入力する。sample適用は入力補助で、その時点では未保存。
-2. 作成後、編集画面へ遷移する。一次の通常生成・一次の追加生成では、頂上事象が空なら停止し、入力中の頂上事象が保存値と異なれば先に自動保存する。二次・三次の通常生成および追加生成は `ensureTopEventReady()` を呼ばないため、未保存の頂上事象を保存しない。
-3. 2種類のcontextは階層・通常/追加を問わず全生成経路で `ensureAnalysisContextReady()` を通り、未保存なら先に自動保存する。AI一次候補または手動一次要因を追加し、利用者がYes/No/未評価を選ぶ。
-4. 「Yesの一次要因から二次要因を生成」は全Yes親をブラウザが順次処理し、三次も同様。
-5. 「子を追加生成」は特定親だけをAIで補完し、親のYes/Noによる制限はない。「子追加」はAIを呼ばない。
-6. 詳細modalで直接要因評価、comment、根拠、再発防止策、memoを記録し、3表示またはexportで確認する。
+1. 一覧の「＋ 新規分析を作成」から新規作成へ。分析タイトル（必須）、頂上事象と参考情報2種（任意）を入力する。サンプルの転記は入力の補助で、その時点では保存しない。「作成して編集へ」で保存し、編集画面の①が開く。
+2. ①で頂上事象・参考情報を保存する（保存しなくても、一次の生成の前に自動で保存する。第5節）。
+3. ②「一次要因を生成」（または「手動追加」）。生成ログで結果を確かめ、作業リストかインスペクタで Yes／No／未評価を付ける。
+4. ③「Yesの一次要因から二次要因を生成」で、Yes の親ごとに順に生成する（親ごとの進捗と結果が生成ログと親の見出しに出る）。④も同じ。
+5. 特定の親を補うときは、親の見出しかインスペクタの「AIで追加生成」（AI）または「手動追加」（AI なし）を使う。
+6. インスペクタで直接要因評価・評価コメント・根拠・再発防止策・メモを記録し、「保存」する。ツリー・一覧表・⑤で確かめ、出力する。
 
-**Yes/No/未評価** (`user_judgement`) は要因の該当判断と通常生成対象を表す。**直接要因評価** (`direct_cause_status`) は別軸で、未評価／可能性高／可能性低／直接要因／直接要因でないの5値である。
+**Yes／No／未評価**（`user_judgement`）は要因の該当判断で、Yes は通常生成の親になる。**直接要因評価**（`direct_cause_status`）は別の軸で、未評価／可能性高／可能性低／直接要因／直接要因でないの5値。画面では「直接要因評価：可能性高」のように項目名を付けて表示する（J-14）。
 
-## 5. 生成時の経路別・状態別挙動
+## 5. 生成
 
-サーバーの `app/main.py:generate_factors` は単一親の呼出しごとに `success`, `message`, `created`, `skipped`, `parent_id`, `quality_summary` を返す。以下は、その応答を各ブラウザ経路がどう表示するかを分離した記録である。
+### 通常生成・追加生成・手動追加の違い
 
-| 経路 | 呼出しと生成中表示 | `created > 0` | 0候補 | 全候補除外 | 処理/通信失敗 |
-|---|---|---|---|---|---|
-| 一次・通常 (`generateFactors(..., 1)`) | API 1回。全画面overlay、全生成trigger無効 | APIの`message`をtoast後reload | `success=true`ならAPIの`message`（LLMが返さなかった旨）をwarning | APIの`message`（件数・主理由）をwarning | APIの`message`をerror。fetch例外は通信error |
-| 二/三次・一括 (`generateFactorsSequential`) | DOM上の全Yes親へAPIを1回ずつ順次実行。各親に一時badge | 全親の`created`を合計し、`合計N件...`という**ブラウザ集計文言**を表示後reload | 作成・除外・errorが全て0ならブラウザ固定文言「新規要因はありませんでした」 | 除外数・理由をブラウザで集計してwarning | 親にerror badge。ただし作成合計が1件以上なら最終通知は成功合計が優先され、**error件数を含めない** |
-| 追加 (`generateAdditional`) | 一次はAPI 1回＋overlay、子は指定親へAPI 1回＋一時badge | APIの`message`をtoast後reload | `success=true`ならAPIの`message`をwarning | APIの`message`をwarning、指定親は除外badge | APIの`message`をerror、指定親はerror badge。fetch例外は通信error |
+| 区分 | 場所 | 親と件数 | AI |
+|---|---|---|---|
+| 通常生成 | ②〜④の操作バーの主ボタン | 一次：頂上事象の下に設定値の件数（既定 4）。二次・三次：一つ上の階層の Yes の要因それぞれの下に設定値の件数（既定 3・2）。絞り込みで非表示の Yes の要因も対象（J-07）。親子関係に不整合がある要因と「上位に不整合あり」の要因は対象外で、件数を分けて表示（J-25 判断3） | 使う |
+| 追加生成 | 一次：「一次要因を追加生成」。二次・三次：親の見出しとインスペクタの「AIで追加生成」 | 一次の全体、または選んだ親1件の下に設定値の件数（既定 2）。既存の兄弟と重複しないよう生成。親の評価は問わない（J-16）。三次の下には追加しない | 使う |
+| 手動追加 | 「手動追加」（②の操作バー、親の見出し、インスペクタ） | 1件。手動・未評価 | 使わない |
 
-### サーバー応答の意味
+件数の設定値は `FTA_PRIMARY_FACTOR_COUNT`・`FTA_SECONDARY_FACTOR_COUNT`・`FTA_TERTIARY_FACTOR_COUNT`・`FTA_ADDITIONAL_FACTOR_COUNT`（`main.py:_get_factor_count`）。追加生成で作られた要因は、通常生成の要因と区別して記録しない（J-18、S-5 は未承認）。
 
-- `created > 0`: 保存された新規Nodeがある。サーバーのmessageは作成件数とskip情報を含み得る。
-- LLM応答0件: `success=true`, `created=0`, `quality_summary.all_candidates_excluded=false`。API messageは「生成候補がありませんでした（LLMが要因を返しませんでした）。」。
-- 全候補除外: `success=true`, `created=0`, `all_candidates_excluded=true`。API messageは候補数、品質チェックによる全除外、主理由を含む。
-- 一部の親処理で例外: そのAPI呼出しは`success=false`でも、それ以前の成功Nodeが保存済みの場合がある。
+### 生成前の保存と生成対象（`js/pages/edit/generation.js`）
 
-### 一括生成に固有の現行制約
+| 段階 | 内容 |
+|---|---|
+| 準備中 | 生成ボタンを押すと全生成ボタンを無効にし、送信中の保存（評価・インスペクタ・頂上事象・参考情報・分析タイトル）を名前を示して待ち、結果を確かめる。1つでも失敗していれば生成しない（理由を表示、入力は残る）。10 秒を超えると、サーバーが別の処理を実行中の可能性を表示して待ち続ける（時間制限ではない）。「生成を取りやめる」で何も要求せずに戻る（送信済みの保存は取り消さない） |
+| 自動保存 | 保存ボタンと同じ処理で：**一次（通常・追加）は頂上事象と参考情報**（頂上事象が空なら生成しない）、**二次・三次は参考情報だけ**（保存済みの頂上事象を使い、入力中の頂上事象は使わない。J-09）。インスペクタの下書きは保存しない |
+| 対象の確定 | 待ちの後に対象を決める（待つ間に保存された評価も数える）。二次・三次は必ず `parent_id` を指定し、親を指定しない要求は送らない。対象が0件なら要求を送らない |
+| 生成中 | 親ごとに1件ずつ要求する。各要求の直前に、親がまだあり、対象にできる区分で、階層が合い、通常生成では Yes のままかを確かめ、外れた親は送らない（「送信していません」） |
+| 反映中 | 1回の部分更新（作成0件や失敗のときも）の後、結果を確かめ、要約を通知し、制限を解除する（成功・失敗・例外のどれでも） |
 
-`generateFactorsSequential()` は最終分岐で `totalCreated > 0` を最優先する。このため成功親と失敗親が混在すると、画面には「合計N件を生成」の成功toastが出てerror件数は通知されない。親ごとのerror badgeはDOMへ一時追加されるだけで永続化されず、成功が1件でもあれば直後のreloadで消える。これは**現行挙動**であり、成功と失敗の混在を永続的・集約的に区別できているという意味ではない。
+### 生成中の操作制限（`js/pages/edit/restrict.js`、J-01）
 
-再設計では、部分成功時に成功件数と失敗親/件数を同時に示すか、reload後も結果を参照可能にするかを別途判断する。これは表示改善候補であり、現行API/保存仕様を変更する確定要件ではない。
+準備中・生成中・反映中は、評価、保存ボタン（①とインスペクタ）、手動追加、削除（ボタン・ダイアログを開く・確定の3か所）、別の生成、出力、画面内のリンク（ヘッダー・「一覧へ」）を受け付けない（ボタンの無効化と、各処理の入口・送信直前の判定）。ヘッダーのタイトルも保存しない（入力は残る）。要因の選択（下書きがあれば2択）、作業ステップ、表示タブ、絞り込み、スクロール、下書きの入力はできる。新しく選んだ要因の詳細は取得せず、「取得待ち」または生成前に取得した内容（取得時刻つき）を示し、生成の後に取り直す（下書きは残る）。ブラウザの操作で離れるときは、下書きがなくてもブラウザ標準の確認を出す。
+
+**この制限はこの画面の中だけのもので、別のタブ・別のワーカー・API の直接呼び出しは止めない**（計画書 第2.4節・第5.3節）。単一ワーカーでは、生成の要求の処理が終わるまでサーバーはほかの要求に応答しない（PR-3 より前からの動作）。
+
+### 生成結果の区分と表示（`js/pages/edit/genlog.js`、J-02〜J-04）
+
+| 区分 | 意味（サーバーの応答・通信） |
+|---|---|
+| 作成 | `success:true` かつ `created > 0`（品質警告付きの作成は「要確認」つき） |
+| 候補0件 | `success:true`、`created = 0`、全候補除外でない（AI が候補を返さなかった） |
+| 全候補除外 | `success:true`、`created = 0`、`quality_summary.all_candidates_excluded = true`（品質チェックで全候補を除外） |
+| 処理失敗 | `success:false`（それ以前に作成した要因が保存済みの場合がある） |
+| 通信失敗 | 応答を受け取れなかった |
+| 親なし | 部分更新が成功し、要求した親が画面のデータにない |
+| 分析なし | 分析が見つからない（HTTP 404） |
+| サーバーエラー | そのほかの HTTP の異常 |
+
+- 生成ログは②〜④のそれぞれの操作バーの下に、親ごとの行で表示する（要求で指定した親に結び付ける。選択には結び付けない）。進捗は「待機中・生成中・送信していません」。③④では親の見出しに同じ区分のバッジを出す。区分は文字で示す（色だけにしない）。
+- 通知の要約：作成と失敗が混在した場合は**注意**として作成件数と失敗した親の数を示す（J-04）。開始の通知に「絞り込みで表示していない要因も含みます」と対象件数（J-07）。
+- 保持（J-03）：分析ごとに直近1回分を sessionStorage の `fta:genlog:v1:<分析ID>` に保存する。保存するのは対象分析・時刻・階層・区分・件数・親の ID・理由・HTTP 状態だけで、要因の本文や下書きは保存しない。同じタブの再読み込みでは「再読み込み前の結果です」と示して復元し、制限や「生成中」は復元しない（応答がなかった行は「結果不明」）。「閉じる」で画面と保存領域から消す。別のタブ（`window.open`）には表示しない（`window.name` の印）。保存領域が使えなければ画面の中だけで保持し、その旨を表示する。正式な履歴・下書きの復旧・ブラウザを閉じたときの確実な消去は保証しない。ブラウザのメニューでのタブの複製は自動試験がなく（`genlog.js` の注記）、PR-6 の Windows の手動確認（`3ea61be`、2026-10-18・21、Chrome・Edge）で複製先に生成ログが出ないことを確認した（ブラウザの版・表示倍率の記録はない。計画書 第14.6節）。
+- 確認：自動試験（E-G03・E-G06、E-K03）、Windows 実機（`b118038` の Full、PR-6 `fc337f1`）。
+
+### サーバー応答（`main.py:generate_factors`。変更なし）
+
+単一の親の呼び出しごとに `success`、`message`、`created`、`skipped`、`parent_id`、`quality_summary` を返す。親を指定しない二次・三次の要求は、その階層のすべての Yes の要因を親にする（画面は使わない）。親の経路の組み立てに循環の検出はない（第8節 S-12）。
 
 ## 6. 保存・出力データ
 
-- **Analysis**: title、top_event、JSON文字列のanalysis_context、作成/更新日時。公開keyは`system_context`/`incident_context`、sample由来の非表示keyは`demo_points`。
-- **Node**: 親子とlevel 1〜3、title/description、AI/手動、利用者評価、直接要因評価一式、memo、warning、表示順。頂上事象はNode(level 0)でなくAnalysisの値。
-- **JSON**: Analysisメタ情報、context、Nodeの全主要項目。
-- **CSV**: Nodeを1行ずつ、評価、詳細、warning、品質statusを出す。Analysis contextは含まない。
-- **Markdown**: 頂上事象、context、tree、利用者評価、直接要因status/comment/再発防止策。Node description、根拠、memo、warningは出さない。
+- **Analysis**：title、top_event、JSON 文字列の analysis_context、作成・更新日時。公開のキーは `system_context`・`incident_context`、サンプル由来の非表示のキーは `demo_points`。
+- **Node**：親子と level 1〜3、title・description、AI／手動、利用者の評価、直接要因評価一式、memo、warning、表示順。頂上事象は Node（level 0）でなく Analysis の値。
+- **更新日時**：分析の項目（タイトル・頂上事象・参考情報）の保存と要因の作成で更新する。要因の評価・更新・削除では更新しない（J-15、S-4 は未承認）。
+- **JSON**：Analysis のメタ情報、context、Node の全主要項目。
+- **CSV**：Node を1行ずつ、評価、詳細、warning、品質の状態。Analysis の context は含まない。
+- **Markdown**：頂上事象、context、木、利用者の評価、直接要因評価・コメント・再発防止策。Node の description、根拠、memo、warning は出さない。親子関係に不整合がある要因は根からたどれないため出力されない。
+- UI 再設計で出力の内容は変えていない。⑤に形式ごとの項目の表を載せ、実際の出力と照合している（T-06）。
 
 ### 対象分析が存在しない場合
 
-現行のエクスポート用ルートは、分析の不存在に対して404を返さない。出力サービスの戻り値を既定のHTTP 200で返す。
+出力のルートは分析の不存在に 404 を返さず、HTTP 200 で、JSON は `{"error": "Analysis not found"}`、CSV は空の本文、Markdown は `# エラー` と `分析が見つかりません。` を含む文書を返す（J-19、S-2 は未承認）。画面は存在する分析にだけ出力の導線を出す。根拠は `main.py` の `export_analysis_json()`・`export_analysis_csv()`・`export_analysis_markdown()` と `services/export_service.py`。コード確認（実機での再現は未実施）。
 
-- JSON: `{"error": "Analysis not found"}`
-- CSV: 空の本文
-- Markdown: `# エラー` と `分析が見つかりません。` を含む文書
-
-これはコード確認による現行挙動であり、実機での再現確認は未実施。404化や画面上のエラー通知の改善は、別途判断する仕様変更とする。
-
-根拠は、`app/main.py` の `export_analysis_json()`、`export_analysis_csv()`、`export_analysis_markdown()` と、`app/services/export_service.py` の `export_json()`、`export_csv()`、`export_markdown()` である。
-
-## 7. READMEとの照合
+## 7. README との照合（2026-11-02）
 
 | 区分 | 結果・対応 |
 |---|---|
-| 一致 | 作成/削除、一〜三次AI生成、追加生成、3表示、Yes/No、直接要因評価、3形式出力は一致 |
-| 実装にあり不足 | READMEには2種contextと手動追加・品質warningの概要を追記した。demo sampleと「全候補除外」の状態詳細はREADMEへ重複記載せず本仕様書に記載し、READMEから本書へリンクした |
-| 古い可能性 | directory例はサービス/テスト全数を列挙しない概略。画面仕様の誤りとは断定せず全面改稿しない |
-| READMEにあるが未確認 | 画面機能は該当なし。モデル性能/時間は環境依存で、実LLM再検証は未実施 |
-| 判断保留 | READMEの検索・filterはカードと表だけに適用されtreeは対象外。意図通りか未確認 |
+| 一致 | 作成・削除、一次〜三次の AI 生成、追加生成、手動追加、3つの表示、Yes/No、直接要因評価、3形式の出力、品質警告、参考情報 |
+| 更新した | 「機能」の横並びカラム・カード編集の記述を、作業ステップ・構造ナビ・作業エリア（表示タブ）・インスペクタに置き換えた。画面の名称「AIへの参考情報」と、出力・API の「分析コンテキスト」の対応を明記した。「UI仕様・再設計資料」「使い方」「ディレクトリ構成」「テストの実行」、Ollama の手順の「一次要因を生成」の場所、API 表の `/nodes/{id}` の用途（詳細編集モーダル → インスペクタ）を更新した |
+| 更新しない | AI プロバイダ、設定ファイル、LangGraph・比較試験、API の表（ルートは変わっていない） |
+| README にあるが未確認 | モデルの性能・時間（環境依存。実LLMでの再検証は未実施） |
 
-## 8. 現行挙動（維持要件ではない）
+## 8. 改修前の挙動の解消と、残る現行挙動
 
-1. Node titleのinline保存はHTTP成否を確認せず、空にした場合もDOMは空のまま（DBは未更新）。reloadで保存値に戻る。**不具合の疑い**。
-2. 一覧改名失敗時、具体的API理由の後に一般的な「保存に失敗」で上書きする可能性がある。**不具合の疑い**。
-3. filterで非表示のYesカードも通常の一括生成対象になる。filterが生成対象へ影響しない意図かは未確認。
-4. Node更新/削除はAnalysisの`updated_at`を明示更新しない一方、Node作成は更新する。一覧日時/並び順の期待と合うか未確認。
+### 第1版の第8節（改修前）の扱い
 
-## 9. 未確認事項と実機確認手順
+| 第1版の記載 | 現在 |
+|---|---|
+| 1. 要因タイトルのカード上の保存が HTTP の成否を確かめない（C-03） | **解消**：カード上の直接編集をなくし、インスペクタで応答を確かめてから保存済みにする（J-10、PR-5） |
+| 2. 一覧の改名の失敗で、API の理由を一般的な文で上書きする（C-02） | **解消**：サーバーの理由をそのまま表示（PR-1） |
+| 3. 絞り込みで非表示の Yes も一括生成の対象 | **維持（判断）**：対象に含め、操作バーと開始の通知で明示する（J-07） |
+| 4. 要因の更新・削除で分析の更新日時を更新しない | **維持（判断）**：J-15。編集画面のヘッダーに更新日時を出さない |
+| 一覧の改名でタブ名が変わる（C-01） | **解消**（PR-1） |
+| 評価がツリーに反映されない（C-04） | **解消**：全表示へすぐ反映（PR-3） |
+| 親が見つからない要因の親列（C-09） | **解消**：一覧表の親要因列に区分を表示（PR-3、J-25） |
+| 一括生成の部分失敗が通知されない（C-06） | **解消**：注意として作成件数と失敗した親の数、生成ログに親ごとの区分（J-04、PR-6） |
+| 一次生成の全画面オーバーレイ（C-05） | **解消**：撤去し、状態表示と操作制限で示す（J-05、PR-6） |
+| 未保存の内容の保護がない（C-07） | **解消**：第2節（J-12） |
+| 新規作成のタイトルが `required` だけ（C-11） | **画面側だけ解消**：前後の空白を除いて必須・255文字。サーバーの検査は未変更（S-9 は未承認） |
 
-1. **版**: 利用環境で `git branch --show-current` と `git rev-parse HEAD` を取り§1と比較。秘密値を開示せず`.env`のprovider/flagも比較する。
-2. **表示**: 検証DB/mockでdesktopと想定最小幅の3画面、長文、0/多件、modal、横scroll、focus復帰を目視する。
-3. **生成状態**: mock/stubで遅延、0件、全除外、一部親失敗、通信断を再現し、無効化、badge、toast、部分保存を確認する。実LLMは別承認で行う。
-4. **頂上事象の保存範囲**: 二次・三次生成でも編集中の頂上事象を保存すべきかを利用者・productに確認する。現行は一次の通常/追加だけが保存確認し、contextは全生成経路で保存確認する。
-5. **業務定義**: 2種類の評価基準、No後の子保持、No親への個別追加生成可否を利用者に確認する。
-6. **出力契約**: 形式ごとの項目差、後続用途、Markdownに根拠がないことが期待通りか確認する。
-7. **アクセシビリティ**: Tab順、modal focus trap、screen reader、contrastは未検証。
+### 残る現行挙動・制約（API・サーバー。UI 再設計では変えていない）
 
+| 事項 | 内容 | 状態 |
+|---|---|---|
+| S-11 分析をまたぐ連鎖削除 | 一覧からの分析の削除と要因の削除 API は、`parent_id` でたどれる**別の分析の要因も削除する**。一覧の削除ダイアログの件数には入らず、一覧には抑止がない。編集画面の要因の削除だけ、画面側で抑止する（取得の後の変化と API の直接呼び出しには効かない）。自己参照・循環を含む削除は HTTP 500 で何も消えない。修復の手段はない | **未解決**。基準ブランチへの統合の前に利用者が方針を判断する（[pr8-s11-s12-options.md](pr8-s11-s12-options.md)）。不整合データがなければ起きない |
+| S-12 生成 API の循環 | 親が循環上・循環の下にあると、親の経路の組み立てが終わらず、要求が返らない（サーバー全体が応答しなくなる）。親を指定しない二次・三次は不整合のある Yes の要因も親にする。編集画面はそのような要求を送らない（画面側の抑止） | **未解決**（同上）。2026-11-02 に一時 DB で、20 秒以内に応答しないことを確認 |
+| 生成中のほかの要求 | 単一ワーカーでは、生成の要求の処理中はほかの要求に応答しない | 現行のまま（S-7 は未承認） |
+| 出力の不存在時 | HTTP 200（第6節） | 現行のまま（S-2 は未承認） |
+| サーバー側の入力検査 | 要因タイトル・評価の値・生成時の親の階層・新規作成のタイトルの長さを検査しない | 現行のまま（S-9 は未承認） |
 
-## 10. テストコードとの対応（実行確認ではない）
+## 9. 未確認事項
 
-依存不足により今回は実行していない。別途読んだテスト仕様は、主に `tests/test_ui_endpoints.py:test_get_node_returns_all_detail_fields/test_delete_level1_node_cascades_to_level2_and_level3/test_delete_analysis_removes_analysis_and_nodes`、`tests/test_analysis_context.py:test_create_analysis_saves_context/test_update_context_trims_and_persists/test_updated_context_is_passed_to_ai_provider/test_exports_reflect_updated_context`、`tests/test_generate_endpoint.py:test_generate_level1_response_shape/test_all_candidates_excluded_parent_paraphrase/test_no_candidates_returned`、`tests/test_export_service.py` の期待値を読んだことを示す。ブラウザ内だけで集計する `generateFactorsSequential()` の最終toastや一時badgeは、対応する自動テストを確認できていないためコード確認のみである。
+1. **利用環境の版**：利用者の環境で `git rev-parse HEAD` を取り第1節と比べる。`.env` のプロバイダ・フラグ、ワーカー数、DB は未確認（複数ワーカーの構成では S-1・S-7 の検討が要る）。
+2. **利用者の DB の不整合データの有無**：S-11・S-12 が起きる条件。未確認。
+3. **実LLM**：生成時間と結果の分布は未確認（試験はスタブ・mock）。
+4. **スクリーンリーダー**：NVDA の実機での読み上げは未実施（PR-7 で推奨の項目として未実施のまま利用者が承認）。E-K03 は DOM の確認。
+5. **Windows の全寸法での全テスト（FullSizes）**：未実施（PR-7 で省くことを利用者が承認）。開発環境では `d2eb76e` で実施（2691 件合格）。
+6. **ブラウザ**：Firefox・macOS の Safari は未確認。Windows の Chrome・Edge は `b118038` で確認（第1節）。
+7. **画像の目視**：PR-7 で利用者が代表の画像を確認して合格と判断。全画像を1枚ずつ確認したものではない。
+8. **BIZ UDPGothic での表示**：利用者の端末の有無は記録がない（代替フォントでの表示は E-F01）。
+9. **生成ログのタブの複製**：自動試験はない。Windows の手動確認は PR-6 の `3ea61be`（Chrome・Edge、OK）だけで、その後の版での再確認はしていない（生成ログの処理は PR-6 の後に変わっていない：`git diff --stat 3ea61be 254f826 -- fta_tool/app/static/js/pages/edit/genlog.js` で確認）。
+10. **静的ファイルのキャッシュの移行**：PR-C の残余リスク（旧方式からの実キー移行の一部未確認、`ERR_NO_BUFFER_SPACE` の原因未特定）は解消していない。
+
+## 10. テストとの対応
+
+通常の pytest（`tests/`）と実ブラウザの E2E（`tests/e2e/`）。実行方法は [tests/e2e/README.md](../tests/e2e/README.md) と README の「テストの実行」。必須受入検証の 75 項目は `tests/e2e/acceptance.py` の `REQUIRED_IDS`。
+
+| UI | 主な試験 |
+|---|---|
+| 一覧（UI-01〜UI-04） | E-L01〜E-L08、E-X01、PR1-BASE-*、`tests/test_ui_templates.py`（T-01〜T-03）、`tests/test_ui_endpoints.py` |
+| 新規作成（UI-05・UI-06） | E-N01〜E-N06、PR2-IME、PR2-NO-SAMPLES、`tests/test_analysis_context.py`、`tests/test_sample_scenarios.py` |
+| 編集の骨格・表示・選択・絞り込み（UI-12・UI-15〜UI-17） | E-E01〜E-E09、E-E19、PR3-LAYOUT、PR3-LEGACY-NOTIFY、PR3-LEGACY-OPS、T-04 |
+| 不正な親子関係（J-25） | `tests/test_node_integrity.py`（T-07）、E-E08、PR3-DELETE-SCOPE、PR3-GEN-PARENTS |
+| ①・ヘッダー・⑤・保存調整（UI-04・UI-07・UI-08） | E-E10〜E-E13、E-E20、PR4-LAYOUT、T-06 |
+| インスペクタ・切替・削除・手動追加（UI-11・UI-13・UI-14） | E-E14〜E-E18、PR5-LAYOUT |
+| 生成（UI-09・UI-10） | E-G01〜E-G12、`tests/test_generate_endpoint.py` |
+| 静的ファイルのキャッシュ | `tests/test_static_cache.py`（H-01〜H-09）、C-00〜C-07 |
+| 幅・高さ・キーボード・フォント・favicon（PR-7） | E-V01〜E-V03、E-K01〜E-K03、E-F01、`test_pr7_focus.py`、`test_display_check.py`、`test_console_check.py` |
+
+2026-11-02 の開発環境での実行結果（対象 `254f826`）は [evidence/pr8/README.md](evidence/pr8/README.md)。Windows の Chrome・Edge の全必須 E2E の結果は PR-7 の受入候補 `b118038` のもの（[evidence/pr7/windows-2026-10-31-b118038.md](evidence/pr7/windows-2026-10-31-b118038.md)）。
