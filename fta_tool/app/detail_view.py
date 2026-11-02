@@ -224,6 +224,24 @@ def _inconsistent_ancestor(node_id: int, by_id: dict, issues_of: dict[int, tuple
         current = by_id[parent_id]
 
 
+def inconsistent_ids(nodes: list) -> set[int]:
+    """Ids of the factors that are never a parent of generation (判断3): the
+    factor's own parent link is inconsistent, or an ancestor's is.
+
+    Used by the generation API for a request without parent_id (S-12), with
+    the same categories as the edit screen. Without the cross-analysis
+    lookups a parent outside the analysis is UNVERIFIED_PARENT; on the screen
+    it is FOREIGN_PARENT or MISSING_PARENT — inconsistent either way.
+    """
+    by_id = {node.id: node for node in nodes}
+    on_cycle = nodes_on_cycles(nodes, by_id)
+    issues_of = {node.id: own_issues(node, by_id, on_cycle, None)[0] for node in nodes}
+    return {
+        node.id for node in nodes
+        if issues_of[node.id] or _inconsistent_ancestor(node.id, by_id, issues_of) is not None
+    }
+
+
 # ----- deletion scope --------------------------------------------------------
 
 def deletion_scope(root_id: int, children_of: dict[int, list[int]],

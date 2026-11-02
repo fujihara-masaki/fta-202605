@@ -697,13 +697,13 @@ def test_the_record_has_no_display_area_section_without_pr3_layout(tmp_path):
     assert "画面寸法の要求と実測" not in text
 
 
-# ----- the required acceptance IDs (PR-7: 68 → 75; S-11: 75 → 76) ---------------------------
+# ----- the required acceptance IDs (PR-7: 68 → 75; S-11・S-12: 75 → 77) -------------------
 
 PR7_IDS = ("E-K01", "E-K02", "E-K03", "E-V01", "E-V02", "E-V03", "E-F01")
-S11_S12_IDS = ("S11-DELETE-REFUSED",)
+S11_S12_IDS = ("S11-DELETE-REFUSED", "S12-GEN-REFUSED")
 
 
-def test_the_required_ids_are_76_without_duplicates_and_each_is_tested():
+def test_the_required_ids_are_77_without_duplicates_and_each_is_tested():
     import ast
 
     source = (pathlib.Path(acceptance.__file__)).read_text(encoding="utf-8")
@@ -712,9 +712,9 @@ def test_the_required_ids_are_76_without_duplicates_and_each_is_tested():
                 if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", "") == "REQUIRED_IDS")
     written = [key.value for key in keys]
     assert len(written) == len(set(written)), sorted({k for k in written if written.count(k) > 1})
-    assert len(acceptance.REQUIRED_IDS) == 76
-    # PR-7's 75 are kept as they were, before the one of S-11.
-    assert list(acceptance.REQUIRED_IDS)[-1:] == list(S11_S12_IDS)
+    assert len(acceptance.REQUIRED_IDS) == 77
+    # PR-7's 75 are kept as they were, before the two of S-11・S-12.
+    assert list(acceptance.REQUIRED_IDS)[-2:] == list(S11_S12_IDS)
     assert list(acceptance.REQUIRED_IDS)[68:75] == list(PR7_IDS)
     # PR-C's 68 are kept as they were, before PR-7's.
     assert list(acceptance.REQUIRED_IDS)[60:68] == [f"C-0{n}" for n in range(8)]

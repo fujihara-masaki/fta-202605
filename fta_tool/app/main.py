@@ -344,6 +344,49 @@ async def update_analysis_context(analysis_id: int, request: Request, db: Sessio
     }
 
 
+# ----- S-12: the parent path of generation, always ending --------------------
+#
+# The path from a parent up to its 一次要因 (the AI's parent_path and
+# ancestor_factors) used to be built by following parent_id without a record
+# of what was visited: a parent on a cycle or below one never ended the
+# request (measured: no answer within 20 seconds; as the loop runs inside an
+# async route, the process's other requests wait too — from the code, the
+# whole app with a single worker). Now the walk records the factors visited
+# and stops at PARENT_PATH_LIMIT factors (a consistent path of a parent of
+# 二次・三次 has one or two). A parent whose path cannot be built is never
+# given to the AI: with parent_id the request fails in the existing form
+# (success false, message, counts); without parent_id such parents — and
+# every parent with an inconsistent link or ancestor, as on the edit screen —
+# are left out and the others are generated as before.
+
+PARENT_PATH_LIMIT = 3
+PATH_PROBLEM_SELF = "自分自身を親にしている要因があります"
+PATH_PROBLEM_CYCLE = "親子関係が循環しています"
+PATH_PROBLEM_LIMIT = f"上位の要因が{PARENT_PATH_LIMIT}階層を超えてつながっています"
+
+
+def _parent_path(parent_node, node_map: dict) -> tuple[Optional[list[str]], Optional[str]]:
+    """(titles from the 一次要因 down to the parent, None), or (None, problem).
+
+    Follows parent_id inside the analysis (`node_map`); a parent outside it
+    ends the path, as before (S-1 is not part of S-12).
+    """
+    titles: list[str] = []
+    seen: set[int] = set()
+    current = parent_node
+    while current is not None:
+        if current.id in seen:
+            return None, PATH_PROBLEM_CYCLE
+        seen.add(current.id)
+        if len(seen) > PARENT_PATH_LIMIT:
+            return None, PATH_PROBLEM_LIMIT
+        titles.append(current.title)
+        if current.parent_id is not None and current.parent_id == current.id:
+            return None, PATH_PROBLEM_SELF
+        current = node_map.get(current.parent_id) if current.parent_id else None
+    return list(reversed(titles)), None
+
+
 @app.post("/analyses/{analysis_id}/generate/level/{level}")
 async def generate_factors(
     analysis_id: int,
@@ -368,6 +411,7 @@ async def generate_factors(
     node_map = {n.id: n for n in nodes}
 
     # Determine parent nodes to generate children for
+    excluded_parents = 0  # S-12: Yes parents left out of a request without parent_id
     if level == 1:
         parent_nodes = [None]
     else:
@@ -377,6 +421,59 @@ async def generate_factors(
             parent_nodes = [parent_node] if parent_node else []
         else:
             parent_nodes = [n for n in nodes if n.level == parent_level and n.user_judgement == "yes"]
+            if parent_nodes:
+                inconsistent = detail_view.inconsistent_ids(nodes)
+                kept = [n for n in parent_nodes if n.id not in inconsistent]
+                excluded_parents = len(parent_nodes) - len(kept)
+                parent_nodes = kept
+
+    # S-12: every parent path is built before the AI is called.
+    parent_paths: dict[Optional[int], list[str]] = {}
+    usable = []
+    for parent_node in parent_nodes:
+        if parent_node is None:
+            parent_paths[None] = []
+            usable.append(None)
+            continue
+        path, problem = _parent_path(parent_node, node_map)
+        if problem is None:
+            parent_paths[parent_node.id] = path
+            usable.append(parent_node)
+            continue
+        logger.warning(
+            "generate_factors | parent refused | analysis=%d level=%d parent_id=%s reason=%s",
+            analysis_id, level, parent_node.id, problem,
+        )
+        if parent_id:
+            return JSONResponse({
+                "success": False,
+                "message": (
+                    f"指定された親要因「{parent_node.title}」は親子関係に不整合があるため（{problem}）、"
+                    "この親の下には要因を生成できません。AIは呼び出さず、要因は作成していません。"
+                ),
+                "created": 0,
+                "skipped": 0,
+                "elapsed_ms": 0,
+                "parent_id": parent_id,
+                "excluded_parents": 1,
+            })
+        excluded_parents += 1
+    parent_nodes = usable
+
+    if not parent_nodes and excluded_parents:
+        return JSONResponse({
+            "success": False,
+            "message": (
+                f"生成対象の親要因がありません：Yes評価の{detail_view.level_name(level - 1)}要因"
+                f"{excluded_parents}件は、すべて親子関係に不整合があるため対象外にしました"
+                "（AIは呼び出していません）。"
+            ),
+            "created": 0,
+            "skipped": 0,
+            "elapsed_ms": 0,
+            "parent_id": parent_id,
+            "excluded_parents": excluded_parents,
+        })
 
     if not parent_nodes:
         return JSONResponse({
@@ -430,13 +527,8 @@ async def generate_factors(
     analysis_context: dict = _parse_analysis_context(analysis.analysis_context, analysis_id)
 
     for parent_node in parent_nodes:
-        # Build parent path
-        path_nodes = []
-        current = parent_node
-        while current is not None:
-            path_nodes.append(current.title)
-            current = node_map.get(current.parent_id) if current.parent_id else None
-        parent_path = list(reversed(path_nodes))
+        # Parent path (built and checked above, S-12)
+        parent_path = parent_paths[parent_node.id if parent_node else None]
 
         parent_factor = parent_node.title if parent_node else None
         parent_id_val = parent_node.id if parent_node else None
@@ -811,15 +903,24 @@ async def generate_factors(
         outcome, total_created, elapsed_ms,
     )
 
+    # S-12: parents left out of a request without parent_id are named in the
+    # message and counted (the key appears only then).
+    excluded_note = (
+        f"（親子関係に不整合がある親要因{excluded_parents}件は対象外にしました）"
+        if excluded_parents else ""
+    )
+    excluded_field = {"excluded_parents": excluded_parents} if excluded_parents else {}
+
     if errors:
         return JSONResponse({
             "success": False,
-            "message": f"一部でエラーが発生しました: {'; '.join(errors)}",
+            "message": f"一部でエラーが発生しました: {'; '.join(errors)}{excluded_note}",
             "created": total_created,
             "skipped": total_skipped,
             "elapsed_ms": elapsed_ms,
             "parent_id": parent_id,
             "quality_summary": quality_summary,
+            **excluded_field,
         })
 
     # Build a message that explains a 0-created result instead of just「0件」.
@@ -838,12 +939,13 @@ async def generate_factors(
 
     return JSONResponse({
         "success": True,
-        "message": message,
+        "message": message + excluded_note,
         "created": total_created,
         "skipped": total_skipped,
         "elapsed_ms": elapsed_ms,
         "parent_id": parent_id,
         "quality_summary": quality_summary,
+        **excluded_field,
     })
 
 
