@@ -32,7 +32,7 @@
 | PR-8 の開発環境の試験の対象 | `254f826`（クリーンな worktree） | 通常の pytest と累積の全必須 E2E（[evidence/pr8/README.md](evidence/pr8/README.md)）。**対策前**のコードの記録 |
 | PR-8 のブランチ（文書だけ） | `claude/pr8-docs-integration`（起点 `254f826`、PR #27） | 差分は `fta_tool/README.md` と `fta_tool/docs/` だけ。HEAD の SHA は PR #27 の本文に記録する |
 | S-11・S-12 の専用 PR の起点 | `0e62163b6460dfea358aea9ff582033c72799654` | `feature/ui-redesign` の先頭（PR #27 のマージコミット、2026-11-02 に GitHub で確認）。`254f826` との差分は文書だけ |
-| **最終の受入候補**（S-11・S-12 の対策後） | **`40b377813931f2d3b4080a61d0b80ebf7de0b7a1`** | 専用 PR（`claude/pr8-s11-s12-fix`）の S-12 のコミット。開発環境の追加回帰・通常の pytest・累積の全必須 E2E を実施（[evidence/pr8-s11-s12/README.md](evidence/pr8-s11-s12/README.md)）。この SHA で Windows の Preflight → Full・付録D の実操作・最終受入をまとめて行う。候補の後のコミットは文書・記録だけで、`git diff --name-only 40b3778 <専用 PR の最終 HEAD> -- . ':(exclude)fta_tool/docs' ':(exclude)fta_tool/README.md'` が空であることを PR の本文に記録する |
+| **最終の受入候補**（S-11・S-12 の対策後） | **`40b377813931f2d3b4080a61d0b80ebf7de0b7a1`** | 専用 PR（`claude/pr8-s11-s12-fix`）の S-12 のコミット。開発環境の追加回帰・通常の pytest・累積の全必須 E2E を実施（[evidence/pr8-s11-s12/README.md](evidence/pr8-s11-s12/README.md)）。この SHA で Windows の Preflight → Full・付録D の実操作・最終受入をまとめて行う。候補の後のコミットは文書・記録だけで、`git diff --name-only 40b3778 <専用 PR の最終 HEAD> -- . ':(exclude)fta_tool/docs' ':(exclude)fta_tool/README.md' ':(exclude)fta_tool/tests/e2e/README.md'` が空であることを PR の本文に記録する（`tests/e2e/README.md` は試験の説明の文書で、試験・スクリプトは読まない。候補の後に必須項目の数（77）を書き足した） |
 | 受入対象の確認（専用 PR のマージ後） | 専用 PR のマージ後の `feature/ui-redesign` の先頭 | アプリ・試験・スクリプトが最終の受入候補と同じこと（第3節のコマンド 3-2） |
 | レビュー対象の SHA（PR #19） | 統合の時点の PR #19 の head（= `feature/ui-redesign` の先頭） | マージの直前に、上の受入対象の確認と同じ方法で、最終の受入候補とアプリ・試験が同じことを確かめる |
 
@@ -75,7 +75,7 @@ git fetch origin feature/ui-redesign
 git diff --name-only <受入候補> origin/feature/ui-redesign -- . ':(exclude)fta_tool/docs' ':(exclude)fta_tool/README.md'
 ```
 
-何も出なければ、受入候補で行った試験と最終受入が、マージ後の版のアプリ・試験にそのまま当てはまる。何か出た場合は、受入候補を作り直す（その差分の影響を確かめるまで受入の記録を使わない）。
+何も出なければ、受入候補で行った試験と最終受入が、マージ後の版のアプリ・試験にそのまま当てはまる。（2026-11-02 の注記：S-11・S-12 の専用 PR では、受入候補 `40b3778` の後に文書の `fta_tool/tests/e2e/README.md` を更新したため、上のコマンドにはこの1ファイルが出る。試験・スクリプトはこのファイルを読まないので、`':(exclude)fta_tool/tests/e2e/README.md'` を足して空であることを確かめればよい）何か出た場合は、受入候補を作り直す（その差分の影響を確かめるまで受入の記録を使わない）。
 
 ## 4. 付録D の代表シナリオと試験・記録の対応
 
