@@ -34,9 +34,10 @@ deletion walk cannot be completed) are injected through stub_control.json
          sent without a parent; below a consistent parent they work whatever
          its judgement.
 
-Generation requests are never made for factors on a parent-link loop: the
-existing generation API has no loop detection (recorded in the plan), so
-the generation tests use inconsistent parents that are not on a loop.
+These generation tests use inconsistent parents that are not on a loop
+(written before S-12, when the generation API had no loop detection). Since
+S-12 the API refuses a looping parent at once; the screen-side request for
+such a parent is tests/e2e/test_s12_generation_refused.py (S12-GEN-REFUSED).
 """
 
 from __future__ import annotations

@@ -24,10 +24,11 @@ What is checked:
   factor and its descendants (the scope the screen computed), also when
   level-mismatched factors are among the descendants (the user's additional
   decision of 2026-09-29); those factors are never offered themselves;
-* how the existing delete API behaves where the screen does not offer
-  deletion (a factor of another analysis below; self-reference; cycle) is
-  recorded as the current behaviour, not as a guarantee: the API itself is
-  not changed and not made safe by these checks;
+* where the screen does not offer deletion (a factor of another analysis
+  below; self-reference; cycle) the delete API refuses as well since S-11:
+  HTTP 409 with the reason, and the data does not change (until S-11 the API
+  removed the factor of the other analysis with HTTP 200, and failed with
+  HTTP 500 on a loop; the S-11 tests themselves are tests/test_s11_delete_scope.py);
 * generation / manual-add parents exclude inconsistent factors and those
   with an inconsistent ancestor;
 * the lookups are two queries whatever the number of factors.
@@ -95,9 +96,18 @@ class Env:
         with self.engine.begin() as conn:
             conn.execute(text("UPDATE nodes SET parent_id = :p WHERE id = :id"), {"p": parent_id, "id": node_id})
 
-    def ids(self) -> set[int]:
+    def ids(self, analysis_id=None) -> set[int]:
+        sql = "SELECT id FROM nodes" + ("" if analysis_id is None else " WHERE analysis_id = :a")
         with self.engine.connect() as conn:
-            return {row[0] for row in conn.execute(text("SELECT id FROM nodes"))}
+            return {row[0] for row in conn.execute(text(sql), {"a": analysis_id})}
+
+    def dump(self) -> tuple:
+        """Every row of both tables, every column (S-11: nothing changed)."""
+        with self.engine.connect() as conn:
+            return (
+                tuple(tuple(r) for r in conn.execute(text("SELECT * FROM analyses ORDER BY id"))),
+                tuple(tuple(r) for r in conn.execute(text("SELECT * FROM nodes ORDER BY id"))),
+            )
 
     def view(self, analysis_id: int, *, scope_limit=None) -> detail_view.DetailView:
         db = self.Session()
@@ -409,20 +419,25 @@ def test_T07_categories_the_plan_keeps_undeletable_stay_undeletable(env):
         assert view.by_id[node_id].delete_reason == detail_view.REASON_NOT_VERIFIED
 
 
-def test_T07_existing_delete_api_on_self_reference_and_cycle_is_recorded_not_relied_on(env):
-    # Current behaviour of the unchanged API (the screen never sends these):
-    # the ORM refuses the circular delete, the request fails and nothing is
-    # removed. Recorded as a fact, not as a safety guarantee.
+def test_T07_delete_api_refuses_self_reference_and_cycle_with_409_and_changes_nothing(env):
+    # S-11 (2026-11-02, 案1): the screen never sends these, and the API now
+    # refuses them itself — HTTP 409 with the reason, nothing changed (until
+    # S-11: HTTP 500, nothing removed). The walk ends on loops (the requests
+    # with a time limit are in tests/test_s11_delete_scope.py).
     a = env.analysis("A")
     self_ref = env.node(a, 2)
     env.set_parent(self_ref, self_ref)
     p = env.node(a, 2)
     q = env.node(a, 1, p)
     env.set_parent(p, q)
-    before = env.ids()
-    assert env.delete(self_ref) == 500
-    assert env.delete(p) == 500
-    assert env.ids() == before
+    before = env.dump()
+    response = env.client.post(f"/nodes/{self_ref}/delete")
+    assert response.status_code == 409
+    assert response.json() == {"detail": crud.delete_reason_self_parent("node")}
+    response = env.client.post(f"/nodes/{p}/delete")
+    assert response.status_code == 409
+    assert response.json() == {"detail": crud.delete_reason_cycle("node")}
+    assert env.dump() == before
 
 
 def test_T07_a_factor_of_another_analysis_directly_below_blocks_it_and_its_ancestors(env):
@@ -444,10 +459,16 @@ def test_T07_a_factor_of_another_analysis_directly_below_blocks_it_and_its_ances
     for node_id in (leaf, sibling, other_root):
         assert view.by_id[node_id].delete_allowed, node_id
 
-    # Why: the unchanged delete API follows parent_id into the other analysis
-    # (recorded current behaviour; the screen does not send this request).
-    assert env.delete(middle) == 200
-    assert stranger not in env.ids()
+    # The delete API refuses it as well since S-11: HTTP 409 with the reason,
+    # and neither analysis changes (until S-11 it followed parent_id into the
+    # other analysis and removed `stranger` with HTTP 200).
+    before = env.dump()
+    for node_id in (middle, root):
+        response = env.client.post(f"/nodes/{node_id}/delete")
+        assert response.status_code == 409, node_id
+        assert response.json() == {"detail": crud.delete_reason_foreign("node", 1)}
+    assert env.dump() == before
+    assert stranger in env.ids(b) and {root, middle, leaf} <= env.ids()
 
 
 def test_T07_a_factor_of_another_analysis_deeper_below_blocks_every_ancestor(env):
