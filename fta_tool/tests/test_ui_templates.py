@@ -370,10 +370,20 @@ def test_T03_new_form_layout_and_scripts(client):
     assert root.find("h1").text() == "新規FTA分析を作成"
     main_column = root.find(**{"class": "new-page__main"})
     aside = root.find("aside", **{"class": "new-page__aside"})
-    assert [h.text() for h in main_column.find_all("h2")] == ["1 分析の名前と頂上事象", "2 AIへの参考情報 任意"]
+    assert [h.text() for h in main_column.find_all("h2")] == ["1 分析の名前と頂上事象", "2 AIへの参考情報 任意・入力を推奨"]
     assert [h.text() for h in aside.find_all("h2")] == ["入力の使われ方", "サンプルから入力 デモ用"]
     usage = aside.find("dl", **{"class": "new-usage"})
     assert [term.text() for term in usage.find_all("dt")] == ["頂上事象", "AIへの参考情報", "作成後"]
+    # The conditions near the inputs: the top event is optional on creation
+    # but needed for the AI generation of 一次要因 (generation.js refuses an
+    # empty one); the context is optional, saved and given to the AI.
+    top_label = root.find("label", **{"for": "top_event"})
+    assert top_label.text() == "頂上事象 作成時は任意・AIでの一次要因生成には必須"
+    top_help = root.find(id="top-event-help").text()
+    assert "分析作成時は空欄でも構いませんが、一次要因をAIで生成する際には必要です" in top_help
+    intro = main_column.find(**{"class": "new-page__intro"}).text()
+    assert "一次・二次・三次要因をAIで生成する際に参考としてAIへ渡されます" in intro
+    assert "生成品質の向上を保証するものではありません" in intro and "空欄でも生成できます" in intro
     status = root.find(**{"data-sample-status": True})
     assert status.is_hidden() and "サンプルを転記済み・未保存" in status.text()
 
