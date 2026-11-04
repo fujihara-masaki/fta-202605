@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import pathlib
 import re
@@ -21,7 +22,7 @@ from typing import Optional
 
 import httpx
 
-from tests.e2e.acceptance import VIEWPORT_EXACT, VIEWPORT_REFUSED, VIEWPORT_TOLERATED, css_px
+from tests.e2e.acceptance import DPR_REL_TOL, VIEWPORT_EXACT, VIEWPORT_REFUSED, VIEWPORT_TOLERATED, css_px
 
 try:  # development dependency (requirements-dev.txt)
     from playwright.sync_api import expect
@@ -642,21 +643,70 @@ def record_dialogs(page, action: str = "dismiss") -> list:
 
 # ----- The page's sideways scroll ---------------------------------------------------
 
+# Chromium places boxes in units of 1/64 CSS px (LayoutUnit): a box that ends
+# at the edge of the display area ends there to within one.
+LAYOUT_UNIT = 1 / 64
+
 # Since PR-7's fix of 2026-10-29 the main area scrolls (css/base.css), not the
 # page: a content wider than the display area makes #main scroll sideways
-# while the root does not. The page's width is the larger of the root's and
-# the main area's scroll width (with the room of its own scroll bar, so it
-# compares with the display area's width as the root's did).
-PAGE_WIDTH = """() => {
-  const root = document.documentElement, main = document.getElementById('main');
-  const inMain = main ? main.scrollWidth + (main.offsetWidth - main.clientWidth) : 0;
-  return { width: Math.max(root.scrollWidth, inMain), left: Math.max(window.scrollX, main ? main.scrollLeft : 0) };
+# while the root does not. Each of the two is compared with its own box,
+# never one with the other: with a fractional display area (Windows' display
+# scale 125 % with a zoom of 125 %: 1209.6 CSS px) the root's clientWidth
+# and #main's widths are whole numbers rounded on their own (1209 and 1210),
+# and the former check (the root's clientWidth against #main's scrollWidth
+# plus its scroll bar) took the page for one 1px wider than its display area
+# while nothing was outside it and nothing could be scrolled (the Windows
+# Full run of 6ea062e, 2026-11-04). The page scrolls sideways when
+# * the root's content is wider than the root (root.scrollWidth > clientWidth);
+# * the main area's content is wider than the main area (#main's own
+#   scrollWidth > clientWidth): what the user scrolls since PR-7;
+# * the main area itself reaches outside the display area (the fractional
+#   one, layout_checks.AREA) by more than one LayoutUnit on either side;
+# * the page or the main area is scrolled sideways.
+PAGE_OVERFLOW = """() => {
+  const root = document.documentElement, main = document.getElementById('main'), vv = window.visualViewport;
+  const area = vv && vv.scale === 1 ? vv.width : root.clientWidth;
+  const found = { root: [root.scrollWidth, root.clientWidth], main: null, mainBox: null, area,
+                  left: [window.scrollX, main ? main.scrollLeft : 0] };
+  if (main) {
+    const r = main.getBoundingClientRect();
+    found.main = [main.scrollWidth, main.clientWidth];
+    found.mainBox = [r.left, r.right];
+  }
+  return found;
 }"""
 
 
-def page_scroll_width(page) -> int:
-    """The page's scroll width, the main area's included (see PAGE_WIDTH)."""
-    return page.evaluate(PAGE_WIDTH)["width"]
+def page_overflow(page) -> dict:
+    """What PAGE_OVERFLOW measures (the record of a failure says it)."""
+    return page.evaluate(PAGE_OVERFLOW)
+
+
+def page_overflow_problems(found: dict) -> list[str]:
+    """Why the page scrolls sideways (see PAGE_OVERFLOW); [] when it does not."""
+    problems = []
+    root_scroll, root_client = found["root"]
+    if root_scroll > root_client:
+        problems.append(f"ページの内容がページより広い：scrollWidth {root_scroll} > clientWidth {root_client}")
+    if found["main"] is not None:
+        main_scroll, main_client = found["main"]
+        if main_scroll > main_client:
+            problems.append(f"メイン領域の内容がメイン領域より広い：scrollWidth {main_scroll} > clientWidth {main_client}")
+        left, right = found["mainBox"]
+        area = found["area"]
+        if left < -LAYOUT_UNIT or right > area + LAYOUT_UNIT:
+            problems.append(f"メイン領域が表示領域の外に出る：{left:.2f}〜{right:.2f}、表示領域の幅 {area:.2f}")
+    if any(found["left"]):
+        problems.append(f"横にスクロールされている：scrollX {found['left'][0]}、メイン領域の scrollLeft {found['left'][1]}")
+    return problems
+
+
+def assert_page_does_not_scroll_sideways(page, what: str = "") -> dict:
+    """The page cannot be scrolled sideways (see PAGE_OVERFLOW)."""
+    found = page_overflow(page)
+    problems = page_overflow_problems(found)
+    assert not problems, f"ページ全体が横にスクロールする{('（' + what + '）') if what else ''}：" + "；".join(problems)
+    return found
 
 
 # ----- The display area of PR3-LAYOUT ---------------------------------------------
@@ -755,3 +805,10 @@ def judge_viewport(requested, before: Optional[dict], after: dict, allowed: int,
     return {"size": got, "verdict": VIEWPORT_TOLERATED,
             "reason": (f"幅 {got[0] - req[0]:+d}・高さ {got[1] - req[1]:+d} CSS px。アプリの表示前（about:blank）から同じで、"
                        "レイアウトの境界を跨がない")}
+
+
+def same_dpr(measured: float, requested: float) -> bool:
+    """devicePixelRatio as requested, to within single precision
+    (acceptance.DPR_REL_TOL): under Windows' display scale Chromium reports
+    1.5 as 1.5000000596046448."""
+    return math.isclose(measured, requested, rel_tol=DPR_REL_TOL)

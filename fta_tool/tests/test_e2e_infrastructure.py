@@ -25,7 +25,13 @@ the check in Google Chrome of 2026-10-03, see tests/e2e/README.md).
   no layout boundary lies between; a difference that appears after the app,
   a larger or smaller one, one across a boundary (1280px, where a pane stops
   growing) or one in another case is not; the requested and measured sizes
-  are recorded; and the boundaries follow the edit page's stylesheets.
+  are recorded; and the boundaries follow the edit page's stylesheets;
+* PR-7's display area (the user's decision of 2026-11-04, 案(b)): the same
+  judgement at Windows' display scale of 125 %, with the values measured
+  there tolerated and what is not the browser's rounding refused;
+  devicePixelRatio to within single precision; the page's sideways scroll
+  judged on the root and #main each against its own box, so a fractional
+  display area is not taken for a 1px scroll while a real one is found.
 """
 
 from __future__ import annotations
@@ -781,3 +787,128 @@ def test_the_record_tells_how_each_control_was_reached_and_names_a_covering_noti
 def test_the_record_has_no_reach_section_without_reach():
     config = configured(e2e_preflight=True)
     assert "### 主要な操作への到達" not in acceptance.render_markdown(config, acceptance.state(config))
+
+
+# ----- PR-7's display area at Windows' display scale (2026-11-04) -------------------
+# The Windows 11 Enterprise PC of the Full run of 6ea062e (Chrome 157, display
+# scale 125 %): about:blank and the screens alike measured these for the
+# requested sizes (e2e-report.md of that run). The user decided (案(b)) to
+# keep testing on it: the same judgement as PR3-LAYOUT's, +1 CSS px per axis.
+
+WINDOWS_125 = {
+    (1093, 500): measured((1094, 500), (1093.5999755859375, 500), 1.0000000149011612),
+    (1920, 945): measured((1920, 946), (1920, 945.5999755859375), 1.0000000149011612),
+    (1275, 609): measured((1275, 610), (1275.199951171875, 609.5999755859375), 1.5000000596046448),
+    (1280, 630): measured((1280, 630), (1280, 630.4000244140625), 1.5000000596046448),
+}
+
+
+def test_pr7_tolerates_only_the_rounding_of_the_display_scale():
+    assert acceptance.PR7_VIEWPORT_ALLOWED == 1
+    assert acceptance.VIEWPORT_ALLOWED == {"chrome-1905x945": 1}  # PR3-LAYOUT's own cases are unchanged
+    for requested, metrics in WINDOWS_125.items():
+        result = support.judge_viewport(requested, metrics, metrics, acceptance.PR7_VIEWPORT_ALLOWED)
+        expected = "一致" if tuple(metrics["client"]) == requested else "許容した差"
+        assert result["verdict"] == expected, (requested, result)
+        assert result["size"] == tuple(metrics["client"])  # the later checks use the measured size
+
+
+@pytest.mark.parametrize("requested, before, after, reason", [
+    # Only after the app (the page changed the display area), or not measured before.
+    ((1093, 500), measured((1093, 500)), WINDOWS_125[(1093, 500)], "アプリの表示後に寸法が変わった（表示前 1093×500）"),
+    ((1093, 500), None, WINDOWS_125[(1093, 500)], "アプリの表示前に測っていない"),
+    # More than the rounding, or smaller.
+    ((1093, 500), measured((1095, 500)), measured((1095, 500)), "幅の差 +2 が許容（0〜+1 CSS px）の外"),
+    ((1920, 945), measured((1920, 943)), measured((1920, 943)), "高さの差 -2 が許容（0〜+1 CSS px）の外"),
+    # Across PR-7's layout boundaries: 1024 (the work area's minimum) and 1280
+    # (three panes), PR-7's sizes next to them.
+    ((1024, 683), measured((1025, 683), (1024.4, 683)), measured((1025, 683), (1024.4, 683)),
+     "要求と実測の間にレイアウトの境界がある（幅 1024 px）"),
+    ((1280, 620), measured((1281, 620), (1280.4, 620)), measured((1281, 620), (1280.4, 620)),
+     "要求と実測の間にレイアウトの境界がある（幅 1280 px）"),
+    ((1536, 699), measured((1536, 700), (1536, 699.6)), measured((1536, 700), (1536, 699.6)),
+     "要求と実測の間にレイアウトの境界がある（高さ 700 px）"),
+])
+def test_pr7_refuses_what_is_not_the_rounding(requested, before, after, reason):
+    result = support.judge_viewport(requested, before, after, acceptance.PR7_VIEWPORT_ALLOWED)
+    assert result["verdict"] == "許容しない差"
+    assert reason in result["reason"]
+
+
+@pytest.mark.parametrize("measured_ratio, requested, same", [
+    (1.5000000596046448, 1.5, True),   # Windows 125 %: chrome150 / edge150
+    (1.2499999701976776, 1.25, True),  # Windows 150 % (simulated): chrome125 / edge125
+    (1.0000000298023224, 1.0, True),
+    (1.25, 1.25, True),
+    (1.5625, 1.5, False),  # another zoom level is never the requested one
+    (1.25, 1.5, False),
+    (1.2, 1.25, False),
+    (1.0, 1.25, False),
+])
+def test_device_pixel_ratio_is_compared_to_single_precision(measured_ratio, requested, same):
+    assert support.same_dpr(measured_ratio, requested) is same
+
+
+def overflow(root=(1209, 1209), main=(1210, 1210), box=(0, 1209.5999755859375), area=1209.5999755859375, left=(0, 0)):
+    """What support.PAGE_OVERFLOW returns (the default: the Windows display
+    check of 6ea062e, 125 % with a zoom of 125 %, as measured there)."""
+    return {"root": list(root), "main": list(main), "mainBox": list(box), "area": area, "left": list(left)}
+
+
+def test_a_fractional_display_area_is_not_taken_for_a_sideways_scroll():
+    # The former check compared the root's clientWidth (1209) with #main's
+    # scrollWidth and scroll bar (1210): "1px" on the list, new and edit
+    # screens while nothing was outside the display area.
+    assert support.page_overflow_problems(overflow()) == []
+    # The same seen on Linux (1211.52 and 1227.52 CSS px) and at the edge
+    # itself (one LayoutUnit).
+    assert support.page_overflow_problems(overflow((1211, 1211), (1212, 1212), (0, 1211.52), 1211.52)) == []
+    assert support.page_overflow_problems(overflow((1227, 1227), (1228, 1228), (0, 1227.52), 1227.52)) == []
+    edge = 1227.52 + support.LAYOUT_UNIT
+    assert support.page_overflow_problems(overflow((1227, 1227), (1228, 1228), (0, edge), 1227.52)) == []
+    assert support.page_overflow_problems({"root": [1280, 1280], "main": None, "mainBox": None, "area": 1280,
+                                           "left": [0, 0]}) == []  # a page without #main
+
+
+@pytest.mark.parametrize("found, reason", [
+    (overflow(root=(1210, 1209)), "ページの内容がページより広い：scrollWidth 1210 > clientWidth 1209"),
+    (overflow(main=(1211, 1210)), "メイン領域の内容がメイン領域より広い：scrollWidth 1211 > clientWidth 1210"),
+    (overflow(box=(0, 1209.6 + 2 * support.LAYOUT_UNIT)), "メイン領域が表示領域の外に出る"),
+    (overflow(box=(0, 1210.6)), "メイン領域が表示領域の外に出る：0.00〜1210.60、表示領域の幅 1209.60"),
+    (overflow(box=(-1, 1208.6)), "メイン領域が表示領域の外に出る"),
+    (overflow(left=(1, 0)), "横にスクロールされている：scrollX 1"),
+    (overflow(left=(0, 1)), "メイン領域の scrollLeft 1"),
+])
+def test_a_real_sideways_scroll_is_still_found(found, reason):
+    problems = support.page_overflow_problems(found)
+    assert problems and reason in "；".join(problems)
+
+
+def test_the_record_tells_the_pr7_judgement(tmp_path):
+    config = configured(e2e_preflight=True)
+    run = acceptance.state(config)
+    cases = {"1280x800": ((1280, 800), measured((1280, 800)), measured((1280, 800))),
+             "1093x500": ((1093, 500), WINDOWS_125[(1093, 500)], WINDOWS_125[(1093, 500)]),
+             "900x600": ((900, 600), measured((900, 600)), measured((901, 600)))}
+    for case, (requested, before, after) in cases.items():
+        item = FakeItem(f"tests/e2e/test_pr7_viewports.py::test_E_V01_edit_layout_and_main_controls[{case}]",
+                        ids=("E-V01",))
+        item.config = config
+        result = support.judge_viewport(requested, before, after, acceptance.PR7_VIEWPORT_ALLOWED)
+        acceptance.record_display(item, requested=requested, dpr=None, origin="想定寸法", before=before,
+                                  measured=after, layout="3ペイン", verdict=result["verdict"], reason=result["reason"])
+    text = acceptance.render_markdown(config, run)
+    assert ("| 表示領域の判定（PR-7） | 一致 1・許容した差 1・許容しない差 1"
+            "（下の「表示領域の記録（PR-7：E-V01〜E-V03・E-F01）」） |") in text
+    section = text.split("### 表示領域の記録（PR-7：E-V01〜E-V03・E-F01）")[1].split("####")[0]
+    assert "各軸 +1 CSS ピクセルまで" in section and "実測の表示領域を基準に最後まで行います" in section
+    assert ("| 許容した差：幅 +1・高さ +0 CSS px。アプリの表示前（about:blank）から同じで、レイアウトの境界を跨がない"
+            "（表示前 client 1094×500") in section
+    assert "| 許容しない差：アプリの表示後に寸法が変わった（表示前 900×600）（表示前 client 900×600" in section
+    assert "| 一致 | 3ペイン |" in section
+
+    acceptance.summarize(run)
+    terminal = FakeTerminal()
+    acceptance.terminal_summary(terminal, config)
+    assert ("表示領域の判定（PR-7）: 一致 1 件・許容した差 1 件・許容しない差 1 件"
+            "（許容した差：要求 1093×500 → 実測 1094×500）（許容しない差：要求 900×600 → 実測 901×600）") in terminal.lines
