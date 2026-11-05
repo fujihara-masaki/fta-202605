@@ -384,7 +384,8 @@ pytest                                # 実ブラウザのテストも含む（�
 
 - `pytest.ini` が `fta_tool/` を基準にするため、`fta_tool/` で実行します。通常の pytest も、アプリの DB は一時ディレクトリに作ります（利用者の `fta_tool.db` は使いません）。
 - PowerShell がない環境では、Windows 用スクリプトの確認がスキップになります（環境依存のスキップ）。
-- **UI 改修の必須受入検証**（実ブラウザのテスト。スキップ・未実施は失敗）は `pytest -m e2e --e2e-required --e2e-env "<実行環境>" --e2e-report e2e-report.md` です。ブラウザの準備、Windows の Chrome・Edge での実行（`scripts/run_browser_e2e.ps1`）、記録の読み方は [tests/e2e/README.md](tests/e2e/README.md) を参照してください。実LLMは呼ばず、スタブの AI と一時 DB を使います。
+- **試験範囲の選び方**：改修ごとに、変更に応じて A（変更箇所）・B（関連機能）・C（全回帰：通常の pytest 一式と全必須 E2E）を選びます。全必須 E2E（Windows の Full を含む）を毎回の PR で行うわけではありません。判断表・実行例・部分実行の結果の読み方・記録のテンプレートは [試験方針](docs/testing-policy.md) を正とします（この方針を導入する PR のマージの時点から適用）。
+- **UI 改修の必須受入検証**（実ブラウザのテスト。スキップ・未実施は失敗。試験方針の C で全必須 E2E を行うときの合格条件）は `pytest -m e2e --e2e-required --e2e-env "<実行環境>" --e2e-report e2e-report.md` です。ブラウザの準備、Windows の Chrome・Edge での実行（`scripts/run_browser_e2e.ps1`）、記録の読み方は [tests/e2e/README.md](tests/e2e/README.md) を参照してください。実LLMは呼ばず、スタブの AI と一時 DB を使います。
 
 ## データベース
 
