@@ -32,6 +32,7 @@ from tests.e2e.support import (
     PageWatcher,
     evidence_folder_name,
     free_port,
+    measure_viewport,
     save_screenshot,
     start_server,
 )
@@ -213,6 +214,10 @@ def page(page, viewport, e2e_server, request, output_path):
     watcher = PageWatcher(page, e2e_server.url)
     request.node.stash[WATCHER_KEY] = watcher
     page.set_default_timeout(10000)
+    # The display area before the app is shown (about:blank), so that PR-7's
+    # judgement tells a rounding of the browser from a change by the page
+    # (acceptance.PR7_VIEWPORT_ALLOWED).
+    request.node.stash[acceptance.BEFORE_APP_KEY] = measure_viewport(page)
     yield page
     if _test_failed(request.node):
         # pytest-playwright's own screenshot (test-failed-1.png) leaves no

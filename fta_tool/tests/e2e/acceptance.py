@@ -183,6 +183,23 @@ VIEWPORT_VERDICTS = (VIEWPORT_EXACT, VIEWPORT_TOLERATED, VIEWPORT_REFUSED)
 # The cases whose difference may be tolerated, with the CSS px allowed per
 # axis (the user's instruction of 2026-10-06): chrome-1905x945 only.
 VIEWPORT_ALLOWED = {"chrome-1905x945": 1}
+# PR-7's display areas (E-V01〜E-V03, test_pr7_viewports.py shown()): the
+# user's decision of 2026-11-04 (案(b)) to run the tests on a PC with a
+# display scale of 125 % too. Chromium then rounds some of the requested
+# sizes up by 1 CSS px (1093x500 as 1094x500: 1093.6 CSS px) from before the
+# app is shown. The same judgement as PR3-LAYOUT's (support.judge_viewport):
+# +1 CSS px per axis at most, already on about:blank and unchanged after,
+# no layout boundary between the requested and the measured sizes; every
+# check after it is made against the measured display area.
+PR7_VIEWPORT_ALLOWED = 1
+# devicePixelRatio as Chromium reports it under a display scale: the emulated
+# ratio times the scale over the scale in single precision (1.5 as
+# 1.5000000596046448, 1 as 1.0000000149011612). Equal within this relative
+# difference; a ratio of another zoom level differs by 0.1 or more.
+DPR_REL_TOL = 1e-6
+# The display area measured on about:blank when the page was made (before
+# any test step), for PR-7's judgement (tests/e2e/conftest.py page).
+BEFORE_APP_KEY = pytest.StashKey[dict]()
 
 
 @dataclass(frozen=True)
@@ -499,6 +516,15 @@ def viewport_counts(run: RunState) -> dict[str, int]:
     return counts
 
 
+def display_counts(run: RunState) -> dict[str, int]:
+    """PR-7's judgements of the display area (one per test that judged it)."""
+    counts = {verdict: 0 for verdict in VIEWPORT_VERDICTS}
+    for record in run.display_records.values():
+        if record.get("verdict") in counts:
+            counts[record["verdict"]] += 1
+    return counts
+
+
 def _test_outcome(record: TestRecord) -> str:
     return record.outcome or "not_run"
 
@@ -755,6 +781,7 @@ def render_markdown(config: pytest.Config, run: RunState) -> str:
         f"| 画面寸法（CSS ピクセル） | {'、'.join(run.viewports) or '-'} |",
         f"| 寸法の組（--e2e-viewport-set） | {_viewport_set_text(run)} |",
         *_viewport_summary_rows(run),
+        *_display_summary_rows(run),
         f"| 結果（テスト単位） | 成功 {counts['passed']}・失敗 {counts['failed']}・スキップ {counts['skipped']}・未実施 {counts['not_run']} |",
         f"| {CONSOLE_EXCEPTION_ROW} | {CONSOLE_EXCEPTION_TEXT} |",
         f"| 判定 | {_verdict_text(run)} |",
@@ -838,6 +865,14 @@ def _viewport_summary_rows(run: RunState) -> list[str]:
     return [f"| 画面寸法の要求と実測（PR3-LAYOUT） | {text}（下の「画面寸法の要求と実測（PR3-LAYOUT）」） |"]
 
 
+def _display_summary_rows(run: RunState) -> list[str]:
+    counts = display_counts(run)
+    if not sum(counts.values()):
+        return []
+    text = "・".join(f"{verdict} {count}" for verdict, count in counts.items())
+    return [f"| 表示領域の判定（PR-7） | {text}（下の「表示領域の記録（PR-7：E-V01〜E-V03・E-F01）」） |"]
+
+
 def _viewport_set_text(run: RunState) -> str:
     if run.viewport_set == "pr7":
         return ("pr7：寸法を自分で選ばないテストを、基本寸法と PR-7 の寸法（想定寸法・2026-10-28 の実測値）のすべてで実行"
@@ -856,14 +891,29 @@ def _display_lines(run: RunState) -> list[str]:
         "",
     ]
     if run.display_records:
-        lines += ["| テスト | 寸法の出所 | 要求（CSS px・DPR） | 実測 | レイアウト | 備考 |", "|---|---|---|---|---|---|"]
+        lines += [
+            f"判定は PR3-LAYOUT と同じ規則です（`tests/e2e/support.py` の judge_viewport）。差を許容するのは、実測が要求と同じか"
+            f"各軸 +{PR7_VIEWPORT_ALLOWED} CSS ピクセルまで大きく、その差がアプリの表示前（about:blank）からあって表示後も同じで、"
+            "要求と実測の間（両端を含む）にレイアウトの境界がない場合だけです（Windows の表示倍率 125% での丸め。"
+            "2026-11-04 の利用者の判断）。許容したときも、後続の検査は実測の表示領域を基準に最後まで行います。"
+            "devicePixelRatio は単精度の誤差の範囲で要求と比べます。判定が「-」の行は、寸法を判定しないテストの記録です。",
+            "",
+            "| テスト | 寸法の出所 | 要求（CSS px・DPR） | 実測 | 判定 | レイアウト | 備考 |",
+            "|---|---|---|---|---|---|---|",
+        ]
         for nodeid, record in run.display_records.items():
             requested = record.get("requested") or ("-", "-")
             dpr = record.get("dpr")
             asked = f"{requested[0]}×{requested[1]}・DPR {css_px(dpr) if dpr else '1（既定）'}"
+            verdict = record.get("verdict") or "-"
+            if record.get("reason"):
+                verdict += f"：{record['reason']}"
+            before = record.get("before")
+            if record.get("verdict") not in (None, VIEWPORT_EXACT) and before:
+                verdict += f"（表示前 {_measured(before)}）"
             lines.append(f"| `{nodeid}` | {_cell(record.get('origin', '-'))} | {asked} "
-                         f"| {_cell(_measured(record.get('measured')))} | {_cell(record.get('layout', '-'))} "
-                         f"| {_cell(record.get('note', ''))} |")
+                         f"| {_cell(_measured(record.get('measured')))} | {_cell(verdict)} "
+                         f"| {_cell(record.get('layout', '-'))} | {_cell(record.get('note', ''))} |")
     lines += ["", "#### 目視のレビュー用の画面（自動判定の補完。受入の判定には含めない）", ""]
     if not run.screenshots:
         lines.append("保存した画面はありません（--e2e-screens を指定していない、または撮るテストを実行していない）。")
@@ -1014,6 +1064,14 @@ def terminal_summary(terminalreporter, config: pytest.Config) -> None:
                           f" → 実測 {c['size'][0]}×{c['size'][1]}）"
                           for nodeid, c in run.viewport_checks.items()
                           if c.get("verdict") in (VIEWPORT_TOLERATED, VIEWPORT_REFUSED) and c.get("size")))
+    shown = display_counts(run)
+    if sum(shown.values()):
+        differences = dict.fromkeys(  # one per size and verdict, in the order met
+            f"（{r['verdict']}：要求 {r['requested'][0]}×{r['requested'][1]}"
+            f" → 実測 {r['measured']['client'][0]}×{r['measured']['client'][1]}）"
+            for r in run.display_records.values()
+            if r.get("verdict") in (VIEWPORT_TOLERATED, VIEWPORT_REFUSED) and r.get("measured"))
+        tr.line("表示領域の判定（PR-7）: " + "・".join(f"{v} {n} 件" for v, n in shown.items()) + "".join(differences))
     tr.line(f"寸法の組: {run.viewport_set}" + ("" if run.viewport_set == "pr7" else
             "（全テストの PR-7 の全寸法での実行は未実施：--e2e-viewport-set pr7）"))
     if run.screenshots:
