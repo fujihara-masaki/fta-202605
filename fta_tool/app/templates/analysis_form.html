@@ -28,15 +28,15 @@
           <p class="ui-field-error" id="title-error" hidden></p>
         </div>
         <div class="ui-field">
-          <label class="ui-field__label" for="top_event">頂上事象 <span class="ui-field__tag ui-field__tag--optional">任意・後から編集できます</span></label>
+          <label class="ui-field__label" for="top_event">頂上事象 <span class="ui-field__tag ui-field__tag--optional">作成時は任意・AIでの一次要因生成には必須</span></label>
           <textarea id="top_event" name="top_event" rows="3" class="ui-input" aria-describedby="top-event-help" placeholder="例：〇〇システムでログイン障害が発生した"></textarea>
-          <p class="ui-field-help" id="top-event-help">分析の起点となる「発生した事象そのもの」です。一次要因をAIで生成するときに必要です（作成後の分析・編集画面でも入力できます）。</p>
+          <p class="ui-field-help" id="top-event-help">分析の起点となる事象を入力します。分析作成時は空欄でも構いませんが、一次要因をAIで生成する際には必要です。作成後にも入力・変更できます。</p>
         </div>
       </section>
 
       <section class="ui-panel" aria-labelledby="new-section-2">
-        <h2 class="ui-panel__title" id="new-section-2"><span class="new-page__step">2</span> AIへの参考情報 <span class="ui-field__tag ui-field__tag--optional">任意</span></h2>
-        <p class="new-page__intro">頂上事象とは別に、AIが要因を生成するときの参考として使われます。作成後の分析・編集画面でも編集できます。</p>
+        <h2 class="ui-panel__title" id="new-section-2"><span class="new-page__step">2</span> AIへの参考情報 <span class="ui-field__tag ui-field__tag--optional">任意・入力を推奨</span></h2>
+        <p class="new-page__intro">入力した参考情報は保存され、一次・二次・三次要因をAIで生成する際に参考としてAIへ渡されます。システム構成や障害の状況を具体的に書くと、状況に即した要因の生成が期待できます（生成品質の向上を保証するものではありません）。空欄でも生成できます。</p>
         <div class="new-page__context">
           <div class="ui-field">
             <label class="ui-field__label" for="systemContextInput">システム構成・対象範囲</label>
@@ -61,11 +61,11 @@
         <dl class="new-usage">
           <div>
             <dt>頂上事象</dt>
-            <dd>分析の起点で、FTAの最上位に置かれます。一次要因をAIで生成するには頂上事象が必要です（作成時は空でもかまいません）。</dd>
+            <dd>分析の起点で、FTAの最上位に置かれます。保存された頂上事象は、一次〜三次のすべての要因の生成でAIに渡されます。</dd>
           </div>
           <div>
             <dt>AIへの参考情報</dt>
-            <dd>システム構成・対象範囲と、障害発生時の状況・観測事実は、一次〜三次のすべての要因の生成で、AIに参考として渡されます。要因のツリーには表示されません。</dd>
+            <dd>システム構成・対象範囲と、障害発生時の状況・観測事実の2項目です。頂上事象とは別の補足で、要因のツリーには表示されません。</dd>
           </div>
           <div>
             <dt>作成後</dt>

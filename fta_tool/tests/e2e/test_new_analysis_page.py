@@ -124,7 +124,7 @@ def test_E_N01_two_columns_and_create(page, e2e_server):
     # the sample on the right, キャンセル / 作成して編集へ below both.
     main = page.locator(".new-page__main")
     aside = page.locator(".new-page__aside")
-    expect(main.get_by_role("heading", level=2)).to_have_text(["1 分析の名前と頂上事象", "2 AIへの参考情報 任意"])
+    expect(main.get_by_role("heading", level=2)).to_have_text(["1 分析の名前と頂上事象", "2 AIへの参考情報 任意・入力を推奨"])
     expect(aside.get_by_role("heading", level=2)).to_have_text(["入力の使われ方", "サンプルから入力 デモ用"])
     main_box, aside_box = main.bounding_box(), aside.bounding_box()
     if page.viewport_size["width"] >= 960:
