@@ -30,7 +30,7 @@ element drawn on top. Screenshots only complement them (the visual review).
   the same until a condition holds, at most as many presses as the page has
   controls that Tab stops at (tabbable_count()), so a target that is in the
   Tab order is reached from wherever the walk starts;
-* page_scroll(): the page's own scroll size against the display area;
+* assert_no_page_hscroll(): the page never scrolls sideways (support.PAGE_OVERFLOW);
 * pane_scroll(): the panes' sideways scrolling;
 * layout(): which layout the edit page has (three panes or the folded
   navigation) and where its panes are.
@@ -49,13 +49,12 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from tests.e2e.support import expect
+from tests.e2e.support import LAYOUT_UNIT, assert_page_does_not_scroll_sideways, expect
 
 # Fully inside: up to half a CSS px out (fractional boxes at a DPR of 1.25).
 EDGE = 0.5
-# Chromium places boxes in units of 1/64 CSS px (LayoutUnit): a pane that
-# ends at the edge of the display area ends there to within one.
-LAYOUT_UNIT = 1 / 64
+# LAYOUT_UNIT (support.py): Chromium places boxes in units of 1/64 CSS px;
+# a pane that ends at the edge of the display area ends there to within one.
 
 # The display area the page is laid out in, [width, height] in CSS px: the
 # visual viewport while it is not pinch-zoomed (the layout viewport less a
@@ -94,15 +93,6 @@ HIT = """(el) => {
   return { box: [r.x, r.y, r.width, r.height], area: [w, h], misses,
            client: [document.documentElement.clientWidth, document.documentElement.clientHeight],
            scrollX: window.scrollX, scrollY: window.scrollY };
-}"""
-
-# The page's own scroll: the root's, and since PR-7's fix of 2026-10-29 the
-# main area's (it scrolls, not the page; support.PAGE_WIDTH).
-PAGE_SCROLL = """() => {
-  const root = document.documentElement, main = document.getElementById('main');
-  const inMain = main ? main.scrollWidth + (main.offsetWidth - main.clientWidth) : 0;
-  return { scroll: [Math.max(root.scrollWidth, inMain), root.scrollHeight], client: [root.clientWidth, root.clientHeight],
-           at: [Math.max(window.scrollX, main ? main.scrollLeft : 0), window.scrollY] };
 }"""
 
 PANE_SCROLL = """() => {
@@ -318,16 +308,11 @@ def tab_until(page, until, *, key: str = "Tab", toasts: int = 0, what: str = "",
                          f"最後のフォーカス {seen[-1]['label'] if seen else 'なし'}")
 
 
-def page_scroll(page) -> dict:
-    return page.evaluate(PAGE_SCROLL)
-
-
 def assert_no_page_hscroll(page, what: str = "") -> None:
-    found = page_scroll(page)
-    assert found["scroll"][0] <= found["client"][0], (
-        f"ページ全体が横にスクロールする{('（' + what + '）') if what else ''}："
-        f"scrollWidth {found['scroll'][0]} > clientWidth {found['client'][0]}")
-    assert found["at"][0] == 0
+    """The page never scrolls sideways: the root and the main area each
+    against its own box, the main area against the display area
+    (support.PAGE_OVERFLOW)."""
+    assert_page_does_not_scroll_sideways(page, what)
 
 
 def pane_scroll(page) -> dict:

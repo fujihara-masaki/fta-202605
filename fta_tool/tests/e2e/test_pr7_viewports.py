@@ -25,8 +25,14 @@ results are recorded apart from the checks on the user's Windows PC
 * E-V03  at 900x600 and 1093x500 the inspector's 保存・取消 and the dialogs'
          buttons are reached without scrolling the page sideways.
 
-The display area is measured after the app is shown and must be the
-requested one (no tolerance here); it is recorded with the layout found
+The display area is measured after the app is shown and judged against the
+requested one as PR3-LAYOUT's is (support.judge_viewport; the user's
+decision of 2026-11-04 to run these tests at Windows' display scale of
+125 % too): exact, or a rounding of the browser of at most +1 CSS px per
+axis that was already there on about:blank and crosses no layout boundary
+(acceptance.PR7_VIEWPORT_ALLOWED); every check after it is made against the
+measured display area. devicePixelRatio is compared to within single
+precision (support.same_dpr). Both are recorded with the layout found
 (e2e-report.md). With --e2e-screens the screens are kept for the visual
 review (not part of the verdict).
 """
@@ -60,9 +66,9 @@ from tests.e2e.edit_helpers import (
     toast,
     wait_phase,
 )
-from tests.e2e import layout_checks
+from tests.e2e import layout_checks, support
 from tests.e2e.layout_checks import assert_no_page_hscroll, layout, pane_scroll, reach
-from tests.e2e.support import expect, measure_viewport, save_screenshot
+from tests.e2e.support import VIEWPORT_REFUSED, expect, judge_viewport, measure_viewport, same_dpr, save_screenshot
 
 pytestmark = pytest.mark.e2e
 
@@ -89,19 +95,28 @@ def build(server, title="表示領域の確認"):
     return analysis_id, a, b, c, d
 
 
-def shown(page, request, display_case, name: str = "") -> dict:
-    """Measure the display area, check it is the requested one, record it
-    with the layout found; returns the layout (tests/e2e/layout_checks.py)."""
+def shown(page, request, display_case, name: str = "", *, record: bool = True) -> dict:
+    """Measure the display area, judge it against the requested one (see the
+    module: support.judge_viewport with the measurement on about:blank made
+    when the page was, tests/e2e/conftest.py), record both with the layout
+    found; returns the layout (tests/e2e/layout_checks.py). record=False:
+    not recorded (the checks of the check itself refuse on purpose)."""
     measured = measure_viewport(page)
+    before = request.node.stash.get(acceptance.BEFORE_APP_KEY, None)
+    result = judge_viewport(display_case.size, before, measured, acceptance.PR7_VIEWPORT_ALLOWED)
     found = layout(page) if page.locator("[data-edit-page]").count() else {}
     mode = ("構造ナビの折りたたみ" if found.get("folded") else "3ペイン") if found else "（編集画面以外）"
-    acceptance.record_display(request.node, requested=display_case.size, dpr=display_case.dpr,
-                              origin=display_case.origin, measured=measured, layout=mode,
-                              note=name)
-    assert tuple(measured["client"]) == display_case.size, (
-        f"表示領域が要求と違う：要求 {display_case.width}×{display_case.height}、実測 {measured['client']}")
+    if record:
+        acceptance.record_display(request.node, requested=display_case.size, dpr=display_case.dpr,
+                                  origin=display_case.origin, before=before, measured=measured, layout=mode,
+                                  verdict=result["verdict"], reason=result["reason"], note=name)
+    before_text = f"{before['client'][0]}×{before['client'][1]}" if before else "未測定"
+    assert result["verdict"] != VIEWPORT_REFUSED, (
+        f"表示領域が要求と違い、{VIEWPORT_REFUSED}です：要求 {display_case.width}×{display_case.height}、"
+        f"表示前（about:blank）{before_text}、実測 {measured['client'][0]}×{measured['client'][1]}（{result['reason']}）")
     if display_case.dpr:
-        assert measured["devicePixelRatio"] == display_case.dpr
+        assert same_dpr(measured["devicePixelRatio"], display_case.dpr), (
+            f"devicePixelRatio が要求と違う：要求 {display_case.dpr}、実測 {measured['devicePixelRatio']}")
     return found
 
 
@@ -471,3 +486,122 @@ def test_reach_tells_as_shown_a_pane_scroll_and_a_notification_over_it_apart(pag
             assert [t["text"] for t in entry["notifications"]] == ["到達の区別の確認"]
     finally:
         layout_checks.OBSERVERS.remove(seen.append)
+
+
+# ----- the display area's judgement and a fractional display area (2026-11-04) ------
+# The user's decision (案(b)) to run these tests at Windows' display scale of
+# 125 % too: shown() tolerates only the browser's rounding (see the module);
+# what is not that rounding is refused, and with a tolerated rounding the
+# checks still find a layout that does not fit, against the measured size.
+
+# The PR-7 case whose size is requested, the size the browser is set to on
+# about:blank and after the app is shown, and part of the reason of the
+# refusal. The sizes set are multiples of 4 CSS px, shown exactly at the
+# display scales 100〜175 % (as PR3-LAYOUT's SIZE_FAULTS): on a PC at 125 %
+# the browser itself shows 1093 as 1094, which must not hide the fault.
+SIZE_FAULTS = {
+    "changed-after-the-app": ("1093x500", (1092, 500), (1096, 500), "アプリの表示後に寸法が変わった（表示前 1092×500）"),
+    "over-the-tolerance": ("1093x500", (1096, 500), (1096, 500), "幅の差 +3 が許容（0〜+1 CSS px）の外"),
+    "smaller": ("1093x500", (1092, 500), (1092, 500), "幅の差 -1 が許容（0〜+1 CSS px）の外"),
+    "across-1024": ("1024x683", (1028, 684), (1028, 684), "要求と実測の間にレイアウトの境界がある（幅 1024 px）"),
+    "across-1280": ("1280x620", (1284, 620), (1284, 620), "要求と実測の間にレイアウトの境界がある（幅 1280 px）"),
+}
+
+
+def as_on_about_blank(page, request, size) -> None:
+    """The browser has `size` from before the app is shown (a rounding of its
+    own): measured again on about:blank, as the page fixture does."""
+    page.set_viewport_size({"width": size[0], "height": size[1]})
+    request.node.stash[acceptance.BEFORE_APP_KEY] = measure_viewport(page)
+
+
+@pytest.mark.acceptance("E-V01")
+@pytest.mark.parametrize("viewport, fault", [
+    pytest.param(CASE_BY_LABEL.get(label) or acceptance.BASE_CASES[0], fault, id=f"{fault}-{label}")
+    for fault, (label, _blank, _after, _reason) in SIZE_FAULTS.items()
+], indirect=["viewport"])
+def test_the_pr7_size_check_refuses_what_is_not_the_rounding(page, e2e_server, display_case, request, fault):
+    _label, blank, after, reason = SIZE_FAULTS[fault]
+    analysis_id = build(e2e_server, "寸法の判定")[0]
+    as_on_about_blank(page, request, blank)
+    open_edit(page, analysis_id)
+    if after != blank:
+        page.set_viewport_size({"width": after[0], "height": after[1]})
+    with pytest.raises(AssertionError, match=re.escape(reason)):
+        shown(page, request, display_case, record=False)
+
+
+@pytest.mark.acceptance("E-V01")
+@pytest.mark.parametrize("viewport", [CASE_BY_LABEL["1093x500"]], ids=["1093x500"], indirect=True)
+def test_a_tolerated_rounding_still_finds_what_does_not_fit(page, e2e_server, display_case, request):
+    analysis_id, a, b, c, d = build(e2e_server, "許容した差での検出")
+    as_on_about_blank(page, request, (1094, 500))  # Windows 125 %: 1093 CSS px shown as 1094
+    open_edit(page, analysis_id, f"#sel={b}&step=3&view=work")
+    expect_editor_ready(page, b)
+    shown(page, request, display_case, record=False)  # tolerated: +1, from before the app
+    expect_layout(page, display_case)
+    expect_scrolling(page, display_case, "許容した差")
+    editor_bar(page, "許容した差")
+    # The inspector past the right edge (cut off, not scrollable): 保存・取消 not reached.
+    tag = page.add_style_tag(content=".edit-layout { min-width: 1200px; }")
+    with pytest.raises(AssertionError):
+        editor_bar(page, "許容した差・インスペクタが表示領域の外")
+    tag.evaluate("(el) => el.remove()")
+    # The page's minimum width of PR-3〜PR-6 (FAULTS): the page scrolls sideways.
+    page.add_style_tag(content=FAULTS["page-min-width-1100"][1])
+    with pytest.raises(AssertionError, match="ページ全体が横にスクロールする"):
+        expect_scrolling(page, display_case, "許容した差・ページの最小幅 1100px")
+
+
+# A fractional display area: Chromium at a device scale of 1.5625 (Windows
+# 125 % with a zoom of 125 %) shows 1275 CSS px as 1275.52, whose root is
+# 1275 wide and #main 1276: the case the former sideways-scroll check took
+# for a 1px scroll on every screen (the Windows Full run of 6ea062e:
+# 1209.6 CSS px, 1209 and 1210). Real overflows of 1px must still be found.
+FRACTIONAL_SCALE = 1.5625
+FRACTIONAL_VIEWPORT = {"width": 1275, "height": 609}
+ONE_PX_OVERFLOWS = {
+    "content-of-main-1px-wider": "#main::after { content: ''; display: block; width: calc(100% + 1px); height: 1px; }",
+    "main-1px-past-the-edge": "#main { margin-right: -1px; }",
+    "page-1px-wider": ("body::before { content: ''; position: absolute; top: 0; left: 0; "
+                       "width: calc(100vw + 1px); height: 1px; }"),
+}
+# The former check (support.PAGE_WIDTH until 2026-11-04), for the record.
+FORMER_PAGE_WIDTH = """() => {
+  const root = document.documentElement, main = document.getElementById('main');
+  const inMain = main ? main.scrollWidth + (main.offsetWidth - main.clientWidth) : 0;
+  return [Math.max(root.scrollWidth, inMain), root.clientWidth];
+}"""
+
+
+@pytest.mark.acceptance("E-V02")
+def test_the_sideways_scroll_check_at_a_fractional_display_area(browser_type, browser_type_launch_args, e2e_server,
+                                                                record_property):
+    analysis_id, a, b, c, d = build(e2e_server, "端数の表示領域")
+    args = [*browser_type_launch_args.get("args", []), f"--force-device-scale-factor={FRACTIONAL_SCALE}"]
+    browser = browser_type.launch(**{**browser_type_launch_args, "args": args})
+    notes = []
+    try:
+        context = browser.new_context(viewport=FRACTIONAL_VIEWPORT, base_url=e2e_server.url, locale="ja-JP")
+        page = context.new_page()
+        for name, path in (("一覧", "/"), ("新規作成", "/analyses/new"), ("編集", f"/analyses/{analysis_id}")):
+            page.goto(path)
+            expect(page.locator("#main")).to_be_visible()
+            if name == "編集":
+                expect_editor_ready(page, a)
+            found = support.page_overflow(page)
+            assert found["area"] != int(found["area"]), found  # fractional, as on Windows
+            former = page.evaluate(FORMER_PAGE_WIDTH)
+            notes.append(f"{name}：表示領域 {found['area']:.2f}、ルート {found['root']}、#main {found['main']}、"
+                         f"以前の判定 {former[0]} > {former[1]} = {former[0] > former[1]}")
+            assert_no_page_hscroll(page, f"端数の表示領域・{name}")
+            for fault, css in ONE_PX_OVERFLOWS.items():
+                tag = page.add_style_tag(content=css)
+                with pytest.raises(AssertionError, match="ページ全体が横にスクロールする"):
+                    assert_no_page_hscroll(page, f"端数の表示領域・{name}・{fault}")
+                tag.evaluate("(el) => el.remove()")
+            assert_no_page_hscroll(page, f"端数の表示領域・{name}（元に戻した後）")
+        context.close()
+    finally:
+        browser.close()
+        record_property(acceptance.NOTE_PROPERTY, "／".join(notes))
