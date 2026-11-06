@@ -365,6 +365,8 @@ $targets = @("tests\e2e\test_new_analysis_page.py", "tests\e2e\test_pr7_viewport
 
 ## 10. 継続事項と後続の課題
 
+後続作業の実行計画（順序・PR 分割・設計・試験の計画。規則はこの文書が正本）：[testing-policy-followup-plan.md](testing-policy-followup-plan.md)
+
 ### 10.1 継続事項
 
 - PR4-LAYOUT の通信の停滞（第2.4節）：原因未確定・未解消。次の Windows の C で再発の有無を記録する。
